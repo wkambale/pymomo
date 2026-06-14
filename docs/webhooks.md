@@ -9,7 +9,6 @@ The MTN Developer portal currently does not attach cryptographic request signatu
 1.  **Expose callback endpoints over HTTPS**: Ensure your callback URL starts with `https://`.
 2.  **Filter incoming IP addresses**: Restrict incoming traffic to your webhook endpoints so that only requests originating from official MTN API gateway IP addresses are allowed.
 
----
 
 ## Processing webhook notifications
 

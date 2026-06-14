@@ -7,7 +7,7 @@ Contributions are welcome. Follow these guidelines to set up your environment, f
 Clone the repository and install the development dependencies:
 
 ```bash
-git clone https://github.com/pymomo/pymomo.git
+git clone https://github.com/wkambale/pymomo.git
 cd pymomo
 pip install -e ".[dev]"
 ```
@@ -30,7 +30,6 @@ black --check .
 isort --check .
 ```
 
----
 
 ## Type safety
 
@@ -40,7 +39,6 @@ The library is strictly typed. Run mypy to ensure there are no validation warnin
 mypy pymomo/
 ```
 
----
 
 ## Writing and running tests
 

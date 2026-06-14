@@ -53,7 +53,7 @@ class SandboxProvisioner:
         self,
         api_user: str | None = None,
         *,
-        callback_host: str = "https://webhook.site",
+        callback_host: str = "https://pymomo.aiforuganda.org",
     ) -> str:
         """Create a sandbox API user. Returns the api_user UUID."""
         if api_user is not None:
@@ -106,7 +106,7 @@ class SandboxProvisioner:
     def provision(
         self,
         *,
-        callback_host: str = "https://webhook.site",
+        callback_host: str = "https://pymomo.aiforuganda.org",
     ) -> dict[str, str]:
         """Create a user and key in a single call. Returns both values.
 

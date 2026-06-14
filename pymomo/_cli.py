@@ -61,7 +61,7 @@ def sandbox_provision(
         help="Ocp-Apim-Subscription-Key.",
     ),
     callback_host: str = typer.Option(
-        "https://webhook.site",
+        "https://pymomo.aiforuganda.org",
         "--callback-host",
         "-c",
         help="Provider callback host.",

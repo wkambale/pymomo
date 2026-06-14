@@ -16,7 +16,6 @@ PyMoMoError (Base exception)
 └── WebhookVerificationError (Raised on signature validation failure)
 ```
 
----
 
 ## Catching exceptions
 

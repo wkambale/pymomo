@@ -48,9 +48,9 @@ dev = [
 pymomo = "pymomo._cli:app"
 
 [project.urls]
-Homepage = "https://pymomo.github.io"
+Homepage = "https://pymomo.aiforuganda.org"
 Repository = "https://github.com/wkambale/pymomo"
-Documentation = "https://pymomo.github.io"
+Documentation = "https://pymomo.aiforuganda.org"
 Changelog = "https://github.com/wkambale/pymomo/blob/main/CHANGELOG.md"
 
 [tool.mypy]

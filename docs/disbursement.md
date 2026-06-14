@@ -22,7 +22,6 @@ client = MomoClient(config)
 disbursement_client = client.disbursement
 ```
 
----
 
 ## Transfer
 
@@ -50,7 +49,6 @@ result = client.disbursement.get_transfer_status(reference_id)
 print(f"Transfer status: {result.status}")
 ```
 
----
 
 ## Deposit
 
@@ -78,7 +76,6 @@ result = client.disbursement.get_deposit_status(reference_id)
 print(f"Deposit status: {result.status}")
 ```
 
----
 
 ## Refund
 
@@ -106,7 +103,6 @@ result = client.disbursement.get_refund_status(reference_id)
 print(f"Refund status: {result.status}")
 ```
 
----
 
 ## Get account balance
 
