@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 
@@ -82,8 +82,10 @@ class AirtelAuth:
         token = data.get("access_token")
         expires_in = data.get("expires_in")
 
-        if not token or expires_in is None:
-            raise AuthenticationError("Airtel OAuth response did not contain token data")
+        if not isinstance(token, str) or expires_in is None:
+            raise AuthenticationError(
+                "Airtel OAuth response did not contain token data"
+            )
 
         self._cache.set(token, int(expires_in))
         return token

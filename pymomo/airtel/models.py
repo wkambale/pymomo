@@ -4,7 +4,6 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # --- Request models ---
 
 
@@ -92,7 +91,16 @@ class AirtelTransactionResponse(BaseModel):
     def is_failed(self) -> bool:
         """Verify if transaction status is failed."""
         return self.status.result_code not in ("00", "02", "DP0000000000") and (
-            self.data.transaction.status not in ("SUCCESS", "SUCCESSFUL", "Initiated", "AS", "PENDING", "Pending", "02")
+            self.data.transaction.status
+            not in (
+                "SUCCESS",
+                "SUCCESSFUL",
+                "Initiated",
+                "AS",
+                "PENDING",
+                "Pending",
+                "02",
+            )
         )
 
 
