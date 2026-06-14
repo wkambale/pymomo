@@ -22,7 +22,6 @@ client = MomoClient(config)
 remittance_client = client.remittance
 ```
 
----
 
 ## Transfer
 
@@ -50,7 +49,6 @@ result = client.remittance.get_transfer_status(reference_id)
 print(f"Remittance status: {result.status}")
 ```
 
----
 
 ## Get account balance
 

@@ -26,7 +26,7 @@ with MomoClient(config) as client:
         config=config,
         http=client._http,
     )
-    credentials = provisioner.provision(callback_host="https://webhook.site")
+    credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
     print(f"API User UUID: {credentials['api_user']}")
     print(f"API Key: {credentials['api_key']}")
 ```

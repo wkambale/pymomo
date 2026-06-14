@@ -8,7 +8,6 @@ The CLI adheres to strict credential security rules:
 - Credentials (like subscription keys or API keys) are **never accepted as positional arguments**, preventing them from appearing in shell commands or history.
 - Credentials must be passed as command line options (e.g. `--subscription-key`) or as system environment variables.
 
----
 
 ## Sandbox commands
 
@@ -17,7 +16,7 @@ The CLI adheres to strict credential security rules:
 Create a sandbox API user and generate its API key:
 
 ```bash
-pymomo sandbox provision --subscription-key "your-subscription-key" --callback-host "https://webhook.site"
+pymomo sandbox provision --subscription-key "your-subscription-key" --callback-host "https://pymomo.aiforuganda.org"
 ```
 
 Output:
@@ -39,12 +38,11 @@ pymomo sandbox get-user "api-user-uuid-here" --subscription-key "your-subscripti
 Output:
 ```json
 {
-  "providerCallbackHost": "https://webhook.site",
+  "providerCallbackHost": "https://pymomo.aiforuganda.org",
   "targetEnvironment": "sandbox"
 }
 ```
 
----
 
 ## Collection commands
 
@@ -79,7 +77,6 @@ Output:
 }
 ```
 
----
 
 ## Disbursement and remittance commands
 

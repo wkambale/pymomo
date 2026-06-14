@@ -22,7 +22,6 @@ client = MomoClient(config)
 collection_client = client.collection
 ```
 
----
 
 ## Request to pay
 
@@ -52,7 +51,6 @@ if result.is_successful():
     print(f"Financial Transaction ID: {result.financial_transaction_id}")
 ```
 
----
 
 ## Request to withdraw
 
@@ -80,7 +78,6 @@ result = client.collection.get_withdraw_status(reference_id)
 print(f"Withdrawal status: {result.status}")
 ```
 
----
 
 ## Get account balance
 
@@ -100,7 +97,6 @@ balance = client.collection.get_balance_for_currency("UGX")
 print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
 
----
 
 ## Check if account holder is active
 
@@ -124,7 +120,6 @@ print(f"Name: {info.name}")
 print(f"Locale: {info.locale}")
 ```
 
----
 
 ## Backchannel authorize
 

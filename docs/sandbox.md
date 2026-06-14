@@ -20,14 +20,13 @@ with MomoClient(config) as client:
     )
     
     # Provision credentials
-    credentials = provisioner.provision(callback_host="https://webhook.site")
+    credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
     print(f"API User UUID: {credentials['api_user']}")
     print(f"API Key: {credentials['api_key']}")
 ```
 
 You can now use these generated values as the `api_user` and `api_key` properties in `ProductConfig` when making product client requests.
 
----
 
 ## Detailed provisioning steps
 

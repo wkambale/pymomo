@@ -37,7 +37,7 @@ def test_cli_sandbox_provision(httpx_mock: HTTPXMock) -> None:
                 "--subscription-key",
                 "test-sub-key",
                 "--callback-host",
-                "https://webhook.site",
+                "https://pymomo.aiforuganda.org",
             ],
         )
         assert result.exit_code == 0

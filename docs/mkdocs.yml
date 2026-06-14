@@ -1,7 +1,7 @@
 site_name: PyMoMo
-site_url: https://pymomo.github.io
-repo_url: https://github.com/pymomo/pymomo
-repo_name: pymomo/pymomo
+site_url: https://pymomo.aiforuganda.org
+repo_url: https://github.com/wkambale/pymomo
+repo_name: wkambale/pymomo
 
 theme:
   name: material

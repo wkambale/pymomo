@@ -6,7 +6,6 @@ PyMoMo provides complete asynchronous support through the `AsyncMomoClient` clas
 
 The async client exposes the exact same properties, method signatures, request models, and response results as the synchronous client. All remote network calls are declared as coroutines (`async def`) and must be awaited.
 
----
 
 ## Usage example
 
