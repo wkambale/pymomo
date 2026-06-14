@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymomo"
+version = "0.1.0"
+description = "Python client for the MTN Mobile Money (MoMo) API"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Wesley Kambale"},
+]
+keywords = ["mtn", "momo", "mobile money", "africa", "fintech", "payments"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "httpx>=0.27,<1",
+    "pydantic>=2.0,<3",
+    "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-httpx>=0.30",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.9",
+    "ruff>=0.4",
+    "black>=24",
+    "isort>=5",
+    "bandit>=1.7",
+    "pre-commit>=3",
+]
+
+[project.scripts]
+pymomo = "pymomo._cli:app"
+
+[project.urls]
+Homepage = "https://pymomo.github.io"
+Repository = "https://github.com/wkambale/pymomo"
+Documentation = "https://pymomo.github.io"
+Changelog = "https://github.com/wkambale/pymomo/blob/main/CHANGELOG.md"
+
+[tool.mypy]
+strict = true
+python_version = "3.9"
+
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["pymomo"]
+
+[tool.coverage.report]
+fail_under = 90
+
+[tool.isort]
+profile = "black"
+
+[tool.bandit]
+skips = ["B101", "B105", "B110"]
