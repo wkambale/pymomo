@@ -241,7 +241,7 @@ def test_cli_error_handling(httpx_mock: HTTPXMock) -> None:
         status_code=401,
     )
 
-    err_runner = CliRunner(mix_stderr=False)
+    err_runner = CliRunner()
     result = err_runner.invoke(
         app,
         [
@@ -256,4 +256,9 @@ def test_cli_error_handling(httpx_mock: HTTPXMock) -> None:
         ],
     )
     assert result.exit_code == 1
-    assert "Error: " in result.stderr
+    # Check either stderr (newer typer/click) or stdout (older typer/click which mixes them by default)
+    try:
+        error_msg = result.stderr
+    except ValueError:
+        error_msg = result.stdout
+    assert "Error: " in error_msg
