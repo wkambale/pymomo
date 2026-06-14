@@ -3,6 +3,8 @@ from __future__ import annotations
 # Async client exports
 from pymomo._async.client import AsyncMomoClient
 from pymomo._async.sandbox import AsyncSandboxProvisioner
+from pymomo.airtel.client import AirtelClient
+from pymomo.airtel.config import AirtelConfig
 from pymomo.auth import TokenCache
 from pymomo.client import MomoClient
 from pymomo.config import MomoConfig, ProductConfig
@@ -42,9 +44,11 @@ __all__ = [
     # Clients
     "MomoClient",
     "AsyncMomoClient",
+    "AirtelClient",
     # Configs
     "MomoConfig",
     "ProductConfig",
+    "AirtelConfig",
     "TokenCache",
     # Sandbox
     "SandboxProvisioner",
