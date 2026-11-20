@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Optional, TypeVar, cast
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 
 import typer
 
@@ -43,9 +44,9 @@ def handle_cli_exceptions(func: F) -> F:
                 msg = "An unexpected error occurred."
             typer.echo(f"Error: {msg}", err=True)
             raise typer.Exit(code=1)
-        except Exception as e:
-            typer.echo(f"Unexpected error: {str(e)}", err=True)
-            raise typer.Exit(code=1)
+        except Exception as e:  # noqa: BLE001
+            typer.echo(f"Unexpected error: {e!s}", err=True)
+            raise typer.Exit(code=1) from None
 
     return cast(F, wrapper)
 
@@ -203,7 +204,7 @@ def collection_request_to_pay(
         "--payee-note",
         help="Note to the payee.",
     ),
-    reference_id: Optional[str] = typer.Option(
+    reference_id: str | None = typer.Option(
         None,
         "--reference-id",
         help="Optional custom UUID reference ID.",

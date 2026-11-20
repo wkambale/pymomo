@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pymomo.airtel.models import (
     AirtelCollectionRequest,
@@ -24,7 +24,7 @@ class Collection:
         self,
         amount: str,
         payer_msisdn: str,
-        reference_id: Optional[str] = None,
+        reference_id: str | None = None,
     ) -> str:
         """Initiate a payment collection (USSD Push).
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field
 
 # --- Request models ---
@@ -55,13 +53,13 @@ class AirtelStatus(BaseModel):
 class AirtelTransactionDetails(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    airtel_money_id: Optional[str] = Field(default=None, alias="airtel_money_id")
-    id: Optional[str] = None
-    status: Optional[str] = None
-    message: Optional[str] = None
-    amount: Optional[str] = None
-    currency: Optional[str] = None
-    reference: Optional[str] = None
+    airtel_money_id: str | None = Field(default=None, alias="airtel_money_id")
+    id: str | None = None
+    status: str | None = None
+    message: str | None = None
+    amount: str | None = None
+    currency: str | None = None
+    reference: str | None = None
 
 
 class AirtelData(BaseModel):

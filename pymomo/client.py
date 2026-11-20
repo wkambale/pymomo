@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig
 from pymomo.exceptions import MissingCredentialsError
@@ -8,6 +10,9 @@ from pymomo.products.collection import Collection
 from pymomo.products.disbursement import Disbursement
 from pymomo.products.remittance import Remittance
 from pymomo.sandbox import SandboxProvisioner
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 
 class MomoClient:
@@ -113,7 +118,7 @@ class MomoClient:
         """Close the underlying HttpClient session."""
         self._http.close()
 
-    def __enter__(self) -> MomoClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

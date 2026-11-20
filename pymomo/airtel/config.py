@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 AIRTEL_SANDBOX_BASE_URL = "https://openapiuat.airtel.africa"
 AIRTEL_PRODUCTION_BASE_URL = "https://openapi.airtel.africa"
@@ -15,9 +14,9 @@ class AirtelConfig:
     client_secret: str
     country: str  # ISO country code (e.g. "UG")
     currency: str  # ISO currency code (e.g. "UGX")
-    pin: Optional[str] = None  # Needed for disbursements
+    pin: str | None = None  # Needed for disbursements
     environment: str = "sandbox"
-    base_url: Optional[str] = None
+    base_url: str | None = None
     timeout: float = 30.0
 
     def __post_init__(self) -> None:

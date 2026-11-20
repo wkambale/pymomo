@@ -2,6 +2,7 @@ site_name: PyMoMo
 site_url: https://pymomo.aiforuganda.org
 repo_url: https://github.com/wkambale/pymomo
 repo_name: wkambale/pymomo
+docs_dir: .
 
 theme:
   name: material

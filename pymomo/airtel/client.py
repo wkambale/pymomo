@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -17,6 +17,9 @@ from pymomo.exceptions import (
     PyMoMoError,
     ResourceNotFoundError,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 logger = logging.getLogger("pymomo.airtel.client")
 
@@ -49,8 +52,8 @@ class AirtelClient:
             timeout=config.timeout,
         )
 
-        self._collection: Optional[Collection] = None
-        self._disbursement: Optional[Disbursement] = None
+        self._collection: Collection | None = None
+        self._disbursement: Disbursement | None = None
 
     @property
     def collection(self) -> Collection:
@@ -71,7 +74,7 @@ class AirtelClient:
         method: str,
         path: str,
         *,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         json: Any = None,
     ) -> httpx.Response:
         """Execute HTTP request with automatic headers, authentication, and retry logic."""
@@ -144,9 +147,11 @@ class AirtelClient:
             return
         body: dict[str, Any] = {}
         try:
-            body = response.json()
-        except Exception:
-            pass
+            parsed = response.json()
+            if isinstance(parsed, dict):
+                body = parsed
+        except ValueError:
+            body = {}
 
         if response.status_code == 400:
             raise BadRequestError(
@@ -166,7 +171,7 @@ class AirtelClient:
         """Close the underlying HttpClient session."""
         self._http.close()
 
-    def __enter__(self) -> AirtelClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:

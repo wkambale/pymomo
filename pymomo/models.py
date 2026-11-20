@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -107,7 +106,7 @@ class BcAuthorizeResponse(BaseModel):
 
     auth_req_id: str = Field(alias="auth_req_id")
     expires_in: int = Field(alias="expires_in")
-    interval: Optional[int] = Field(default=None, alias="interval")
+    interval: int | None = Field(default=None, alias="interval")
 
 
 class Balance(BaseModel):
@@ -120,18 +119,18 @@ class Balance(BaseModel):
 class TransactionResult(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    financial_transaction_id: Optional[str] = Field(
+    financial_transaction_id: str | None = Field(
         default=None, alias="financialTransactionId"
     )
-    external_id: Optional[str] = Field(default=None, alias="externalId")
-    amount: Optional[str] = None
-    currency: Optional[str] = None
-    payer: Optional[Party] = None
-    payee: Optional[Party] = None
-    payer_message: Optional[str] = Field(default=None, alias="payerMessage")
-    payee_note: Optional[str] = Field(default=None, alias="payeeNote")
+    external_id: str | None = Field(default=None, alias="externalId")
+    amount: str | None = None
+    currency: str | None = None
+    payer: Party | None = None
+    payee: Party | None = None
+    payer_message: str | None = Field(default=None, alias="payerMessage")
+    payee_note: str | None = Field(default=None, alias="payeeNote")
     status: TransactionStatus
-    reason: Optional[str] = None
+    reason: str | None = None
 
     def is_successful(self) -> bool:
         return self.status == TransactionStatus.successful
@@ -146,23 +145,23 @@ class TransactionResult(BaseModel):
 class BasicUserInfo(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    sub: Optional[str] = None
-    name: Optional[str] = None
-    given_name: Optional[str] = None
-    family_name: Optional[str] = None
-    birthdate: Optional[str] = None
-    locale: Optional[str] = None
-    gender: Optional[str] = None
-    status: Optional[str] = None
+    sub: str | None = None
+    name: str | None = None
+    given_name: str | None = None
+    family_name: str | None = None
+    birthdate: str | None = None
+    locale: str | None = None
+    gender: str | None = None
+    status: str | None = None
 
 
 class ApiUserInfo(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    provider_callback_host: Optional[str] = Field(
+    provider_callback_host: str | None = Field(
         default=None, alias="providerCallbackHost"
     )
-    target_environment: Optional[str] = Field(default=None, alias="targetEnvironment")
+    target_environment: str | None = Field(default=None, alias="targetEnvironment")
 
 
 class ApiKeyResult(BaseModel):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 # Environment string constants
 SANDBOX = "sandbox"
@@ -29,7 +28,7 @@ class ProductConfig:
     subscription_key: str
     api_user: str
     api_key: str
-    callback_url: Optional[str] = None
+    callback_url: str | None = None
 
     def __repr__(self) -> str:
         return (
@@ -43,11 +42,11 @@ class MomoConfig:
     """Top-level configuration for a MomoClient instance."""
 
     environment: str = SANDBOX
-    base_url: Optional[str] = None  # Override for testing
+    base_url: str | None = None  # Override for testing
     timeout: float = 30.0
-    collection: Optional[ProductConfig] = None
-    disbursement: Optional[ProductConfig] = None
-    remittance: Optional[ProductConfig] = None
+    collection: ProductConfig | None = None
+    disbursement: ProductConfig | None = None
+    remittance: ProductConfig | None = None
 
     def __post_init__(self) -> None:
         if self.base_url is None:

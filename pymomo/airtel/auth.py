@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 import httpx
 
@@ -15,10 +14,10 @@ class AirtelTokenCache:
     """Thread-safe in-memory cache for Airtel access tokens."""
 
     def __init__(self) -> None:
-        self._access_token: Optional[str] = None
+        self._access_token: str | None = None
         self._expires_at: float = 0.0
 
-    def get(self) -> Optional[str]:
+    def get(self) -> str | None:
         if self._access_token and time.monotonic() < self._expires_at:
             return self._access_token
         self._access_token = None
