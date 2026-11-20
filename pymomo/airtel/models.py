@@ -30,6 +30,12 @@ class AirtelCollectionRequest(BaseModel):
     transaction: AirtelTransactionRequest
 
 
+_AIRTEL_SUCCESS_STATUSES = frozenset({"TS", "SUCCESS", "SUCCESSFUL"})
+_AIRTEL_PENDING_STATUSES = frozenset(
+    {"TIP", "PENDING", "INITIATED", "02", "AMBIGUOUS", "TA"}
+)
+
+
 class AirtelDisbursementRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -37,6 +43,15 @@ class AirtelDisbursementRequest(BaseModel):
     number: str
     reference: str
     pin: str
+
+    def __repr__(self) -> str:
+        return (
+            f"AirtelDisbursementRequest(amount={self.amount!r}, "
+            f"number={self.number!r}, reference={self.reference!r}, pin=<redacted>)"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 # --- Response models ---
@@ -74,32 +89,42 @@ class AirtelTransactionResponse(BaseModel):
     status: AirtelStatus
     data: AirtelData
 
+    def _normalized_tx_status(self) -> str | None:
+        raw = self.data.transaction.status
+        if raw is None:
+            return None
+        stripped = raw.strip().upper()
+        return stripped or None
+
     def is_successful(self) -> bool:
-        """Verify if transaction request succeeded or initiated successfully."""
-        return self.status.result_code in ("00", "DP0000000000") or (
-            self.data.transaction.status in ("SUCCESS", "SUCCESSFUL", "Initiated", "AS")
-        )
+        """Verify if the transaction has settled successfully.
+
+        Uses ``data.transaction.status`` as the authoritative transaction state
+        so that a successful API query envelope (for example ``result_code == "00"``)
+        cannot falsely mark a pending, initiated, or failed transaction as
+        successful.
+        """
+        tx_status = self._normalized_tx_status()
+        if tx_status is None:
+            return False
+        return tx_status in _AIRTEL_SUCCESS_STATUSES
 
     def is_pending(self) -> bool:
-        """Verify if transaction status is currently pending."""
-        return self.status.result_code == "02" or (
-            self.data.transaction.status in ("PENDING", "Pending", "02")
-        )
+        """Verify if the transaction status is currently pending."""
+        tx_status = self._normalized_tx_status()
+        if tx_status is not None:
+            return tx_status in _AIRTEL_PENDING_STATUSES
+        return self.status.result_code == "02"
 
     def is_failed(self) -> bool:
-        """Verify if transaction status is failed."""
-        return self.status.result_code not in ("00", "02", "DP0000000000") and (
-            self.data.transaction.status
-            not in (
-                "SUCCESS",
-                "SUCCESSFUL",
-                "Initiated",
-                "AS",
-                "PENDING",
-                "Pending",
-                "02",
+        """Verify if the transaction status is failed."""
+        tx_status = self._normalized_tx_status()
+        if tx_status is not None:
+            return (
+                tx_status not in _AIRTEL_SUCCESS_STATUSES
+                and tx_status not in _AIRTEL_PENDING_STATUSES
             )
-        )
+        return self.status.result_code not in ("00", "02", "DP0000000000")
 
 
 class AirtelWalletDetails(BaseModel):
