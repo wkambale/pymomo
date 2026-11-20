@@ -8,7 +8,13 @@ from dataclasses import dataclass
 @dataclass
 class _CachedToken:
     access_token: str
-    expires_at: float  # Unix timestamp
+    expires_at: float  # Monotonic timestamp
+
+    def __repr__(self) -> str:
+        return f"_CachedToken(access_token=<redacted>, expires_at={self.expires_at!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 class TokenCache:
@@ -42,3 +48,11 @@ class TokenCache:
         """Remove a cached token, forcing the next call to re-authenticate."""
         with self._lock:
             self._cache.pop(product, None)
+
+    def __repr__(self) -> str:
+        with self._lock:
+            products = sorted(self._cache.keys())
+        return f"TokenCache(products={products!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()

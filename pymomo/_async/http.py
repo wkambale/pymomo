@@ -53,10 +53,10 @@ class AsyncHttpClient:
             response = await self._client.request(
                 method, path, headers=headers, json=json, data=data
             )
-        except httpx.TimeoutException as exc:
-            raise PyMoMoError(f"Request timed out: {method} {path}") from exc
-        except httpx.RequestError as exc:
-            raise PyMoMoError(f"Connection error: {method} {path}") from exc
+        except httpx.TimeoutException:
+            raise PyMoMoError(f"Request timed out: {method} {path}") from None
+        except httpx.RequestError:
+            raise PyMoMoError(f"Connection error: {method} {path}") from None
 
         if (
             response.status_code == 401
@@ -70,10 +70,10 @@ class AsyncHttpClient:
             # Re-fetch a token asynchronously
             try:
                 new_token = await token_refresher()
-            except Exception as exc:
+            except (PyMoMoError, ValueError):
                 raise AuthenticationError(
                     "Authentication failed during token refresh"
-                ) from exc
+                ) from None
 
             # Retry original request exactly once
             retry_headers = headers.copy()
@@ -84,14 +84,14 @@ class AsyncHttpClient:
                 response = await self._client.request(
                     method, path, headers=retry_headers, json=json, data=data
                 )
-            except httpx.TimeoutException as exc:
+            except httpx.TimeoutException:
                 raise PyMoMoError(
                     f"Request timed out on retry: {method} {path}"
-                ) from exc
-            except httpx.RequestError as exc:
+                ) from None
+            except httpx.RequestError:
                 raise PyMoMoError(
                     f"Connection error on retry: {method} {path}"
-                ) from exc
+                ) from None
 
         _raise_for_status(response)
         return response
