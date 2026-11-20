@@ -14,6 +14,7 @@ from pymomo.exceptions import (
     PyMoMoError,
     ResourceNotFoundError,
 )
+from pymomo.utils import validate_base_url, validate_request_path
 
 logger = logging.getLogger("pymomo.http")
 
@@ -22,16 +23,11 @@ class AsyncHttpClient:
     """Thin wrapper around httpx.AsyncClient with retry logic and error mappings."""
 
     def __init__(self, base_url: str, timeout: float) -> None:
-        # Check HTTPS requirement (except for localhost/127.0.0.1)
-        parsed_url = base_url.lower()
-        if parsed_url.startswith("http://"):
-            host = parsed_url[7:].split("/")[0].split(":")[0]
-            if host not in ("localhost", "127.0.0.1"):
-                raise PyMoMoError("Base URL must use HTTPS")
-
+        validated_url = validate_base_url(base_url)
         self._client = httpx.AsyncClient(
-            base_url=base_url,
+            base_url=validated_url,
             timeout=timeout,
+            follow_redirects=False,
         )
 
     async def request(
@@ -47,6 +43,7 @@ class AsyncHttpClient:
         token_refresher: Callable[[], Coroutine[Any, Any, str]] | None = None,
     ) -> httpx.Response:
         """Execute async HTTP request with 401 retry mapping."""
+        validate_request_path(path)
         logger.debug("%s %s", method, path)
         try:
             response = await self._client.request(

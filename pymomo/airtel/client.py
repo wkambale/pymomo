@@ -17,6 +17,7 @@ from pymomo.exceptions import (
     PyMoMoError,
     ResourceNotFoundError,
 )
+from pymomo.utils import validate_base_url, validate_request_path
 
 logger = logging.getLogger("pymomo.airtel.client")
 
@@ -30,13 +31,7 @@ class AirtelClient:
     def __init__(self, config: AirtelConfig) -> None:
         self._config = config
 
-        # Check HTTPS requirement (except for localhost/127.0.0.1)
-        base_url = self._config.base_url or ""
-        parsed_url = base_url.lower()
-        if parsed_url.startswith("http://"):
-            host = parsed_url[7:].split("/")[0].split(":")[0]
-            if host not in ("localhost", "127.0.0.1"):
-                raise PyMoMoError("Base URL must use HTTPS")
+        base_url = validate_base_url(self._config.base_url or "")
 
         self._auth = AirtelAuth(
             client_id=config.client_id,
@@ -47,6 +42,7 @@ class AirtelClient:
         self._http = httpx.Client(
             base_url=base_url,
             timeout=config.timeout,
+            follow_redirects=False,
         )
 
         self._collection: Optional[Collection] = None
@@ -75,6 +71,7 @@ class AirtelClient:
         json: Any = None,
     ) -> httpx.Response:
         """Execute HTTP request with automatic headers, authentication, and retry logic."""
+        validate_request_path(path)
         # 1. Build standard headers
         req_headers = {
             "X-Country": self._config.country,

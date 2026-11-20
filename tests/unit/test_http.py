@@ -31,7 +31,82 @@ def test_https_enforcement_sync() -> None:
     HttpClient("http://127.0.0.1:8080", 30.0)
 
     # Valid HTTPS
-    HttpClient("https://example.com", 30.0)
+    client = HttpClient("https://example.com", 30.0)
+    assert client._client.follow_redirects is False
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://localhost:80@evil.example.com",
+        "http://127.0.0.1:80@evil.example.com",
+        "http://localhost@evil.example.com",
+        " http://evil.example.com",
+        "https://example.com ",
+        "ftp://evil.example.com",
+        "",
+        "http://localhost\\@evil.example.com",
+        "https://user:pass@example.com",
+        "https://example.com?foo=bar",
+        "https://example.com#frag",
+        "https://example.com\r\nX-Injected: true",
+    ],
+)
+def test_https_enforcement_rejects_url_parser_bypasses(bad_url: str) -> None:
+    """Verify URL parser differentials and unsafe schemes are rejected."""
+    with pytest.raises(PyMoMoError):
+        HttpClient(bad_url, 30.0)
+    with pytest.raises(PyMoMoError):
+        AsyncHttpClient(bad_url, 30.0)
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "http://evil.example.com/steal",
+        "https://evil.example.com/steal",
+        "//evil.example.com/steal",
+        "relative/without/slash",
+        "",
+        "/path\\evil",
+        "/path\r\nX-Injected: 1",
+    ],
+)
+def test_request_rejects_non_relative_paths_sync(bad_path: str) -> None:
+    """Verify HttpClient.request rejects absolute or protocol-relative paths."""
+    client = HttpClient("https://example.com", 30.0)
+    with pytest.raises(PyMoMoError):
+        client.request("GET", bad_path, headers={})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "http://evil.example.com/steal",
+        "https://evil.example.com/steal",
+        "//evil.example.com/steal",
+        "relative/without/slash",
+    ],
+)
+async def test_request_rejects_non_relative_paths_async(bad_path: str) -> None:
+    """Verify AsyncHttpClient.request rejects absolute or protocol-relative paths."""
+    client = AsyncHttpClient("https://example.com", 30.0)
+    with pytest.raises(PyMoMoError):
+        await client.request("GET", bad_path, headers={})
+
+
+def test_clients_reject_missing_base_url_without_assert() -> None:
+    """Verify MomoClient and AsyncMomoClient reject empty base_url cleanly."""
+    from pymomo import AsyncMomoClient, MomoClient
+    from pymomo.config import MomoConfig
+
+    config = MomoConfig()
+    config.base_url = ""
+    with pytest.raises(PyMoMoError, match="Base URL must use HTTPS"):
+        MomoClient(config)
+    with pytest.raises(PyMoMoError, match="Base URL must use HTTPS"):
+        AsyncMomoClient(config)
 
 
 @pytest.mark.asyncio
