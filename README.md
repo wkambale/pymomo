@@ -2,7 +2,7 @@
 
 [![PyPI Version](https://img.shields.io/pypi/v/py-momo-api.svg)](https://pypi.org/project/py-momo-api/)
 [![Build Status](https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg)](https://github.com/wkambale/pymomo/actions)
-[![License](https://img.shields.io/github/license/wkambale/pymomo.svg)](https://github.com/wkambale/pymomo/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Py MoMo API (`py-momo-api` 1.0.4) is a fully-typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API and Airtel Money API. It provides synchronous and asynchronous clients with complete feature parity, automatic token caching, strict validation, and comprehensive product coverage.
 
