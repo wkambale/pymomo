@@ -6,7 +6,7 @@ from unittest.mock import patch
 from pytest_httpx import HTTPXMock
 from typer.testing import CliRunner
 
-from py_momo_api._cli import app
+from py_momo_sdk._cli import app
 
 runner = CliRunner()
 
@@ -26,7 +26,7 @@ def test_cli_sandbox_provision(httpx_mock: HTTPXMock) -> None:
     )
 
     with patch(
-        "py_momo_api.sandbox.generate_reference_id",
+        "py_momo_sdk.sandbox.generate_reference_id",
         return_value="e4d6934c-6fa1-49b4-9c59-bf558661b17c",
     ):
         result = runner.invoke(
@@ -37,7 +37,7 @@ def test_cli_sandbox_provision(httpx_mock: HTTPXMock) -> None:
                 "--subscription-key",
                 "test-sub-key",
                 "--callback-host",
-                "https://pymomo.aiforuganda.org",
+                "https://example.com",
             ],
         )
         assert result.exit_code == 0
@@ -132,7 +132,7 @@ def test_cli_collection_request_to_pay(httpx_mock: HTTPXMock) -> None:
     )
 
     with patch(
-        "py_momo_api.products.collection.generate_reference_id",
+        "py_momo_sdk.products.collection.generate_reference_id",
         return_value="e4d6934c-6fa1-49b4-9c59-bf558661b17c",
     ):
         result = runner.invoke(
@@ -267,7 +267,7 @@ def test_cli_error_handling(httpx_mock: HTTPXMock) -> None:
 def test_cli_sanitizes_unexpected_exceptions() -> None:
     """Verify unexpected internal exceptions do not dump raw exception text."""
     with patch(
-        "py_momo_api._cli.PyMomoAPI",
+        "py_momo_sdk._cli.PyMomoSDK",
         side_effect=RuntimeError("internal secret=super-secret-value"),
     ):
         result = runner.invoke(
@@ -297,8 +297,8 @@ def test_cli_version() -> None:
     for flag in ("--version", "-V"):
         result = runner.invoke(app, [flag])
         assert result.exit_code == 0
-        assert result.stdout.startswith("py-momo-api ")
-        assert result.stdout.strip() != "py-momo-api 0.0.0"
+        assert result.stdout.startswith("py-momo-sdk ")
+        assert result.stdout.strip() != "py-momo-sdk 0.0.0"
 
 
 def test_cli_collection_status(httpx_mock: HTTPXMock) -> None:

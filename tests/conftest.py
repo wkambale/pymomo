@@ -4,8 +4,8 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from py_momo_api import AsyncPyMomoAPI, PyMomoAPI
-from py_momo_api.config import SANDBOX, ProductConfig, PyMomoAPIConfig
+from py_momo_sdk import AsyncPyMomoSDK, PyMomoSDK
+from py_momo_sdk.config import SANDBOX, ProductConfig, PyMomoSDKConfig
 
 
 @pytest.fixture
@@ -46,9 +46,9 @@ def momo_config(
     collection_config: ProductConfig,
     disbursement_config: ProductConfig,
     remittance_config: ProductConfig,
-) -> PyMomoAPIConfig:
-    """Fixture for top-level PyMomoAPIConfig containing all product configurations."""
-    return PyMomoAPIConfig(
+) -> PyMomoSDKConfig:
+    """Fixture for top-level PyMomoSDKConfig containing all product configurations."""
+    return PyMomoSDKConfig(
         environment=SANDBOX,
         collection=collection_config,
         disbursement=disbursement_config,
@@ -57,15 +57,15 @@ def momo_config(
 
 
 @pytest.fixture
-def client(momo_config: PyMomoAPIConfig) -> PyMomoAPI:
-    """Fixture for a configured synchronous PyMomoAPI."""
-    return PyMomoAPI(momo_config)
+def client(momo_config: PyMomoSDKConfig) -> PyMomoSDK:
+    """Fixture for a configured synchronous PyMomoSDK."""
+    return PyMomoSDK(momo_config)
 
 
 @pytest.fixture
 async def async_client(
-    momo_config: PyMomoAPIConfig,
-) -> AsyncGenerator[AsyncPyMomoAPI, None]:
-    """Fixture for a configured asynchronous AsyncPyMomoAPI."""
-    async with AsyncPyMomoAPI(momo_config) as client:
+    momo_config: PyMomoSDKConfig,
+) -> AsyncGenerator[AsyncPyMomoSDK, None]:
+    """Fixture for a configured asynchronous AsyncPyMomoSDK."""
+    async with AsyncPyMomoSDK(momo_config) as client:
         yield client

@@ -6,8 +6,8 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
-from py_momo_api.airtel.auth import AirtelAuth, AirtelTokenCache
-from py_momo_api.exceptions import AuthenticationError, PyMomoAPIError
+from py_momo_sdk.airtel.auth import AirtelAuth, AirtelTokenCache
+from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
 
 
 def test_airtel_token_cache_get_set_invalidate() -> None:
@@ -124,7 +124,7 @@ def test_airtel_auth_get_token_invalid_response(httpx_mock: HTTPXMock) -> None:
 
 
 def test_airtel_auth_get_token_exceptions() -> None:
-    """Verify connection or timeout issues raise PyMomoAPIError."""
+    """Verify connection or timeout issues raise PyMomoSDKError."""
     auth = AirtelAuth(
         client_id="my-client-id",
         client_secret="my-client-secret",
@@ -135,12 +135,12 @@ def test_airtel_auth_get_token_exceptions() -> None:
         with patch.object(
             client, "request", side_effect=httpx.TimeoutException("timeout")
         ):
-            with pytest.raises(PyMomoAPIError) as excinfo:
+            with pytest.raises(PyMomoSDKError) as excinfo:
                 auth.get_token(client)
             assert "Airtel authentication request timed out" in str(excinfo.value)
 
         with patch.object(client, "request", side_effect=httpx.RequestError("conn")):
-            with pytest.raises(PyMomoAPIError) as excinfo:
+            with pytest.raises(PyMomoSDKError) as excinfo:
                 auth.get_token(client)
             assert "Airtel authentication request connection error" in str(
                 excinfo.value

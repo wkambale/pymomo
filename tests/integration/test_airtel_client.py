@@ -5,9 +5,9 @@ import json
 import pytest
 from pytest_httpx import HTTPXMock
 
-from py_momo_api.airtel.client import AirtelClient
-from py_momo_api.airtel.config import AirtelConfig
-from py_momo_api.exceptions import AuthenticationError, PyMomoAPIError
+from py_momo_sdk.airtel.client import AirtelClient
+from py_momo_sdk.airtel.config import AirtelConfig
+from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
 
 
 def mock_airtel_token(
@@ -24,7 +24,7 @@ def mock_airtel_token(
 def test_airtel_client_https_enforcement() -> None:
     """Verify that AirtelClient enforces HTTPS on base URL unless localhost/127.0.0.1 is used."""
     # Invalid HTTP
-    with pytest.raises(PyMomoAPIError) as excinfo:
+    with pytest.raises(PyMomoSDKError) as excinfo:
         AirtelClient(
             AirtelConfig(
                 client_id="id",
@@ -76,7 +76,7 @@ def test_airtel_client_https_enforcement() -> None:
         "ftp://evil.example.com",
         "https://user:pass@example.com",
     ):
-        with pytest.raises(PyMomoAPIError):
+        with pytest.raises(PyMomoSDKError):
             AirtelClient(
                 AirtelConfig(
                     client_id="id",
@@ -94,7 +94,7 @@ def test_airtel_client_https_enforcement() -> None:
         "//evil.example.com/steal",
         "no-leading-slash",
     ):
-        with pytest.raises(PyMomoAPIError):
+        with pytest.raises(PyMomoSDKError):
             client.request("GET", bad_path)
 
 
@@ -327,7 +327,7 @@ def test_airtel_client_401_retry_once(httpx_mock: HTTPXMock) -> None:
 
 
 def test_airtel_client_exceptions(httpx_mock: HTTPXMock) -> None:
-    """Verify connection errors and timeouts raise PyMomoAPIError in AirtelClient."""
+    """Verify connection errors and timeouts raise PyMomoSDKError in AirtelClient."""
     from unittest.mock import patch
 
     import httpx
@@ -347,7 +347,7 @@ def test_airtel_client_exceptions(httpx_mock: HTTPXMock) -> None:
         with patch.object(
             client._http, "request", side_effect=httpx.TimeoutException("timeout")
         ):
-            with pytest.raises(PyMomoAPIError) as excinfo:
+            with pytest.raises(PyMomoSDKError) as excinfo:
                 client.request("GET", "/test")
             assert "Airtel request timed out" in str(excinfo.value)
 
@@ -355,7 +355,7 @@ def test_airtel_client_exceptions(httpx_mock: HTTPXMock) -> None:
         with patch.object(
             client._http, "request", side_effect=httpx.RequestError("connect")
         ):
-            with pytest.raises(PyMomoAPIError) as excinfo:
+            with pytest.raises(PyMomoSDKError) as excinfo:
                 client.request("GET", "/test")
             assert "Airtel connection error" in str(excinfo.value)
 
@@ -398,7 +398,7 @@ def test_airtel_client_401_refresh_failure(httpx_mock: HTTPXMock) -> None:
 
 
 def test_airtel_client_retry_exceptions(httpx_mock: HTTPXMock) -> None:
-    """Verify that request errors or timeouts during retried request raise PyMomoAPIError."""
+    """Verify that request errors or timeouts during retried request raise PyMomoSDKError."""
     from unittest.mock import patch
 
     import httpx
@@ -441,7 +441,7 @@ def test_airtel_client_retry_exceptions(httpx_mock: HTTPXMock) -> None:
             httpx.TimeoutException("timeout"),
         ],
     ):
-        with pytest.raises(PyMomoAPIError) as excinfo:
+        with pytest.raises(PyMomoSDKError) as excinfo:
             client.request("GET", "/test")
         assert "Airtel request timed out on retry" in str(excinfo.value)
 
@@ -464,7 +464,7 @@ def test_airtel_client_retry_exceptions(httpx_mock: HTTPXMock) -> None:
             httpx.RequestError("connect"),
         ],
     ):
-        with pytest.raises(PyMomoAPIError) as excinfo:
+        with pytest.raises(PyMomoSDKError) as excinfo:
             client.request("GET", "/test")
         assert "Airtel connection error on retry" in str(excinfo.value)
 
@@ -487,10 +487,10 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
             json={"message": "invalid parameters"},
             status_code=400,
         )
-        from py_momo_api.exceptions import (
+        from py_momo_sdk.exceptions import (
             BadRequestError,
             ConflictError,
-            PyMomoAPIServerError,
+            PyMomoSDKServerError,
             ResourceNotFoundError,
         )
 
@@ -522,7 +522,7 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
             url="https://openapiuat.airtel.africa/server-err",
             status_code=500,
         )
-        with pytest.raises(PyMomoAPIServerError):
+        with pytest.raises(PyMomoSDKServerError):
             client.request("GET", "/server-err")
 
         # HTTP 418 Unexpected Error
@@ -531,14 +531,14 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
             url="https://openapiuat.airtel.africa/teapot",
             status_code=418,
         )
-        with pytest.raises(PyMomoAPIError) as excinfo:
+        with pytest.raises(PyMomoSDKError) as excinfo:
             client.request("GET", "/teapot")
         assert "Unexpected Airtel HTTP status: 418" in str(excinfo.value)
 
 
 def test_airtel_transaction_response_status_states() -> None:
     """Verify transaction status takes precedence over API envelope result_code."""
-    from py_momo_api.airtel.models import (
+    from py_momo_sdk.airtel.models import (
         AirtelDisbursementRequest,
         AirtelTransactionResponse,
     )
@@ -632,11 +632,11 @@ def test_airtel_client_header_method_and_config_guards(
         currency="UGX",
     )
     with AirtelClient(config) as client:
-        with pytest.raises(PyMomoAPIError, match="HTTP method"):
+        with pytest.raises(PyMomoSDKError, match="HTTP method"):
             client.request("GET\r\nEvil", "/test")
-        with pytest.raises(PyMomoAPIError, match="header name"):
+        with pytest.raises(PyMomoSDKError, match="header name"):
             client.request("GET", "/test", headers={"Bad Header": "v"})
-        with pytest.raises(PyMomoAPIError, match="control characters"):
+        with pytest.raises(PyMomoSDKError, match="control characters"):
             client.request("GET", "/test", headers={"X-Custom": "ok\r\nInjected: 1"})
 
         mock_airtel_token(httpx_mock)

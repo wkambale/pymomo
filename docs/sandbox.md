@@ -7,29 +7,29 @@ The sandbox environment lets you test your integration without moving live funds
 The `SandboxProvisioner.provision()` method creates a sandbox API user and generates an API key in a single call:
 
 ```python
-from py_momo_api import PyMomoAPI, PyMomoAPIConfig
+from py_momo_sdk import PyMomoSDK, PyMomoSDKConfig
 
-config = PyMomoAPIConfig(environment="sandbox")
+config = PyMomoSDKConfig(environment="sandbox")
 
-with PyMomoAPI(config) as client:
+with PyMomoSDK(config) as client:
     provisioner = client.create_sandbox_provisioner("your-subscription-key")
-    credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
+    credentials = provisioner.provision(callback_host="https://example.com")
     print(f"API user UUID: {credentials['api_user']}")
     print(f"API key: {credentials['api_key']}")
 ```
 
-You can also provision asynchronously with `AsyncPyMomoAPI.create_sandbox_provisioner(...)`:
+You can also provision asynchronously with `AsyncPyMomoSDK.create_sandbox_provisioner(...)`:
 
 ```python
 import asyncio
-from py_momo_api import AsyncPyMomoAPI, PyMomoAPIConfig
+from py_momo_sdk import AsyncPyMomoSDK, PyMomoSDKConfig
 
 async def main() -> None:
-    config = PyMomoAPIConfig(environment="sandbox")
-    async with AsyncPyMomoAPI(config) as client:
+    config = PyMomoSDKConfig(environment="sandbox")
+    async with AsyncPyMomoSDK(config) as client:
         provisioner = client.create_sandbox_provisioner("your-subscription-key")
         credentials = await provisioner.provision(
-            callback_host="https://pymomo.aiforuganda.org"
+            callback_host="https://example.com"
         )
         print(f"API user UUID: {credentials['api_user']}")
 
@@ -47,7 +47,7 @@ If you need fine-grained control over sandbox setup, run each provisioning opera
 Create a new sandbox API user. Supply a canonical UUID v4 or omit `api_user` to generate one automatically:
 
 ```python
-with PyMomoAPI(config) as client:
+with PyMomoSDK(config) as client:
     provisioner = client.create_sandbox_provisioner("your-subscription-key")
 
     # Omit api_user to auto-generate a canonical UUID v4

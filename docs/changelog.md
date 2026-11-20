@@ -1,6 +1,12 @@
 # Changelog
 
-All notable changes to the Py MoMo API (`py-momo-api`) project will be documented in this file.
+All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
+
+## 1.0.6 - 2026-11-20
+
+### Changed
+- Renamed the brand, PyPI distribution, Python package, classes, CLI command, and environment variables from `Py MoMo API` / `py-momo-api` / `py_momo_api` / `PyMomoAPI` to **Py MoMo SDK** (`py-momo-sdk`, `py_momo_sdk`, `PyMomoSDK`, `AsyncPyMomoSDK`, `PyMomoSDKConfig`, `PyMomoSDKError`, `PyMomoSDKServerError`, CLI `py-momo-sdk`, and `PY_MOMO_SDK_*`).
+- Updated documentation, tests, and GitHub Pages site links to reflect `Py MoMo SDK` and `https://wkambale.github.io/pymomo/`.
 
 ## 1.0.5 - 2026-11-20
 
@@ -11,16 +17,16 @@ All notable changes to the Py MoMo API (`py-momo-api`) project will be documente
 ## 1.0.4 - 2026-11-20
 
 ### Changed
-- Rebranded the project to **Py MoMo API** (`py-momo-api` on PyPI, importable package `py_momo_api`, CLI command `py-momo-api`, and `PY_MOMO_API_*` environment variables).
-- Renamed core client, config, and exception classes to `PyMomoAPI`, `AsyncPyMomoAPI`, `PyMomoAPIConfig`, `PyMomoAPIError`, and `PyMomoAPIServerError`.
+- Rebranded the project to **Py MoMo SDK** (`py-momo-sdk` on PyPI, importable package `py_momo_sdk`, CLI command `py-momo-sdk`, and `PY_MOMO_SDK_*` environment variables).
+- Renamed core client, config, and exception classes to `PyMomoSDK`, `AsyncPyMomoSDK`, `PyMomoSDKConfig`, `PyMomoSDKError`, and `PyMomoSDKServerError`.
 - Switched project license to MIT License (Copyright (c) 2026 Wesley Kambale) across `LICENSE`, `pyproject.toml`, and `README.md`.
-- Updated all documentation, CLI help text, tests, and CI workflows to match `py_momo_api`, `py-momo-api`, and `PyMomoAPI`.
+- Updated all documentation, CLI help text, tests, and CI workflows to match `py_momo_sdk`, `py-momo-sdk`, and `PyMomoSDK`.
 
 ## 1.0.3 - 2026-11-20
 
 ### Changed
 - Aligned package license metadata in `pyproject.toml` and `README.md`.
-- Updated package metadata, README, and documentation for `py-momo-api` 1.0.3 and Airtel Money coverage.
+- Updated package metadata, README, and documentation for `py-momo-sdk` 1.0.3 and Airtel Money coverage.
 - Updated `SECURITY.md` supported versions to `1.0.x`.
 - Cleaned up trailing whitespace, missing EOF newlines, and non-UUID `api_user` example placeholders across documentation.
 

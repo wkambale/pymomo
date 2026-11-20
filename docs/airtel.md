@@ -1,13 +1,13 @@
 # Airtel Money
 
-Py MoMo API includes a synchronous client for the Airtel Money Open API covering collections, disbursements, and merchant wallet balances.
+Py MoMo SDK includes a synchronous client for the Airtel Money Open API covering collections, disbursements, and merchant wallet balances.
 
 ## Initializing the Airtel client
 
 Configure `AirtelConfig` with your Airtel developer credentials, ISO 3166-1 alpha-2 country code, and ISO 4217 currency code. Supply `pin` when executing disbursement payouts.
 
 ```python
-from py_momo_api import AirtelClient, AirtelConfig
+from py_momo_sdk import AirtelClient, AirtelConfig
 
 config = AirtelConfig(
     client_id="your-airtel-client-id",
@@ -27,7 +27,7 @@ with AirtelClient(config) as client:
 
 ### Request to pay
 
-Initiate a USSD Push payment collection from an Airtel Money subscriber. If `reference_id` is omitted, Py MoMo API generates a canonical UUID v4 automatically.
+Initiate a USSD Push payment collection from an Airtel Money subscriber. If `reference_id` is omitted, Py MoMo SDK generates a canonical UUID v4 automatically.
 
 ```python
 with AirtelClient(config) as client:

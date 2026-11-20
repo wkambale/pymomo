@@ -21,7 +21,7 @@ jobs:
       - run: ruff check .
       - run: black --check .
       - run: isort --check .
-      - run: mypy py_momo_api/
-      - run: bandit -r py_momo_api/
-      - run: pytest --cov=py_momo_api --cov-report=term-missing
+      - run: mypy py_momo_sdk/
+      - run: bandit -r py_momo_sdk/
+      - run: pytest --cov=py_momo_sdk --cov-report=term-missing
       - run: python -m build

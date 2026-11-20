@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pytest_httpx import HTTPXMock
 
-from py_momo_api import AsyncPyMomoAPI, PyMomoAPI
-from py_momo_api.models import TransactionStatus
+from py_momo_sdk import AsyncPyMomoSDK, PyMomoSDK
+from py_momo_sdk.models import TransactionStatus
 
 
 def mock_token_response(httpx_mock: HTTPXMock) -> None:
@@ -20,7 +20,7 @@ def mock_token_response(httpx_mock: HTTPXMock) -> None:
     )
 
 
-def test_remittance_transfer_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
+def test_remittance_transfer_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
     """Test remittance transfer synchronously."""
     mock_token_response(httpx_mock)
     httpx_mock.add_response(
@@ -40,7 +40,7 @@ def test_remittance_transfer_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> N
 
 @pytest.mark.asyncio
 async def test_remittance_transfer_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test remittance transfer asynchronously."""
     mock_token_response(httpx_mock)
@@ -60,7 +60,7 @@ async def test_remittance_transfer_async(
 
 
 def test_remittance_get_transfer_status_sync(
-    client: PyMomoAPI, httpx_mock: HTTPXMock
+    client: PyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting transfer status synchronously."""
     mock_token_response(httpx_mock)
@@ -82,7 +82,7 @@ def test_remittance_get_transfer_status_sync(
     assert result.financial_transaction_id == "tx-rem-123"
 
 
-def test_remittance_get_balance_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
+def test_remittance_get_balance_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
     """Test getting remittance balance synchronously."""
     mock_token_response(httpx_mock)
     httpx_mock.add_response(
@@ -99,7 +99,7 @@ def test_remittance_get_balance_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -
 
 @pytest.mark.asyncio
 async def test_remittance_get_transfer_status_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting transfer status asynchronously."""
     mock_token_response(httpx_mock)
@@ -123,7 +123,7 @@ async def test_remittance_get_transfer_status_async(
 
 @pytest.mark.asyncio
 async def test_remittance_get_balance_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting remittance balance asynchronously."""
     mock_token_response(httpx_mock)
@@ -141,7 +141,7 @@ async def test_remittance_get_balance_async(
 
 @pytest.mark.asyncio
 async def test_remittance_is_account_active_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test checking if payee account is active asynchronously."""
     mock_token_response(httpx_mock)
@@ -158,7 +158,7 @@ async def test_remittance_is_account_active_async(
 
 @pytest.mark.asyncio
 async def test_remittance_get_basic_user_info_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test retrieving basic user info asynchronously."""
     mock_token_response(httpx_mock)
@@ -179,7 +179,7 @@ async def test_remittance_get_basic_user_info_async(
 
 @pytest.mark.asyncio
 async def test_remittance_get_balance_for_currency_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting balance for specific currency asynchronously."""
     mock_token_response(httpx_mock)

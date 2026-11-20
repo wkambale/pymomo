@@ -1,17 +1,17 @@
 # Error handling
 
-All exceptions raised by the Py MoMo API package inherit from the base `PyMomoAPIError` exception class.
+All exceptions raised by the Py MoMo SDK package inherit from the base `PyMomoSDKError` exception class.
 
 ## Exception hierarchy
 
 ```
-PyMomoAPIError (Base exception)
+PyMomoSDKError (Base exception)
 ├── AuthenticationError (Raised on HTTP 401)
 ├── MissingCredentialsError (Raised when credentials are not configured)
 ├── BadRequestError (Raised on HTTP 400; includes reason details)
 ├── ResourceNotFoundError (Raised on HTTP 404)
 ├── ConflictError (Raised on HTTP 409; duplicate UUID reference ID)
-├── PyMomoAPIServerError (Raised on HTTP 5xx errors)
+├── PyMomoSDKServerError (Raised on HTTP 5xx errors)
 ├── TransactionFailedError (Raised on polled transaction failure)
 └── WebhookVerificationError (Raised on signature validation failure)
 ```
@@ -22,15 +22,15 @@ PyMomoAPIError (Base exception)
 Catch specific exceptions to handle distinct application states:
 
 ```python
-from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
-from py_momo_api.exceptions import (
+from py_momo_sdk import PyMomoSDK, PyMomoSDKConfig, ProductConfig
+from py_momo_sdk.exceptions import (
     AuthenticationError,
     BadRequestError,
     ConflictError,
-    PyMomoAPIError,
+    PyMomoSDKError,
 )
 
-config = PyMomoAPIConfig(
+config = PyMomoSDKConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-key",
@@ -39,7 +39,7 @@ config = PyMomoAPIConfig(
     ),
 )
 
-with PyMomoAPI(config) as client:
+with PyMomoSDK(config) as client:
     try:
         client.collection.request_to_pay(
             amount="100.00",
@@ -58,7 +58,7 @@ with PyMomoAPI(config) as client:
         print("Duplicate reference ID used.")
     except AuthenticationError:
         print("Authentication credentials rejected.")
-    except PyMomoAPIError as e:
+    except PyMomoSDKError as e:
         print(f"Library error occurred: {e}")
 ```
 
