@@ -41,6 +41,7 @@ dev = [
     "black>=26.10.1",
     "isort>=5",
     "bandit>=1.7",
+    "build>=1.2,<2",
     "pre-commit>=4.6.2",
 ]
 
@@ -75,5 +76,17 @@ fail_under = 90
 [tool.isort]
 profile = "black"
 
-[tool.bandit]
-skips = ["B101", "B105"]
+[tool.hatch.build.targets.sdist]
+include = [
+    "/pymomo",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pymomo"]

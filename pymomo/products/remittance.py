@@ -10,7 +10,7 @@ class Remittance(BaseProduct):
     """Remittance product client."""
 
     _product_name = "remittance"
-    _token_path = "/remittance/token/"
+    _token_path = "/remittance/token/"  # nosec B105
 
     def transfer(
         self,

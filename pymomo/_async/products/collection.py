@@ -24,7 +24,7 @@ class Collection(AsyncBaseProduct):
     """Asynchronous Collection product client."""
 
     _product_name = "collection"
-    _token_path = "/collection/token/"
+    _token_path = "/collection/token/"  # nosec B105
 
     async def request_to_pay(
         self,

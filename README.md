@@ -163,7 +163,7 @@ isort --check .
 mypy pymomo/
 
 # Security analysis
-bandit -r pymomo/ -s B101,B105,B110
+bandit -r pymomo/
 
 # Test execution with coverage
 pytest --cov=pymomo --cov-report=term-missing

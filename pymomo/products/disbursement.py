@@ -16,7 +16,7 @@ class Disbursement(BaseProduct):
     """Disbursement product client."""
 
     _product_name = "disbursement"
-    _token_path = "/disbursement/token/"
+    _token_path = "/disbursement/token/"  # nosec B105
 
     def transfer(
         self,

@@ -22,7 +22,7 @@ jobs:
       - run: black --check .
       - run: isort --check .
       - run: mypy pymomo/
-      - run: bandit -r pymomo/ -s B101,B105
+      - run: bandit -r pymomo/
       - run: pytest --cov=pymomo --cov-report=term-missing
 
   publish:
