@@ -33,6 +33,8 @@ class AsyncPyMomoSDK:
         self._http = AsyncHttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
+            max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
         )
         self._collection: Collection | None = None
         self._disbursement: Disbursement | None = None

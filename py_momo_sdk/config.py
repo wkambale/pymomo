@@ -59,6 +59,8 @@ class PyMomoSDKConfig:
     environment: str = SANDBOX
     base_url: str | None = None  # Override for testing
     timeout: float = 30.0
+    max_retries: int = 0
+    retry_backoff: float = 0.5
     collection: ProductConfig | None = None
     disbursement: ProductConfig | None = None
     remittance: ProductConfig | None = None
@@ -66,6 +68,14 @@ class PyMomoSDKConfig:
     def __post_init__(self) -> None:
         validate_environment_name(self.environment)
         self.timeout = validate_timeout(self.timeout)
+        if isinstance(self.max_retries, bool) or self.max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if (
+            isinstance(self.retry_backoff, bool)
+            or self.retry_backoff <= 0
+            or self.retry_backoff != self.retry_backoff
+        ):
+            raise ValueError("retry_backoff must be a positive finite number")
         if self.base_url is None:
             self.base_url = (
                 SANDBOX_BASE_URL if self.environment == SANDBOX else PRODUCTION_BASE_URL
