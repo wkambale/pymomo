@@ -4,10 +4,14 @@ import uuid
 
 import pytest
 
+from pymomo.models import AccountHolderIdType
 from pymomo.utils import (
     build_basic_auth_header,
+    encode_path_segment,
     generate_reference_id,
     normalise_msisdn,
+    validate_account_holder_id_type,
+    validate_currency,
     validate_reference_id,
 )
 
@@ -25,6 +29,36 @@ def test_normalise_msisdn() -> None:
     """Verify that normalise_msisdn strips non-digit characters."""
     assert normalise_msisdn("+256-771-234 567") == "256771234567"
     assert normalise_msisdn("  123a456  ") == "123456"
+    with pytest.raises(ValueError, match="at least one digit"):
+        normalise_msisdn("+++abc")
+
+
+def test_validate_currency() -> None:
+    """Verify validate_currency enforces three-letter ISO 4217 codes."""
+    assert validate_currency("ugx") == "UGX"
+    assert validate_currency("EUR") == "EUR"
+    for bad in ("", "US", "UGXX", "../balance", "UGX?foo=1", "123"):
+        with pytest.raises(ValueError, match="ISO 4217"):
+            validate_currency(bad)
+
+
+def test_validate_account_holder_id_type() -> None:
+    """Verify account holder ID types accept enums and strings and reject traversal."""
+    assert validate_account_holder_id_type(AccountHolderIdType.msisdn) == "msisdn"
+    assert validate_account_holder_id_type("MSISDN") == "msisdn"
+    assert validate_account_holder_id_type("email") == "email"
+    assert validate_account_holder_id_type("party_code") == "party_code"
+    for bad in ("", "../balance", "unknown"):
+        with pytest.raises(ValueError, match="Account holder ID type"):
+            validate_account_holder_id_type(bad)
+
+
+def test_encode_path_segment() -> None:
+    """Verify path segments are percent-encoded and traversal characters rejected."""
+    assert encode_path_segment("user@example.com") == "user%40example.com"
+    for bad in ("", ".", "..", "../balance", "a/b", "a\\b", "a?b", "a#b", "a\nb"):
+        with pytest.raises(ValueError, match="Invalid path segment"):
+            encode_path_segment(bad)
 
 
 def test_build_basic_auth_header() -> None:
@@ -56,3 +90,13 @@ def test_validate_reference_id() -> None:
     with pytest.raises(ValueError) as excinfo:
         validate_reference_id(v1_uuid)
     assert "must be a version 4 UUID" in str(excinfo.value)
+
+    # Non-canonical UUID representations must be rejected
+    for non_canonical in (
+        f"urn:uuid:{valid_uuid}",
+        f"{{{valid_uuid}}}",
+        valid_uuid.replace("-", ""),
+        f" {valid_uuid}",
+    ):
+        with pytest.raises(ValueError, match="must be a valid UUID v4"):
+            validate_reference_id(non_canonical)

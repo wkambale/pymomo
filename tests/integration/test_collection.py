@@ -475,3 +475,73 @@ async def test_collection_get_balance_for_currency_async(
     balance = await async_client.collection.get_balance_for_currency("UGX")
     assert balance.available_balance == "7500"
     assert balance.currency == "UGX"
+
+
+def test_collection_path_parameter_validation_sync(
+    client: MomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Verify sync product methods reject path traversal and handle enums/emails."""
+    from pymomo.models import AccountHolderIdType
+
+    with pytest.raises(ValueError):
+        client.collection.get_balance_for_currency("../../requesttopay")
+    with pytest.raises(ValueError):
+        client.collection.is_account_holder_active("../../../account/balance", "email")
+    with pytest.raises(ValueError):
+        client.collection.is_account_holder_active("256771234567", "../invalid")
+    with pytest.raises(ValueError):
+        client.collection.get_basic_user_info("../secret", "party_code")
+
+    mock_token_response(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/accountholder/msisdn/256771234567/active",
+        json={"result": True},
+        status_code=200,
+    )
+    assert (
+        client.collection.is_account_holder_active(
+            "+256-771-234-567", AccountHolderIdType.msisdn
+        )
+        is True
+    )
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/accountholder/email/user%40example.com/basicuserinfo",
+        json={"sub": "email-user", "name": "Email User"},
+        status_code=200,
+    )
+    user = client.collection.get_basic_user_info("user@example.com", "email")
+    assert user.name == "Email User"
+
+
+@pytest.mark.asyncio
+async def test_collection_path_parameter_validation_async(
+    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Verify async product methods reject path traversal and encode emails."""
+    from pymomo.models import AccountHolderIdType
+
+    with pytest.raises(ValueError):
+        await async_client.collection.get_balance_for_currency("../balance")
+    with pytest.raises(ValueError):
+        await async_client.collection.is_account_holder_active(
+            "../../../account/balance", "email"
+        )
+    with pytest.raises(ValueError):
+        await async_client.collection.get_basic_user_info("../secret", "party_code")
+
+    mock_token_response(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/accountholder/msisdn/256771234567/active",
+        json={"result": True},
+        status_code=200,
+    )
+    assert (
+        await async_client.collection.is_account_holder_active(
+            "+256 771 234 567", AccountHolderIdType.msisdn
+        )
+        is True
+    )
