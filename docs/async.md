@@ -55,6 +55,8 @@ async def check_multiple_balances(config_coll, config_disb):
             client_c.collection.get_balance(),
             client_d.disbursement.get_balance()
         )
-        print(f"Collection Balance: {balances[0].available_balance}")
-        print(f"Disbursement Balance: {balances[1].available_balance}")
+        print(f"Collection balance: {balances[0].available_balance}")
+        print(f"Disbursement balance: {balances[1].available_balance}")
 ```
+
+Next step: [Review error handling](error-handling.md).

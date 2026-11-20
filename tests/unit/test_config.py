@@ -98,7 +98,7 @@ def test_config_validation_rules() -> None:
     with pytest.raises(ValueError, match="control characters"):
         ProductConfig(subscription_key="sub\r\n", api_user="user", api_key="key")
 
-    # Airtel country & currency validation
+    # Airtel country and currency validation
     with pytest.raises(ValueError, match="Country"):
         AirtelConfig(
             client_id="cid", client_secret="sec", country="UGA", currency="UGX"

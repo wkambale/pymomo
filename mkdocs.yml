@@ -1,20 +1,36 @@
 site_name: Py MoMo API
+site_description: Production-grade, strictly typed Python client library for MTN Mobile Money and Airtel Money APIs.
 site_url: https://pymomo.aiforuganda.org
 repo_url: https://github.com/wkambale/pymomo
 repo_name: wkambale/pymomo
+copyright: Copyright &copy; 2026 Wesley Kambale
 docs_dir: docs
 site_dir: site
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - scheme: default
-      primary: yellow
-      accent: yellow
+      primary: custom
+      accent: custom
   features:
     - navigation.instant
     - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.footer
+    - search.suggest
+    - search.highlight
     - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/scroll.js
 
 nav:
   - Home: index.md
@@ -34,8 +50,14 @@ nav:
   - Contributing: contributing.md
 
 markdown_extensions:
-  - pymdownx.highlight
-  - pymdownx.superfences
+  - attr_list
+  - md_in_html
+  - tables
   - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - toc:
       permalink: true

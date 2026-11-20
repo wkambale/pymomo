@@ -66,3 +66,5 @@ with PyMomoAPI(config) as client:
 Access tokens are automatically requested, cached in memory, and updated before they expire.
 The library handles the token cache internally per product name. When a request returns a `401 Unauthorized` status (due to token expiration or invalidation), the client automatically invalidates the cache, requests a new token, and retries the operation once.
 No configuration or cache management is required by the developer.
+
+Next step: [Explore Collection](collection.md).

@@ -6,10 +6,10 @@ MTN MoMo uses webhooks (callbacks) to notify your server of transaction updates.
 
 The MTN Developer portal currently does not attach cryptographic request signatures to direct webhook notifications. To defend against spoofed callbacks, always apply layered verification before fulfilling an order:
 
-1. **Expose callback endpoints over HTTPS**: Ensure your `callback_url` starts with `https://`.
-2. **Restrict source IP addresses**: Verify the peer IP address against your allowed gateway IP or CIDR ranges with `WebhookHandler.verify_source_ip`.
-3. **Verify gateway HMAC signatures (when behind a signing proxy or gateway)**: Use `WebhookHandler.verify_hmac_signature` for constant-time HMAC-SHA256 or HMAC-SHA512 verification.
-4. **Re-query the authoritative MTN status endpoint**: Treat incoming callbacks as notifications and confirm final transaction settlement via `client.collection.get_payment_status(reference_id)` (or the corresponding disbursement/remittance status method) before crediting balances or shipping goods.
+- **Expose callback endpoints over HTTPS**: Ensure your `callback_url` starts with `https://`.
+- **Restrict source IP addresses**: Verify the peer IP address against your allowed gateway IP or CIDR ranges with `WebhookHandler.verify_source_ip`.
+- **Verify gateway HMAC signatures**: When running behind a signing proxy or gateway, use `WebhookHandler.verify_hmac_signature` for constant-time HMAC-SHA256 or HMAC-SHA512 verification.
+- **Re-query the authoritative MTN status endpoint**: Treat incoming callbacks as notifications and confirm final transaction settlement via `client.collection.get_payment_status(reference_id)` (or the corresponding disbursement or remittance status method) before crediting balances or shipping goods.
 
 ### Source IP verification
 
@@ -79,3 +79,5 @@ To check whether a parsed webhook payload reports a successful status:
 if WebhookHandler.is_successful(webhook_payload):
     print("Notification reports successful transaction; verify via status API.")
 ```
+
+Next step: [Review async client support](async.md).

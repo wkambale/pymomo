@@ -37,7 +37,7 @@ with AirtelClient(config) as client:
         # Optional canonical UUID v4; omit to auto-generate
         reference_id="550e8400-e29b-41d4-a716-446655440000",
     )
-    print(f"Collection Reference: {reference_id}")
+    print(f"Collection reference: {reference_id}")
 ```
 
 ### Get payment status
@@ -67,7 +67,7 @@ with AirtelClient(config) as client:
         amount="5000.00",
         payee_msisdn="256751234567",
     )
-    print(f"Disbursement Reference: {reference_id}")
+    print(f"Disbursement reference: {reference_id}")
 ```
 
 ### Get transfer status
@@ -97,3 +97,5 @@ with AirtelClient(config) as client:
 - `AirtelConfig`, `AirtelDisbursementRequest`, and internal token caches redact `client_secret`, `pin`, and bearer access tokens from string and debug representations.
 - All requests enforce HTTPS base URLs and disable automatic HTTP redirects to prevent credential leakage.
 - OAuth2 access tokens are cached in memory with thread-safe refresh locking and automatic retry-once handling on HTTP 401 responses.
+
+Next step: [Review webhook security](webhooks.md).
