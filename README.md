@@ -15,10 +15,10 @@ Developed for high reliability and clean developer experience, PyMoMo adheres to
 
 - **Sync & Async Parity:** Backed by `httpx.Client` and `httpx.AsyncClient` with matching interfaces.
 - **Pydantic v2 Models:** Fully typed request/response validation and serialization.
-- **Automated Token Caching**: In-memory token management with automated cache invalidation and retry-once logic.
-- **Comprehensive API Coverage:** Full Collection, Disbursement, Remittance, and Sandbox APIs.
-- **Robust Security**: Strict validation rules with auto-redacting exceptions to prevent credential leaking in logs.
-- **CLI Utility**: Ship with a Typer-powered CLI to bootstrap credentials and query account details.
+- **Automated Token Caching:** Thread-safe and async-safe in-memory token management with automated cache invalidation and retry-once logic.
+- **Comprehensive API Coverage:** Full MTN MoMo Collection (including CIBA/OAuth2 token exchange), Disbursement, Remittance, Sandbox, and Airtel Money APIs.
+- **Robust Security:** Strict HTTPS and input validation, constant-time webhook HMAC and source IP verification, and secret-redacting exceptions and representations.
+- **CLI Utility:** Ships with a Typer-powered CLI to bootstrap sandbox credentials, initiate payments, and query balances or transaction status.
 
 ## Installation
 
@@ -41,18 +41,14 @@ pip install -e ".[dev]"
 To get started with the sandbox environment, bootstrap a new API User and API Key:
 
 ```python
-from pymomo import MomoClient, MomoConfig, SandboxProvisioner
+from pymomo import MomoClient, MomoConfig
 
 config = MomoConfig(environment="sandbox")
 
 with MomoClient(config) as client:
-    provisioner = SandboxProvisioner(
-        subscription_key="your-sandbox-subscription-key",
-        config=config,
-        http=client._http,
-    )
+    provisioner = client.create_sandbox_provisioner("your-sandbox-subscription-key")
     credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
-    
+
     print(f"API User: {credentials['api_user']}")
     print(f"API Key: {credentials['api_key']}")
 ```
@@ -140,11 +136,17 @@ asyncio.run(main())
 PyMoMo bundles a CLI tool for common sandbox management operations:
 
 ```bash
+# Show installed version
+pymomo --version
+
 # Provision a sandbox environment
 pymomo sandbox provision --subscription-key "your-key"
 
 # Query the collection balance
-pymomo collection balance --subscription-key "your-key" --api-user "user-uuid" --api-key "key"
+pymomo collection balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "key"
+
+# Check the status of a Request to Pay transaction
+pymomo collection status "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "key"
 ```
 
 Use `pymomo --help` to list all available commands and flags.

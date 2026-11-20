@@ -15,17 +15,13 @@ pip install pymomo
 Before writing code, you need to create a sandbox account on the MTN MoMo developer portal to obtain a subscription key. With that subscription key, you can provision an API user and API key:
 
 ```python
-from pymomo import MomoClient, MomoConfig, SandboxProvisioner
+from pymomo import MomoClient, MomoConfig
 
 config = MomoConfig(environment="sandbox")
 
 with MomoClient(config) as client:
     # Use the sandbox provisioner to bootstrap a sandbox API user and key
-    provisioner = SandboxProvisioner(
-        subscription_key="your-subscription-key",
-        config=config,
-        http=client._http,
-    )
+    provisioner = client.create_sandbox_provisioner("your-subscription-key")
     credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
     print(f"API User UUID: {credentials['api_user']}")
     print(f"API Key: {credentials['api_key']}")
@@ -71,8 +67,8 @@ Transactions on the MTN MoMo network are processed asynchronously. When you subm
 
 ```python
 with MomoClient(config) as client:
-    reference_id = "your-transaction-reference-uuid"
-    
+    reference_id = "550e8400-e29b-41d4-a716-446655440000"
+
     # Simple polling loop to check status
     for _ in range(10):
         try:

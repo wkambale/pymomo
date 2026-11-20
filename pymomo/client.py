@@ -115,6 +115,21 @@ class MomoClient:
             http=self._http,
         )
 
+    def create_sandbox_provisioner(self, subscription_key: str) -> SandboxProvisioner:
+        """Create a SandboxProvisioner using an explicit subscription key.
+
+        Args:
+            subscription_key: The sandbox Ocp-Apim-Subscription-Key.
+
+        Returns:
+            A configured SandboxProvisioner sharing this client's HTTP session.
+        """
+        return SandboxProvisioner(
+            subscription_key=subscription_key,
+            config=self._config,
+            http=self._http,
+        )
+
     def close(self) -> None:
         """Close the underlying HttpClient session."""
         self._http.close()

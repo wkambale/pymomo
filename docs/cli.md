@@ -1,6 +1,16 @@
 # Command line interface
 
-PyMoMo provides a Typer-based command-line tool named `pymomo` for sandbox provisioning, balance inquiries, and testing.
+PyMoMo provides a Typer-based command-line tool named `pymomo` for sandbox provisioning, balance inquiries, payment initiation, and status checks.
+
+## General options
+
+Show the installed PyMoMo version:
+
+```bash
+pymomo --version
+```
+
+All API commands also accept `--base-url` (or the `PYMOMO_BASE_URL` environment variable) to target a custom HTTPS endpoint or local mock proxy.
 
 ## Credentials security
 
@@ -22,7 +32,7 @@ pymomo sandbox provision --subscription-key "your-subscription-key" --callback-h
 Output:
 ```json
 {
-  "api_user": "api-user-uuid-here",
+  "api_user": "550e8400-e29b-41d4-a716-446655440000",
   "api_key": "api-key-here"
 }
 ```
@@ -32,7 +42,7 @@ Output:
 Retrieve target environment configuration:
 
 ```bash
-pymomo sandbox get-user "api-user-uuid-here" --subscription-key "your-subscription-key"
+pymomo sandbox get-user "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-subscription-key"
 ```
 
 Output:
@@ -51,7 +61,7 @@ Output:
 Retrieve balance details:
 
 ```bash
-pymomo collection balance --subscription-key "your-key" --api-user "your-user-uuid" --api-key "your-api-key"
+pymomo collection balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Output:
@@ -67,13 +77,32 @@ Output:
 Initiate a collection:
 
 ```bash
-pymomo collection request-to-pay "256771234567" "10.00" "EUR" "inv-100" --subscription-key "your-key" --api-user "your-user-uuid" --api-key "your-api-key"
+pymomo collection request-to-pay "256771234567" "10.00" "EUR" "inv-100" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Output:
 ```json
 {
-  "reference_id": "initiated-transaction-uuid"
+  "reference_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### Check request to pay status
+
+Query the status of a previously submitted Request to Pay transaction:
+
+```bash
+pymomo collection status "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+```
+
+Output:
+```json
+{
+  "financialTransactionId": "88771122",
+  "externalId": "inv-100",
+  "amount": "10.00",
+  "currency": "EUR",
+  "status": "SUCCESSFUL"
 }
 ```
 
@@ -83,11 +112,11 @@ Output:
 ### Get disbursement balance
 
 ```bash
-pymomo disbursement balance --subscription-key "your-key" --api-user "your-user-uuid" --api-key "your-api-key"
+pymomo disbursement balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 ### Get remittance balance
 
 ```bash
-pymomo remittance balance --subscription-key "your-key" --api-user "your-user-uuid" --api-key "your-api-key"
+pymomo remittance balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```

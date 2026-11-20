@@ -35,7 +35,8 @@ reference_id = client.disbursement.transfer(
     external_id="transfer-111",
     payer_message="Refund payment",
     payee_note="Refund processed",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Transfer Reference: {reference_id}")
 ```
@@ -62,7 +63,8 @@ reference_id = client.disbursement.deposit(
     external_id="deposit-202",
     payer_message="Salary deposit",
     payee_note="June salary",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Deposit Reference: {reference_id}")
 ```
@@ -85,11 +87,12 @@ Issue a refund for a previously settled transaction (disbursement v2).
 reference_id = client.disbursement.refund(
     amount="50.00",
     currency="UGX",
-    reference_id_to_refund="previous-transaction-uuid",
+    reference_id_to_refund="6ba7b810-9dad-41d1-80b4-00c04fd430c8",
     external_id="refund-303",
     payer_message="Return refund",
     payee_note="Product returned",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Refund Reference: {reference_id}")
 ```

@@ -290,3 +290,97 @@ def test_cli_sanitizes_unexpected_exceptions() -> None:
         err_output = result.stdout
     assert "RuntimeError" in err_output
     assert "super-secret-value" not in err_output
+
+
+def test_cli_version() -> None:
+    """Test --version and -V flags output the package version."""
+    for flag in ("--version", "-V"):
+        result = runner.invoke(app, [flag])
+        assert result.exit_code == 0
+        assert result.stdout.startswith("pymomo ")
+
+
+def test_cli_collection_status(httpx_mock: HTTPXMock) -> None:
+    """Test CLI collection status command."""
+    reference_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={
+            "access_token": "token",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{reference_id}",
+        json={
+            "financialTransactionId": "fin-tx-123",
+            "externalId": "ext-123",
+            "amount": "50.00",
+            "currency": "EUR",
+            "status": "SUCCESSFUL",
+        },
+        status_code=200,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collection",
+            "status",
+            reference_id,
+            "--subscription-key",
+            "key",
+            "--api-user",
+            "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "--api-key",
+            "apikey",
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["status"] == "SUCCESSFUL"
+    assert data["financialTransactionId"] == "fin-tx-123"
+
+
+def test_cli_base_url_override(httpx_mock: HTTPXMock) -> None:
+    """Test CLI --base-url option routes requests to the custom HTTPS endpoint."""
+    httpx_mock.add_response(
+        method="POST",
+        url="https://mock.momo.example.com/collection/token/",
+        json={
+            "access_token": "token",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://mock.momo.example.com/collection/v1_0/account/balance",
+        json={"availableBalance": "99.50", "currency": "UGX"},
+        status_code=200,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collection",
+            "balance",
+            "--subscription-key",
+            "key",
+            "--api-user",
+            "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "--api-key",
+            "apikey",
+            "--base-url",
+            "https://mock.momo.example.com",
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["availableBalance"] == "99.50"
+    assert data["currency"] == "UGX"

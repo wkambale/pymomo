@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import Any, TypeVar, cast
 
 import typer
@@ -9,7 +12,6 @@ import typer
 from pymomo.client import MomoClient
 from pymomo.config import MomoConfig, ProductConfig
 from pymomo.exceptions import PyMoMoError
-from pymomo.sandbox import SandboxProvisioner
 
 app = typer.Typer(help="PyMoMo CLI tool.")
 sandbox_app = typer.Typer(help="Sandbox provisioning commands.")
@@ -26,9 +28,36 @@ app.add_typer(remittance_app, name="remittance")
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _get_version() -> str:
+    """Return the installed pymomo package version."""
+    try:
+        return package_version("pymomo")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"pymomo {_get_version()}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    _version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the PyMoMo version and exit.",
+    ),
+) -> None:
+    """PyMoMo command-line interface."""
+
+
 def handle_cli_exceptions(func: F) -> F:
     """Decorator to catch PyMoMo exceptions and exit cleanly with code 1."""
-    import functools
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -37,13 +66,9 @@ def handle_cli_exceptions(func: F) -> F:
         except PyMoMoError as e:
             # Error message is printed to stderr in sentence case
             msg = str(e)
-            if msg:
-                # Ensure sentence case
-                msg = msg[0].upper() + msg[1:]
-            else:
-                msg = "An unexpected error occurred."
+            msg = msg[0].upper() + msg[1:] if msg else "An unexpected error occurred."
             typer.echo(f"Error: {msg}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         except ValueError as e:
             msg = str(e)
             msg = msg[0].upper() + msg[1:] if msg else "Invalid input."
@@ -82,16 +107,17 @@ def sandbox_provision(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Provision a new sandbox API user and API key."""
-    config = MomoConfig(environment=environment)
-    # Instantiate client just for http access
+    config = MomoConfig(environment=environment, base_url=base_url)
     with MomoClient(config) as client:
-        provisioner = SandboxProvisioner(
-            subscription_key=subscription_key,
-            config=config,
-            http=client._http,
-        )
+        provisioner = client.create_sandbox_provisioner(subscription_key)
         result = provisioner.provision(callback_host=callback_host)
         print(json.dumps(result, indent=2))
 
@@ -114,18 +140,19 @@ def sandbox_get_user(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Get information about a sandbox API user."""
-    config = MomoConfig(environment=environment)
+    config = MomoConfig(environment=environment, base_url=base_url)
     with MomoClient(config) as client:
-        provisioner = SandboxProvisioner(
-            subscription_key=subscription_key,
-            config=config,
-            http=client._http,
-        )
+        provisioner = client.create_sandbox_provisioner(subscription_key)
         result = provisioner.get_api_user(user_id)
-        # Serialize model output
-        print(json.dumps(result.model_dump(by_alias=True), indent=2))
+        print(json.dumps(result.model_dump(by_alias=True, mode="json"), indent=2))
 
 
 @collection_app.command(name="balance")
@@ -159,10 +186,17 @@ def collection_balance(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Get the balance of the collection account."""
     config = MomoConfig(
         environment=environment,
+        base_url=base_url,
         collection=ProductConfig(
             subscription_key=subscription_key,
             api_user=api_user,
@@ -171,7 +205,7 @@ def collection_balance(
     )
     with MomoClient(config) as client:
         balance = client.collection.get_balance()
-        print(json.dumps(balance.model_dump(by_alias=True), indent=2))
+        print(json.dumps(balance.model_dump(by_alias=True, mode="json"), indent=2))
 
 
 @collection_app.command(name="request-to-pay")
@@ -224,10 +258,17 @@ def collection_request_to_pay(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Initiate a Request to Pay transaction."""
     config = MomoConfig(
         environment=environment,
+        base_url=base_url,
         collection=ProductConfig(
             subscription_key=subscription_key,
             api_user=api_user,
@@ -245,6 +286,62 @@ def collection_request_to_pay(
             reference_id=reference_id,
         )
         print(json.dumps({"reference_id": ref_id}, indent=2))
+
+
+@collection_app.command(name="status")
+@handle_cli_exceptions
+def collection_status(
+    reference_id: str = typer.Argument(
+        ..., help="The Request to Pay transaction reference UUID."
+    ),
+    subscription_key: str = typer.Option(
+        ...,
+        "--subscription-key",
+        "-k",
+        envvar="PYMOMO_COLLECTION_SUBSCRIPTION_KEY",
+        help="Collection subscription key.",
+    ),
+    api_user: str = typer.Option(
+        ...,
+        "--api-user",
+        "-u",
+        envvar="PYMOMO_COLLECTION_API_USER",
+        help="Collection API user UUID.",
+    ),
+    api_key: str = typer.Option(
+        ...,
+        "--api-key",
+        "-p",
+        envvar="PYMOMO_COLLECTION_API_KEY",
+        help="Collection API key.",
+    ),
+    environment: str = typer.Option(
+        "sandbox",
+        "--environment",
+        "-e",
+        envvar="PYMOMO_ENVIRONMENT",
+        help="Target environment.",
+    ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
+) -> None:
+    """Get the status of a Request to Pay transaction."""
+    config = MomoConfig(
+        environment=environment,
+        base_url=base_url,
+        collection=ProductConfig(
+            subscription_key=subscription_key,
+            api_user=api_user,
+            api_key=api_key,
+        ),
+    )
+    with MomoClient(config) as client:
+        result = client.collection.get_payment_status(reference_id)
+        print(json.dumps(result.model_dump(by_alias=True, mode="json"), indent=2))
 
 
 @disbursement_app.command(name="balance")
@@ -278,10 +375,17 @@ def disbursement_balance(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Get the balance of the disbursement account."""
     config = MomoConfig(
         environment=environment,
+        base_url=base_url,
         disbursement=ProductConfig(
             subscription_key=subscription_key,
             api_user=api_user,
@@ -290,7 +394,7 @@ def disbursement_balance(
     )
     with MomoClient(config) as client:
         balance = client.disbursement.get_balance()
-        print(json.dumps(balance.model_dump(by_alias=True), indent=2))
+        print(json.dumps(balance.model_dump(by_alias=True, mode="json"), indent=2))
 
 
 @remittance_app.command(name="balance")
@@ -324,10 +428,17 @@ def remittance_balance(
         envvar="PYMOMO_ENVIRONMENT",
         help="Target environment.",
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        envvar="PYMOMO_BASE_URL",
+        help="Override API base URL.",
+    ),
 ) -> None:
     """Get the balance of the remittance account."""
     config = MomoConfig(
         environment=environment,
+        base_url=base_url,
         remittance=ProductConfig(
             subscription_key=subscription_key,
             api_user=api_user,
@@ -336,7 +447,7 @@ def remittance_balance(
     )
     with MomoClient(config) as client:
         balance = client.remittance.get_balance()
-        print(json.dumps(balance.model_dump(by_alias=True), indent=2))
+        print(json.dumps(balance.model_dump(by_alias=True, mode="json"), indent=2))
 
 
 if __name__ == "__main__":

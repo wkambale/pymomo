@@ -4,10 +4,11 @@ PyMoMo is a fully-typed, production-grade Python client library for the MTN Mobi
 
 ## Supported products and environments
 
-The library provides complete coverage of all MTN MoMo Developer portal products:
-- **Collection**: Request payments and withdraws from users.
+The library provides complete coverage of all MTN MoMo Developer portal products as well as Airtel Money:
+- **Collection**: Request payments, withdrawals, balances, and OAuth2 consent tokens from users.
 - **Disbursement**: Send transfers, deposits, and refunds to payees.
 - **Remittance**: Send international and domestic transfers.
+- **Airtel Money**: Initiate Airtel collections, disbursement transfers, status inquiries, and wallet balance checks.
 - **Sandbox**: Auto-provision sandbox accounts, API users, and API keys.
 
 It supports both the **sandbox** environment for developer integration testing and all standard MTN **production** environments across African countries (e.g. Ghana, Uganda, Congo, Ivory Coast, Cameroon, Zambia, Benin, Swaziland, Guinea Conakry, South Africa, Liberia).
@@ -48,6 +49,7 @@ with MomoClient(config) as client:
 - [Collection API reference](collection.md)
 - [Disbursement API reference](disbursement.md)
 - [Remittance API reference](remittance.md)
+- [Airtel Money reference](airtel.md)
 - [Sandbox provisioning](sandbox.md)
 - [Webhook processing](webhooks.md)
 - [Asynchronous client support](async.md)

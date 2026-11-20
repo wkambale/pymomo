@@ -24,6 +24,7 @@ nav:
       - Collection: collection.md
       - Disbursement: disbursement.md
       - Remittance: remittance.md
+  - Airtel Money: airtel.md
   - Sandbox: sandbox.md
   - Webhooks: webhooks.md
   - Async support: async.md
