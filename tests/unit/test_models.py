@@ -69,3 +69,35 @@ def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     assert "very-secret-api-key" not in repr(key)
     assert "very-secret-api-key" not in str(key)
     assert "api_key=<redacted>" in repr(key)
+
+
+def test_request_models_validate_amount_and_currency() -> None:
+    """Verify payment models reject zero, negative, non-finite, or non-numeric amounts."""
+    import pytest
+    from pydantic import ValidationError
+
+    from pymomo.airtel.models import AirtelDisbursementRequest
+
+    for bad_amount in ("", "0", "0.00", "-10", "+10", "NaN", "Infinity", "1e5", "abc"):
+        with pytest.raises(ValidationError):
+            RequestToPayRequest(
+                amount=bad_amount,
+                currency="UGX",
+                external_id="ext-1",
+                payer=Party(party_id_type="MSISDN", party_id="256771234567"),
+            )
+        with pytest.raises(ValidationError):
+            AirtelDisbursementRequest(
+                amount=bad_amount,
+                number="256771234567",
+                reference="ref-1",
+                pin="1234",
+            )
+
+    with pytest.raises(ValidationError):
+        RequestToPayRequest(
+            amount="100.00",
+            currency="../bad",
+            external_id="ext-1",
+            payer=Party(party_id_type="MSISDN", party_id="256771234567"),
+        )

@@ -3,6 +3,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from pymomo.exceptions import MissingCredentialsError
+from pymomo.utils import (
+    validate_callback_url,
+    validate_environment_name,
+    validate_header_value,
+    validate_timeout,
+)
+
 # Environment string constants
 SANDBOX = "sandbox"
 MTN_GHANA = "mtnghana"
@@ -30,6 +38,13 @@ class ProductConfig:
     api_key: str
     callback_url: str | None = None
 
+    def __post_init__(self) -> None:
+        validate_header_value(self.subscription_key, field_name="subscription_key")
+        validate_header_value(self.api_user, field_name="api_user")
+        validate_header_value(self.api_key, field_name="api_key")
+        if self.callback_url is not None:
+            validate_callback_url(self.callback_url)
+
     def __repr__(self) -> str:
         return (
             f"ProductConfig(api_user={self.api_user!r}, "
@@ -49,10 +64,31 @@ class MomoConfig:
     remittance: ProductConfig | None = None
 
     def __post_init__(self) -> None:
+        validate_environment_name(self.environment)
+        self.timeout = validate_timeout(self.timeout)
         if self.base_url is None:
             self.base_url = (
                 SANDBOX_BASE_URL if self.environment == SANDBOX else PRODUCTION_BASE_URL
             )
+
+    @staticmethod
+    def _product_from_env(prefix: str, product_label: str) -> ProductConfig | None:
+        sub = os.environ.get(f"{prefix}_SUBSCRIPTION_KEY")
+        user = os.environ.get(f"{prefix}_API_USER")
+        key = os.environ.get(f"{prefix}_API_KEY")
+        cb = os.environ.get(f"{prefix}_CALLBACK_URL")
+        if not (sub or user or key):
+            return None
+        if not (sub and user and key):
+            raise MissingCredentialsError(
+                f"Incomplete {product_label} credentials in environment variables"
+            )
+        return ProductConfig(
+            subscription_key=sub,
+            api_user=user,
+            api_key=key,
+            callback_url=cb,
+        )
 
     @classmethod
     def from_env(cls) -> MomoConfig:
@@ -60,53 +96,27 @@ class MomoConfig:
 
         Returns:
             A MomoConfig instance populated with environment variable values.
+
+        Raises:
+            ValueError: If ``PYMOMO_TIMEOUT`` is not a positive finite number.
+            MissingCredentialsError: If a product is only partially configured.
         """
         env = os.environ.get("PYMOMO_ENVIRONMENT", SANDBOX)
         base_url = os.environ.get("PYMOMO_BASE_URL")
         timeout_str = os.environ.get("PYMOMO_TIMEOUT")
-        timeout = float(timeout_str) if timeout_str else 30.0
+        if timeout_str:
+            try:
+                timeout = validate_timeout(float(timeout_str))
+            except ValueError as exc:
+                raise ValueError(
+                    "PYMOMO_TIMEOUT must be a positive finite number"
+                ) from exc
+        else:
+            timeout = 30.0
 
-        # Collection Config
-        coll_sub = os.environ.get("PYMOMO_COLLECTION_SUBSCRIPTION_KEY")
-        coll_user = os.environ.get("PYMOMO_COLLECTION_API_USER")
-        coll_key = os.environ.get("PYMOMO_COLLECTION_API_KEY")
-        coll_cb = os.environ.get("PYMOMO_COLLECTION_CALLBACK_URL")
-        collection = None
-        if coll_sub or coll_user or coll_key:
-            collection = ProductConfig(
-                subscription_key=coll_sub or "",
-                api_user=coll_user or "",
-                api_key=coll_key or "",
-                callback_url=coll_cb,
-            )
-
-        # Disbursement Config
-        disb_sub = os.environ.get("PYMOMO_DISBURSEMENT_SUBSCRIPTION_KEY")
-        disb_user = os.environ.get("PYMOMO_DISBURSEMENT_API_USER")
-        disb_key = os.environ.get("PYMOMO_DISBURSEMENT_API_KEY")
-        disb_cb = os.environ.get("PYMOMO_DISBURSEMENT_CALLBACK_URL")
-        disbursement = None
-        if disb_sub or disb_user or disb_key:
-            disbursement = ProductConfig(
-                subscription_key=disb_sub or "",
-                api_user=disb_user or "",
-                api_key=disb_key or "",
-                callback_url=disb_cb,
-            )
-
-        # Remittance Config
-        rem_sub = os.environ.get("PYMOMO_REMITTANCE_SUBSCRIPTION_KEY")
-        rem_user = os.environ.get("PYMOMO_REMITTANCE_API_USER")
-        rem_key = os.environ.get("PYMOMO_REMITTANCE_API_KEY")
-        rem_cb = os.environ.get("PYMOMO_REMITTANCE_CALLBACK_URL")
-        remittance = None
-        if rem_sub or rem_user or rem_key:
-            remittance = ProductConfig(
-                subscription_key=rem_sub or "",
-                api_user=rem_user or "",
-                api_key=rem_key or "",
-                callback_url=rem_cb,
-            )
+        collection = cls._product_from_env("PYMOMO_COLLECTION", "collection")
+        disbursement = cls._product_from_env("PYMOMO_DISBURSEMENT", "disbursement")
+        remittance = cls._product_from_env("PYMOMO_REMITTANCE", "remittance")
 
         return cls(
             environment=env,

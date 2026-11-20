@@ -51,3 +51,72 @@ def test_momo_config_from_env() -> None:
             "PYMOMO_COLLECTION_API_KEY",
         ]:
             os.environ.pop(var, None)
+
+
+def test_config_validation_rules() -> None:
+    """Verify timeout, callback_url, environment, and AirtelConfig validations."""
+    import pytest
+
+    from pymomo.airtel.config import AirtelConfig
+    from pymomo.exceptions import MissingCredentialsError
+
+    # Invalid timeouts
+    for bad_timeout in (0, -5.0, float("inf"), float("nan"), True):
+        with pytest.raises(
+            (TypeError, ValueError), match="Timeout must be a positive finite"
+        ):
+            MomoConfig(timeout=bad_timeout)
+        with pytest.raises(
+            (TypeError, ValueError), match="Timeout must be a positive finite"
+        ):
+            AirtelConfig(
+                client_id="cid",
+                client_secret="sec",
+                country="UG",
+                currency="UGX",
+                timeout=bad_timeout,
+            )
+
+    # Non-HTTPS callback_url rejected; localhost allowed
+    with pytest.raises(ValueError, match="Callback URL must use HTTPS"):
+        ProductConfig(
+            subscription_key="sub",
+            api_user="user",
+            api_key="key",
+            callback_url="http://example.com/webhook",
+        )
+    ProductConfig(
+        subscription_key="sub",
+        api_user="user",
+        api_key="key",
+        callback_url="http://localhost:8080/webhook",
+    )
+
+    # Control chars rejected in headers/environment
+    with pytest.raises(ValueError, match="Environment"):
+        MomoConfig(environment="sandbox\r\nX-Injected: 1")
+    with pytest.raises(ValueError, match="control characters"):
+        ProductConfig(subscription_key="sub\r\n", api_user="user", api_key="key")
+
+    # Airtel country & currency validation
+    with pytest.raises(ValueError, match="Country"):
+        AirtelConfig(
+            client_id="cid", client_secret="sec", country="UGA", currency="UGX"
+        )
+    with pytest.raises(ValueError, match="ISO 4217"):
+        AirtelConfig(client_id="cid", client_secret="sec", country="UG", currency="U")
+
+    # Partial environment credentials and invalid PYMOMO_TIMEOUT rejected
+    os.environ["PYMOMO_COLLECTION_SUBSCRIPTION_KEY"] = "only-sub"
+    try:
+        with pytest.raises(MissingCredentialsError, match="Incomplete collection"):
+            MomoConfig.from_env()
+    finally:
+        os.environ.pop("PYMOMO_COLLECTION_SUBSCRIPTION_KEY", None)
+
+    os.environ["PYMOMO_TIMEOUT"] = "-10"
+    try:
+        with pytest.raises(ValueError, match="PYMOMO_TIMEOUT"):
+            MomoConfig.from_env()
+    finally:
+        os.environ.pop("PYMOMO_TIMEOUT", None)

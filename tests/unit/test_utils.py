@@ -73,6 +73,34 @@ def test_build_basic_auth_header() -> None:
     decoded = base64.b64decode(encoded_part.encode("ascii")).decode("utf-8")
     assert decoded == "user:key"
 
+    with pytest.raises(ValueError, match="must not contain ':'"):
+        build_basic_auth_header("user:extra", "key")
+    with pytest.raises(ValueError, match="control characters"):
+        build_basic_auth_header("user\r\n", "key")
+    with pytest.raises(ValueError, match="control characters"):
+        build_basic_auth_header("user", "key\n")
+
+
+def test_validate_callback_host() -> None:
+    """Verify validate_callback_host accepts HTTPS URLs and bare hostnames and rejects unsafe values."""
+    from pymomo.utils import validate_callback_host
+
+    assert validate_callback_host("pymomo.aiforuganda.org") == "pymomo.aiforuganda.org"
+    assert (
+        validate_callback_host("https://pymomo.aiforuganda.org")
+        == "https://pymomo.aiforuganda.org"
+    )
+    assert validate_callback_host("http://localhost:8000") == "http://localhost:8000"
+    for bad in (
+        "",
+        "http://evil.example.com",
+        "https://user:pass@example.com",
+        "bad host with spaces",
+        "example.com\r\nX-Injected: 1",
+    ):
+        with pytest.raises(ValueError):
+            validate_callback_host(bad)
+
 
 def test_validate_reference_id() -> None:
     """Verify validate_reference_id raises value error on invalid UUID v4."""

@@ -1,21 +1,34 @@
 from __future__ import annotations
 
+import math
 import re
 import uuid
+from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit
 
 import httpx
 
 from pymomo.exceptions import PyMoMoError
-from pymomo.models import AccountHolderIdType
+
+if TYPE_CHECKING:
+    from pymomo.models import AccountHolderIdType
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
+_COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
+_AMOUNT_RE = re.compile(r"^\d+(?:\.\d+)?$")
+_HEADER_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_BARE_HOST_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
 _CANONICAL_UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 _FORBIDDEN_SEGMENT_CHARS = frozenset({"/", "\\", "?", "#"})
+_VALID_ACCOUNT_HOLDER_ID_TYPES = frozenset({"msisdn", "email", "party_code"})
 
 
 def validate_base_url(base_url: str) -> str:
@@ -162,19 +175,148 @@ def validate_account_holder_id_type(
         The canonical lowercase type value (``msisdn``, ``email``, or ``party_code``).
 
     Raises:
+        TypeError: If the type is not a string or ``AccountHolderIdType``.
         ValueError: If the type is not one of the supported ``AccountHolderIdType`` values.
     """
-    if isinstance(account_holder_id_type, AccountHolderIdType):
-        return account_holder_id_type.value
-    if not isinstance(account_holder_id_type, str):
+    from enum import Enum
+
+    raw = (
+        account_holder_id_type.value
+        if isinstance(account_holder_id_type, Enum)
+        else account_holder_id_type
+    )
+    if not isinstance(raw, str):
         raise TypeError("Account holder ID type must be a string")
-    normalized = account_holder_id_type.lower()
-    try:
-        return AccountHolderIdType(normalized).value
-    except ValueError as exc:
+    normalized = raw.lower()
+    if normalized not in _VALID_ACCOUNT_HOLDER_ID_TYPES:
         raise ValueError(
             "Account holder ID type must be one of 'msisdn', 'email', or 'party_code'"
-        ) from exc
+        )
+    return normalized
+
+
+def validate_amount(amount: str) -> str:
+    """Validate that a transaction amount is a positive finite decimal string.
+
+    Args:
+        amount: Decimal string representing the transaction amount.
+
+    Returns:
+        The validated amount string.
+
+    Raises:
+        ValueError: If the amount is non-numeric, non-finite, zero, or negative.
+    """
+    if not isinstance(amount, str) or not _AMOUNT_RE.fullmatch(amount):
+        raise ValueError("Amount must be a positive decimal string")
+    try:
+        dec = Decimal(amount)
+    except InvalidOperation as exc:
+        raise ValueError("Amount must be a positive decimal string") from exc
+    if not dec.is_finite() or dec <= 0:
+        raise ValueError("Amount must be greater than zero")
+    return amount
+
+
+def validate_timeout(timeout: float) -> float:
+    """Validate that a network timeout is a finite positive number.
+
+    Raises:
+        ValueError: If ``timeout`` is a bool, non-finite, zero, or negative.
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise TypeError("Timeout must be a positive finite number")
+    timeout_float = float(timeout)
+    if not math.isfinite(timeout_float) or timeout_float <= 0:
+        raise ValueError("Timeout must be a positive finite number")
+    return timeout_float
+
+
+def validate_country_code(country: str) -> str:
+    """Validate an ISO 3166-1 alpha-2 country code.
+
+    Raises:
+        ValueError: If the country code is not two ASCII letters.
+    """
+    if not isinstance(country, str) or not _COUNTRY_RE.fullmatch(country):
+        raise ValueError("Country must be a valid two-letter ISO 3166-1 code")
+    return country.upper()
+
+
+def validate_header_value(value: str, *, field_name: str) -> str:
+    """Validate that an HTTP header value contains no ASCII control characters."""
+    if not isinstance(value, str) or _CONTROL_CHAR_RE.search(value):
+        raise ValueError(f"{field_name} must not contain control characters")
+    return value
+
+
+def validate_environment_name(environment: str) -> str:
+    """Validate a target environment header identifier."""
+    if not isinstance(environment, str) or not _HEADER_TOKEN_RE.fullmatch(environment):
+        raise ValueError("Environment must be a non-empty valid identifier")
+    return environment
+
+
+def validate_callback_url(callback_url: str) -> str:
+    """Validate that a callback URL uses HTTPS (or localhost/127.0.0.1 for testing).
+
+    Raises:
+        ValueError: If the callback URL is not a valid HTTPS/localhost URL or
+            contains embedded credentials or control characters.
+    """
+    if (
+        not isinstance(callback_url, str)
+        or not callback_url
+        or callback_url != callback_url.strip()
+        or _CONTROL_CHAR_RE.search(callback_url)
+        or "\\" in callback_url
+    ):
+        raise ValueError("Callback URL must use HTTPS")
+    try:
+        split = urlsplit(callback_url)
+        httpx_url = httpx.URL(callback_url)
+    except (ValueError, httpx.InvalidURL) as exc:
+        raise ValueError("Callback URL must use HTTPS") from exc
+
+    scheme = split.scheme.lower()
+    host = (split.hostname or "").lower()
+    if (
+        not host
+        or scheme != httpx_url.scheme.lower()
+        or host != httpx_url.host.lower()
+        or not (scheme == "https" or (scheme == "http" and host in _LOCALHOST_HOSTS))
+    ):
+        raise ValueError("Callback URL must use HTTPS")
+    if (
+        split.username is not None
+        or split.password is not None
+        or "@" in split.netloc
+        or httpx_url.username
+        or httpx_url.password
+    ):
+        raise ValueError("Callback URL must not contain embedded credentials")
+    return callback_url
+
+
+def validate_callback_host(callback_host: str) -> str:
+    """Validate a sandbox provider callback host (bare hostname or HTTPS URL).
+
+    Raises:
+        ValueError: If ``callback_host`` contains control characters, uses
+            non-HTTPS external URLs, or is not a valid host/URL.
+    """
+    if (
+        not isinstance(callback_host, str)
+        or not callback_host
+        or callback_host != callback_host.strip()
+        or _CONTROL_CHAR_RE.search(callback_host)
+    ):
+        raise ValueError("Callback host must be a valid hostname or HTTPS URL")
+    if "://" in callback_host:
+        return validate_callback_url(callback_host)
+    if not _BARE_HOST_RE.fullmatch(callback_host):
+        raise ValueError("Callback host must be a valid hostname or HTTPS URL")
+    return callback_host
 
 
 def encode_path_segment(value: str, *, field_name: str = "value") -> str:
@@ -208,8 +350,17 @@ def build_basic_auth_header(api_user: str, api_key: str) -> str:
     """Return a Base64-encoded Basic authorisation header value.
 
     The format is 'Basic base64(api_user:api_key)'.
+
+    Raises:
+        ValueError: If ``api_user`` contains ``:`` or either credential contains
+            ASCII control characters.
     """
     import base64
+
+    validate_header_value(api_user, field_name="api_user")
+    validate_header_value(api_key, field_name="api_key")
+    if ":" in api_user:
+        raise ValueError("API user must not contain ':'")
 
     raw = f"{api_user}:{api_key}"
     encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")

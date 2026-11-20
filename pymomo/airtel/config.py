@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pymomo.utils import (
+    validate_country_code,
+    validate_currency,
+    validate_environment_name,
+    validate_timeout,
+)
+
 AIRTEL_SANDBOX_BASE_URL = "https://openapiuat.airtel.africa"
 AIRTEL_PRODUCTION_BASE_URL = "https://openapi.airtel.africa"
 
@@ -20,6 +27,10 @@ class AirtelConfig:
     timeout: float = 30.0
 
     def __post_init__(self) -> None:
+        self.country = validate_country_code(self.country)
+        self.currency = validate_currency(self.currency)
+        validate_environment_name(self.environment)
+        self.timeout = validate_timeout(self.timeout)
         if self.base_url is None:
             self.base_url = (
                 AIRTEL_SANDBOX_BASE_URL
