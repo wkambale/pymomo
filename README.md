@@ -9,7 +9,7 @@ Py MoMo API (`py-momo-api` 1.0.5) is a strictly typed, production-grade Python c
 Developed for high reliability and clean developer experience, Py MoMo API adheres to the strict security standards of modern payment systems.
 
 - **PyPI package:** [py-momo-api](https://pypi.org/project/py-momo-api/) (`1.0.5`, imported as `py_momo_api`)
-- **Documentation:** [https://pymomo.aiforuganda.org](https://pymomo.aiforuganda.org)
+- **Documentation:** [https://wkambale.github.io/pymomo/](https://wkambale.github.io/pymomo/)
 - **Repository:** [https://github.com/wkambale/pymomo](https://github.com/wkambale/pymomo)
 
 ## Features
