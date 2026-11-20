@@ -2,7 +2,7 @@
 
 All notable changes to the PyMoMo project will be documented in this file.
 
-## Unreleased
+## 1.0.2 - 2026-11-20
 
 ### Added
 - Collection CIBA OAuth2 token exchange (`Collection.create_oauth2_token` in sync and async clients) with secret-redacting `OAuth2TokenResponse`.
