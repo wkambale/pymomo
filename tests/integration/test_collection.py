@@ -545,3 +545,69 @@ async def test_collection_path_parameter_validation_async(
         )
         is True
     )
+
+
+def test_collection_create_oauth2_token_sync(
+    client: MomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Test exchanging a CIBA auth_req_id for an OAuth2 token synchronously."""
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        json={
+            "access_token": "ciba-user-access-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "profile",
+            "refresh_token": "ciba-refresh-token",
+            "refresh_token_expired_in": 7200,
+        },
+        status_code=200,
+    )
+
+    token = client.collection.create_oauth2_token("auth-req-id-123")
+    assert token.access_token == "ciba-user-access-token"
+    assert token.token_type == "Bearer"
+    assert token.expires_in == 3600
+    assert token.scope == "profile"
+    assert token.refresh_token == "ciba-refresh-token"
+    assert token.refresh_token_expired_in == 7200
+
+    req = httpx_mock.get_requests()[0]
+    assert req.headers["Authorization"].startswith("Basic ")
+    assert req.headers["Content-Type"] == "application/x-www-form-urlencoded"
+    assert b"auth_req_id=auth-req-id-123" in req.read()
+
+    with pytest.raises(ValueError, match="auth_req_id"):
+        client.collection.create_oauth2_token("")
+    with pytest.raises(ValueError, match="grant_type"):
+        client.collection.create_oauth2_token("auth-req-id-123", grant_type="")
+
+
+@pytest.mark.asyncio
+async def test_collection_create_oauth2_token_async(
+    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Test exchanging a CIBA auth_req_id for an OAuth2 token asynchronously."""
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        json={
+            "access_token": "ciba-async-token",
+            "token_type": "Bearer",
+            "expires_in": 1800,
+            "scope": "profile",
+        },
+        status_code=200,
+    )
+
+    token = await async_client.collection.create_oauth2_token("auth-req-async-123")
+    assert token.access_token == "ciba-async-token"
+    assert token.expires_in == 1800
+
+    with pytest.raises(ValueError, match="auth_req_id"):
+        await async_client.collection.create_oauth2_token("   ")
+    with pytest.raises(ValueError, match="grant_type"):
+        await async_client.collection.create_oauth2_token(
+            "auth-req-async-123", grant_type="   "
+        )

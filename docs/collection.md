@@ -130,8 +130,20 @@ auth_response = client.collection.bc_authorize(
     login_hint="256771234567",
     scope="profile",
 )
-print(f"Auth Request ID: {auth_response.auth_req_id}")
+print(f"Auth request ID: {auth_response.auth_req_id}")
 print(f"Expires in: {auth_response.expires_in} seconds")
+```
+
+## Create OAuth2 token
+
+Exchange the `auth_req_id` returned by `bc_authorize` for a user OAuth2 token.
+
+```python
+oauth_token = client.collection.create_oauth2_token(
+    auth_req_id=auth_response.auth_req_id,
+)
+print(f"Token type: {oauth_token.token_type}")
+print(f"Expires in: {oauth_token.expires_in} seconds")
 ```
 
 ## Get basic user info by reference
