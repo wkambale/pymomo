@@ -30,3 +30,32 @@ def test_token_cache_safety_margin_expiry() -> None:
     # If token expires in 29 seconds, it is immediately treated as expired
     cache.set("collection", "token-3", 29)
     assert cache.get("collection") is None
+
+
+def test_token_cache_and_airtel_auth_redaction() -> None:
+    """Verify token caches and AirtelAuth redact secrets in repr and str."""
+    from pymomo.airtel.auth import AirtelAuth, AirtelTokenCache
+    from pymomo.auth import _CachedToken
+
+    cache = TokenCache()
+    cache.set("collection", "super-secret-bearer-token", 3600)
+    assert "super-secret-bearer-token" not in repr(cache)
+    assert "super-secret-bearer-token" not in str(cache)
+
+    entry = _CachedToken(access_token="super-secret-bearer-token", expires_at=9999.0)
+    assert "super-secret-bearer-token" not in repr(entry)
+    assert "access_token=<redacted>" in repr(entry)
+
+    airtel_cache = AirtelTokenCache()
+    airtel_cache.set("airtel-secret-token", 3600)
+    assert "airtel-secret-token" not in repr(airtel_cache)
+    assert "airtel-secret-token" not in str(airtel_cache)
+
+    airtel_auth = AirtelAuth(
+        client_id="cid",
+        client_secret="airtel-client-secret-value",
+        base_url="https://openapiuat.airtel.africa",
+    )
+    assert "airtel-client-secret-value" not in repr(airtel_auth)
+    assert "airtel-client-secret-value" not in str(airtel_auth)
+    assert "client_secret=<redacted>" in repr(airtel_auth)

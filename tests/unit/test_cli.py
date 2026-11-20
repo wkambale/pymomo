@@ -262,3 +262,31 @@ def test_cli_error_handling(httpx_mock: HTTPXMock) -> None:
     except ValueError:
         error_msg = result.stdout
     assert "Error: " in error_msg
+
+
+def test_cli_sanitizes_unexpected_exceptions() -> None:
+    """Verify unexpected internal exceptions do not dump raw exception text."""
+    with patch(
+        "pymomo._cli.MomoClient",
+        side_effect=RuntimeError("internal secret=super-secret-value"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "collection",
+                "balance",
+                "--subscription-key",
+                "key",
+                "--api-user",
+                "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+                "--api-key",
+                "apikey",
+            ],
+        )
+    assert result.exit_code == 1
+    try:
+        err_output = result.stderr
+    except ValueError:
+        err_output = result.stdout
+    assert "RuntimeError" in err_output
+    assert "super-secret-value" not in err_output

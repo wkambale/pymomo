@@ -100,6 +100,15 @@ class TokenResponse(BaseModel):
     token_type: str
     expires_in: int
 
+    def __repr__(self) -> str:
+        return (
+            f"TokenResponse(access_token=<redacted>, "
+            f"token_type={self.token_type!r}, expires_in={self.expires_in!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class BcAuthorizeResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -168,3 +177,9 @@ class ApiKeyResult(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     api_key: str = Field(alias="apiKey")
+
+    def __repr__(self) -> str:
+        return "ApiKeyResult(api_key=<redacted>)"
+
+    def __str__(self) -> str:
+        return self.__repr__()

@@ -50,3 +50,22 @@ def test_transaction_result_helpers() -> None:
     assert r_failed.is_successful() is False
     assert r_failed.is_pending() is False
     assert r_failed.is_failed() is True
+
+
+def test_secret_models_redact_credentials_in_repr_and_str() -> None:
+    """Verify TokenResponse and ApiKeyResult never expose secrets in repr or str."""
+    from pymomo.models import ApiKeyResult, TokenResponse
+
+    tok = TokenResponse(
+        access_token="very-secret-jwt-token",
+        token_type="access_token",
+        expires_in=3600,
+    )
+    assert "very-secret-jwt-token" not in repr(tok)
+    assert "very-secret-jwt-token" not in str(tok)
+    assert "access_token=<redacted>" in repr(tok)
+
+    key = ApiKeyResult(apiKey="very-secret-api-key")
+    assert "very-secret-api-key" not in repr(key)
+    assert "very-secret-api-key" not in str(key)
+    assert "api_key=<redacted>" in repr(key)

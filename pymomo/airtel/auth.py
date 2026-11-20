@@ -40,6 +40,14 @@ class AirtelTokenCache:
             self._access_token = None
             self._expires_at = 0.0
 
+    def __repr__(self) -> str:
+        with self._lock:
+            has_token = self._access_token is not None
+        return f"AirtelTokenCache(has_token={has_token!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class AirtelAuth:
     """Airtel authentication handler."""
@@ -54,6 +62,15 @@ class AirtelAuth:
         self._client_secret = client_secret
         self._base_url = base_url
         self._cache = AirtelTokenCache()
+
+    def __repr__(self) -> str:
+        return (
+            f"AirtelAuth(client_id={self._client_id!r}, "
+            f"client_secret=<redacted>, base_url={self._base_url!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def get_token(self, client: httpx.Client) -> str:
         """Get a valid access token, fetching a new one if expired."""
@@ -73,10 +90,12 @@ class AirtelAuth:
                     "grant_type": "client_credentials",
                 },
             )
-        except httpx.TimeoutException as exc:
-            raise PyMoMoError("Airtel authentication request timed out") from exc
-        except httpx.RequestError as exc:
-            raise PyMoMoError("Airtel authentication request connection error") from exc
+        except httpx.TimeoutException:
+            raise PyMoMoError("Airtel authentication request timed out") from None
+        except httpx.RequestError:
+            raise PyMoMoError(
+                "Airtel authentication request connection error"
+            ) from None
 
         if response.status_code == 401:
             raise AuthenticationError("Invalid or expired Airtel client credentials")

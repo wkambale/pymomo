@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
-from pymomo.http import HttpClient
+from pymomo.http import HttpClient, parse_json_dict
 from pymomo.models import AccountHolderIdType, Balance, BasicUserInfo, TokenResponse
 from pymomo.utils import (
     build_basic_auth_header,
@@ -53,7 +53,7 @@ class BaseProduct:
                 "X-Target-Environment": self._config.environment,
             },
         )
-        token = TokenResponse.model_validate(response.json())
+        token = TokenResponse.model_validate(parse_json_dict(response))
         self._token_cache.set(
             self._product_name,
             token.access_token,
@@ -98,7 +98,7 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return Balance.model_validate(response.json())
+        return Balance.model_validate(parse_json_dict(response))
 
     def get_balance_for_currency(self, currency: str) -> Balance:
         """Get the account balance for a specific currency.
@@ -118,7 +118,7 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return Balance.model_validate(response.json())
+        return Balance.model_validate(parse_json_dict(response))
 
     def is_account_holder_active(
         self,
@@ -149,7 +149,7 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        res = response.json()
+        res = parse_json_dict(response)
         result = res.get("result")
         if isinstance(result, str):
             return result.lower() == "true"
@@ -184,4 +184,4 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return BasicUserInfo.model_validate(response.json())
+        return BasicUserInfo.model_validate(parse_json_dict(response))

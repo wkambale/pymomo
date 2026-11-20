@@ -44,8 +44,16 @@ def handle_cli_exceptions(func: F) -> F:
                 msg = "An unexpected error occurred."
             typer.echo(f"Error: {msg}", err=True)
             raise typer.Exit(code=1)
+        except ValueError as e:
+            msg = str(e)
+            msg = msg[0].upper() + msg[1:] if msg else "Invalid input."
+            typer.echo(f"Error: {msg}", err=True)
+            raise typer.Exit(code=1) from None
         except Exception as e:  # noqa: BLE001
-            typer.echo(f"Unexpected error: {e!s}", err=True)
+            typer.echo(
+                f"Unexpected error ({type(e).__name__}). Check your inputs and try again.",
+                err=True,
+            )
             raise typer.Exit(code=1) from None
 
     return cast(F, wrapper)

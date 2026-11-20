@@ -98,10 +98,10 @@ class AirtelClient:
                 headers=req_headers,
                 json=json,
             )
-        except httpx.TimeoutException as exc:
-            raise PyMoMoError(f"Airtel request timed out: {method} {path}") from exc
-        except httpx.RequestError as exc:
-            raise PyMoMoError(f"Airtel connection error: {method} {path}") from exc
+        except httpx.TimeoutException:
+            raise PyMoMoError(f"Airtel request timed out: {method} {path}") from None
+        except httpx.RequestError:
+            raise PyMoMoError(f"Airtel connection error: {method} {path}") from None
 
         # 3. Handle 401 retry logic
         if response.status_code == 401:
@@ -110,10 +110,10 @@ class AirtelClient:
 
             try:
                 new_token = self._auth.get_token(self._http)
-            except Exception as exc:
+            except (PyMoMoError, ValueError):
                 raise AuthenticationError(
                     "Airtel authentication failed during token refresh"
-                ) from exc
+                ) from None
 
             retry_headers = req_headers.copy()
             retry_headers["Authorization"] = f"Bearer {new_token}"
@@ -126,14 +126,14 @@ class AirtelClient:
                     headers=retry_headers,
                     json=json,
                 )
-            except httpx.TimeoutException as exc:
+            except httpx.TimeoutException:
                 raise PyMoMoError(
                     f"Airtel request timed out on retry: {method} {path}"
-                ) from exc
-            except httpx.RequestError as exc:
+                ) from None
+            except httpx.RequestError:
                 raise PyMoMoError(
                     f"Airtel connection error on retry: {method} {path}"
-                ) from exc
+                ) from None
 
         self._raise_for_status(response)
         return response

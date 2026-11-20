@@ -109,3 +109,55 @@ async def test_sandbox_get_api_user_async(
     info = await async_client.sandbox.get_api_user(user_id)
     assert info.provider_callback_host == "https://async-callback.com"
     assert info.target_environment == "sandbox"
+
+
+def test_sandbox_provisioner_guards_and_redaction() -> None:
+    """Verify SandboxProvisioner rejects production env, missing key/http, and redacts key."""
+    from pymomo import AsyncSandboxProvisioner, SandboxProvisioner
+    from pymomo.config import MTN_UGANDA, MomoConfig, ProductConfig
+    from pymomo.exceptions import MissingCredentialsError, PyMoMoError
+    from pymomo.http import HttpClient
+
+    http = HttpClient("https://sandbox.momodeveloper.mtn.com", 30.0)
+    try:
+        # Missing HTTP client
+        with pytest.raises(PyMoMoError, match="HTTP client is required"):
+            SandboxProvisioner(
+                subscription_key="sub-key", config=MomoConfig(), http=None
+            )
+
+        # Missing subscription key
+        with pytest.raises(
+            MissingCredentialsError, match="Subscription key is required"
+        ):
+            SandboxProvisioner(config=MomoConfig(), http=http)
+
+        # Non-sandbox environment rejected
+        prod_config = MomoConfig(
+            environment=MTN_UGANDA,
+            collection=ProductConfig(
+                subscription_key="prod-sub-key",
+                api_user="e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+                api_key="prod-api-key",
+            ),
+        )
+        with pytest.raises(PyMoMoError, match="sandbox environment"):
+            SandboxProvisioner(config=prod_config, http=http)
+
+        # Subscription key redacted in repr/str
+        provisioner = SandboxProvisioner(
+            subscription_key="secret-sandbox-sub-key",
+            config=MomoConfig(),
+            http=http,
+        )
+        assert "secret-sandbox-sub-key" not in repr(provisioner)
+        assert "secret-sandbox-sub-key" not in str(provisioner)
+        assert "subscription_key=<redacted>" in repr(provisioner)
+
+        # Async guards
+        with pytest.raises(PyMoMoError, match="HTTP client is required"):
+            AsyncSandboxProvisioner(
+                subscription_key="sub-key", config=MomoConfig(), http=None
+            )
+    finally:
+        http.close()

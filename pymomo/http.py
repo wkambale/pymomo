@@ -53,10 +53,10 @@ class HttpClient:
             response = self._client.request(
                 method, path, headers=headers, json=json, data=data
             )
-        except httpx.TimeoutException as exc:
-            raise PyMoMoError(f"Request timed out: {method} {path}") from exc
-        except httpx.RequestError as exc:
-            raise PyMoMoError(f"Connection error: {method} {path}") from exc
+        except httpx.TimeoutException:
+            raise PyMoMoError(f"Request timed out: {method} {path}") from None
+        except httpx.RequestError:
+            raise PyMoMoError(f"Connection error: {method} {path}") from None
 
         if (
             response.status_code == 401
@@ -70,10 +70,10 @@ class HttpClient:
             # Re-fetch a token
             try:
                 new_token = token_refresher()
-            except Exception as exc:
+            except (PyMoMoError, ValueError):
                 raise AuthenticationError(
                     "Authentication failed during token refresh"
-                ) from exc
+                ) from None
 
             # Retry original request exactly once
             retry_headers = headers.copy()
@@ -84,14 +84,14 @@ class HttpClient:
                 response = self._client.request(
                     method, path, headers=retry_headers, json=json, data=data
                 )
-            except httpx.TimeoutException as exc:
+            except httpx.TimeoutException:
                 raise PyMoMoError(
                     f"Request timed out on retry: {method} {path}"
-                ) from exc
-            except httpx.RequestError as exc:
+                ) from None
+            except httpx.RequestError:
                 raise PyMoMoError(
                     f"Connection error on retry: {method} {path}"
-                ) from exc
+                ) from None
 
         _raise_for_status(response)
         return response
@@ -105,6 +105,21 @@ class HttpClient:
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+def parse_json_dict(response: httpx.Response) -> dict[str, Any]:
+    """Decode an HTTP response body as a JSON object.
+
+    Raises:
+        PyMoMoError: If the response body is not valid JSON or not a JSON object.
+    """
+    try:
+        parsed = response.json()
+    except ValueError:
+        raise PyMoMoError("API returned invalid JSON response") from None
+    if not isinstance(parsed, dict):
+        raise PyMoMoError("API returned unexpected non-object JSON response")
+    return parsed
 
 
 def _raise_for_status(response: httpx.Response) -> None:

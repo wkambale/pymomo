@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pymomo.config import MomoConfig
-from pymomo.http import HttpClient
+from pymomo.config import SANDBOX, MomoConfig
+from pymomo.exceptions import MissingCredentialsError, PyMoMoError
+from pymomo.http import HttpClient, parse_json_dict
 from pymomo.models import ApiKeyResult, ApiUserInfo
 from pymomo.utils import generate_reference_id, validate_reference_id
 
@@ -41,6 +42,24 @@ class SandboxProvisioner:
             self._subscription_key = subscription_key or ""
             self._config = cast("MomoConfig | None", config)
             self._http = cast(HttpClient, http)
+
+        if self._http is None:
+            raise PyMoMoError("HTTP client is required for sandbox provisioning")
+        if self._config is not None and self._config.environment != SANDBOX:
+            raise PyMoMoError(
+                "SandboxProvisioner can only be used with the sandbox environment"
+            )
+        if not self._subscription_key:
+            raise MissingCredentialsError(
+                "Subscription key is required for sandbox provisioning"
+            )
+
+    def __repr__(self) -> str:
+        env = self._config.environment if self._config else None
+        return f"SandboxProvisioner(subscription_key=<redacted>, environment={env!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def _extract_sub_key(self, config: MomoConfig) -> str:
         return (
@@ -88,7 +107,7 @@ class SandboxProvisioner:
                 "Ocp-Apim-Subscription-Key": self._subscription_key,
             },
         )
-        return ApiUserInfo.model_validate(response.json())
+        return ApiUserInfo.model_validate(parse_json_dict(response))
 
     def create_api_key(self, api_user: str) -> str:
         """Create an API key for an existing sandbox user. Returns the api_key."""
@@ -100,7 +119,7 @@ class SandboxProvisioner:
                 "Ocp-Apim-Subscription-Key": self._subscription_key,
             },
         )
-        result = ApiKeyResult.model_validate(response.json())
+        result = ApiKeyResult.model_validate(parse_json_dict(response))
         return result.api_key
 
     def provision(

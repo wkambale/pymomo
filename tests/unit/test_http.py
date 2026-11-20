@@ -258,3 +258,50 @@ async def test_status_code_mappings_async(httpx_mock: HTTPXMock) -> None:
     )
     with pytest.raises(MomoServerError):
         await client.request("GET", "/test-500", headers={})
+
+
+def test_http_exceptions_do_not_chain_raw_httpx_request_headers() -> None:
+    """Verify httpx exceptions are not chained via __cause__ onto PyMoMoError."""
+    client = HttpClient("https://example.com", 30.0)
+    req = httpx.Request(
+        "GET",
+        "https://example.com/secret",
+        headers={
+            "Authorization": "Bearer live-secret-token",
+            "Ocp-Apim-Subscription-Key": "live-sub-key",
+        },
+    )
+    with patch.object(
+        client._client,
+        "request",
+        side_effect=httpx.ReadTimeout("timed out", request=req),
+    ):
+        with pytest.raises(PyMoMoError) as excinfo:
+            client.request("GET", "/secret", headers=dict(req.headers))
+        assert excinfo.value.__cause__ is None
+        assert "live-secret-token" not in str(excinfo.value)
+        assert "live-sub-key" not in str(excinfo.value)
+
+
+def test_non_dict_json_error_body_and_parse_json_dict(httpx_mock: HTTPXMock) -> None:
+    """Verify non-dict 400 JSON bodies and invalid 200 JSON bodies raise PyMoMoError."""
+    from pymomo.http import parse_json_dict
+
+    client = HttpClient("https://example.com", 30.0)
+    httpx_mock.add_response(
+        method="GET",
+        url="https://example.com/list-400",
+        json=["not", "a", "dict"],
+        status_code=400,
+    )
+    with pytest.raises(BadRequestError, match="Bad request") as excinfo:
+        client.request("GET", "/list-400", headers={})
+    assert excinfo.value.response_body == {}
+
+    html_resp = httpx.Response(200, text="<html>error</html>")
+    with pytest.raises(PyMoMoError, match="invalid JSON"):
+        parse_json_dict(html_resp)
+
+    list_resp = httpx.Response(200, json=[1, 2, 3])
+    with pytest.raises(PyMoMoError, match="non-object JSON"):
+        parse_json_dict(list_resp)
