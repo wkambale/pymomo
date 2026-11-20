@@ -1,8 +1,3 @@
----
-hide:
-  - navigation
----
-
 # Authentication
 
 Py MoMo SDK uses separate configuration records for each product (Collection, Disbursement, Remittance) because the MTN API issues unique credentials for each integration.

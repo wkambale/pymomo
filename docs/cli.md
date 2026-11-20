@@ -1,8 +1,3 @@
----
-hide:
-  - navigation
----
-
 # Command line interface
 
 Py MoMo SDK provides a Typer-based command-line tool named `py-momo-sdk` for sandbox provisioning, balance inquiries, payment initiation, and status checks.

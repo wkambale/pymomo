@@ -6,6 +6,7 @@ repo_name: wkambale/pymomo
 copyright: Copyright &copy; 2026 Wesley Kambale
 docs_dir: docs
 site_dir: site
+edit_uri: edit/main/docs/
 
 theme:
   name: material
