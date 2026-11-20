@@ -67,3 +67,5 @@ with PyMomoAPI(config) as client:
 For security and privacy compliance:
 - Subscription keys, API user UUIDs, and API keys are redacted or excluded from all exception messages, string formats (`__str__`), and debug records.
 - Exception tracebacks do not expose request headers or request bodies.
+
+Next step: [Explore the command line interface](cli.md).

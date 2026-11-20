@@ -1,13 +1,13 @@
 # Remittance
 
-The Remittance product allows you to execute domestic or international wallet-to-wallet transfers.
+The Remittance product executes domestic or international wallet-to-wallet transfers.
 
-## Initializing remittance client
+## Initializing the remittance client
 
 Access remittance methods via the `.remittance` property of a `PyMomoAPI` instance:
 
 ```python
-from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
+from py_momo_api import ProductConfig, PyMomoAPI, PyMomoAPIConfig
 
 config = PyMomoAPIConfig(
     environment="sandbox",
@@ -22,10 +22,9 @@ client = PyMomoAPI(config)
 remittance_client = client.remittance
 ```
 
-
 ## Transfer
 
-Transfer funds to a beneficiary.
+Transfer funds to a beneficiary:
 
 ```python
 reference_id = client.remittance.transfer(
@@ -38,24 +37,25 @@ reference_id = client.remittance.transfer(
     # Optional canonical UUID v4; omit to auto-generate
     reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
-print(f"Remittance Reference: {reference_id}")
+print(f"Remittance reference: {reference_id}")
 ```
 
 ## Get transfer status
 
-Check the outcome of a remittance transfer transaction.
+Check the outcome of a remittance transfer transaction:
 
 ```python
 result = client.remittance.get_transfer_status(reference_id)
 print(f"Remittance status: {result.status}")
 ```
 
-
 ## Get account balance
 
-Retrieve the remittance account balance.
+Retrieve the remittance account balance:
 
 ```python
 balance = client.remittance.get_balance()
 print(f"Available balance: {balance.available_balance} {balance.currency}")
 ```
+
+Next step: [Explore Airtel Money](airtel.md).

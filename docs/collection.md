@@ -2,12 +2,12 @@
 
 The Collection product allows you to receive payments and withdrawal requests from mobile money subscribers.
 
-## Initializing collection client
+## Initializing the collection client
 
 Access collection methods via the `.collection` property of a `PyMomoAPI` instance:
 
 ```python
-from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
+from py_momo_api import ProductConfig, PyMomoAPI, PyMomoAPIConfig
 
 config = PyMomoAPIConfig(
     environment="sandbox",
@@ -22,10 +22,9 @@ client = PyMomoAPI(config)
 collection_client = client.collection
 ```
 
-
 ## Request to pay
 
-Initiate a request to collect funds from a subscriber.
+Initiate a request to collect funds from a subscriber:
 
 ```python
 reference_id = client.collection.request_to_pay(
@@ -38,24 +37,23 @@ reference_id = client.collection.request_to_pay(
     # Optional canonical UUID v4; omit to auto-generate
     reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
-print(f"Transaction Reference: {reference_id}")
+print(f"Transaction reference: {reference_id}")
 ```
 
 ## Get payment status
 
-Poll the status of a request to pay transaction using its reference ID.
+Poll the status of a request to pay transaction using its reference ID:
 
 ```python
 result = client.collection.get_payment_status(reference_id)
 print(f"Status: {result.status}")
 if result.is_successful():
-    print(f"Financial Transaction ID: {result.financial_transaction_id}")
+    print(f"Financial transaction ID: {result.financial_transaction_id}")
 ```
-
 
 ## Request to withdraw
 
-Initiate a request to withdraw funds from a subscriber's wallet (collection v2).
+Initiate a request to withdraw funds from a subscriber wallet (collection v2):
 
 ```python
 reference_id = client.collection.request_to_withdraw(
@@ -68,22 +66,21 @@ reference_id = client.collection.request_to_withdraw(
     # Optional canonical UUID v4; omit to auto-generate
     reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
-print(f"Withdraw Reference: {reference_id}")
+print(f"Withdraw reference: {reference_id}")
 ```
 
 ## Get withdraw status
 
-Check the status of a request to withdraw transaction.
+Check the status of a request to withdraw transaction:
 
 ```python
 result = client.collection.get_withdraw_status(reference_id)
 print(f"Withdrawal status: {result.status}")
 ```
 
-
 ## Get account balance
 
-Retrieve the collection account balance.
+Retrieve the collection account balance:
 
 ```python
 balance = client.collection.get_balance()
@@ -92,17 +89,16 @@ print(f"Available balance: {balance.available_balance} {balance.currency}")
 
 ## Get account balance for currency
 
-Get the account balance for a specific currency code.
+Retrieve the account balance for a specific ISO currency code:
 
 ```python
 balance = client.collection.get_balance_for_currency("UGX")
 print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
 
-
 ## Check if account holder is active
 
-Validate whether a subscriber account exists and is active.
+Validate whether a subscriber account exists and is active:
 
 ```python
 is_active = client.collection.is_account_holder_active(
@@ -114,7 +110,7 @@ print(f"Subscriber active: {is_active}")
 
 ## Get basic user info
 
-Query the basic user registration info of a subscriber.
+Query the basic registration profile of a subscriber:
 
 ```python
 info = client.collection.get_basic_user_info("256771234567")
@@ -122,10 +118,9 @@ print(f"Name: {info.name}")
 print(f"Locale: {info.locale}")
 ```
 
-
 ## Backchannel authorize
 
-Initiate a CIBA backchannel authorization request.
+Initiate a CIBA backchannel authorization request:
 
 ```python
 auth_response = client.collection.bc_authorize(
@@ -138,7 +133,7 @@ print(f"Expires in: {auth_response.expires_in} seconds")
 
 ## Create OAuth2 token
 
-Exchange the `auth_req_id` returned by `bc_authorize` for a user OAuth2 token.
+Exchange the `auth_req_id` returned by `bc_authorize` for a user OAuth2 token:
 
 ```python
 oauth_token = client.collection.create_oauth2_token(
@@ -150,7 +145,7 @@ print(f"Expires in: {oauth_token.expires_in} seconds")
 
 ## Get basic user info by reference
 
-Retrieve a user's profile details using the reference ID of a consent query.
+Retrieve a user profile using the reference ID of a consent query:
 
 ```python
 user_info = client.collection.get_basic_user_info_by_reference(
@@ -159,3 +154,5 @@ user_info = client.collection.get_basic_user_info_by_reference(
 print(f"Name: {user_info.name}")
 print(f"Gender: {user_info.gender}")
 ```
+
+Next step: [Explore Disbursement](disbursement.md).

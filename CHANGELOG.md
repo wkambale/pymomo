@@ -2,6 +2,12 @@
 
 All notable changes to the Py MoMo API (`py-momo-api`) project will be documented in this file.
 
+## 1.0.5 - 2026-11-20
+
+### Changed
+- Redesigned the MkDocs documentation site with semantic CSS design tokens, variable `Inter` and `JetBrains Mono` typography (`cv11`, `ss01`, `text-wrap: balance`, `text-wrap: pretty`, `tabular-nums`), alternating surface bands, horizontally aligned card grids, SVG brand geometry, and an accessible icon-only scroll-to-top control.
+- Refined `README.md` and all documentation pages for strict editorial hygiene: sentence case throughout, zero ampersands in prose, zero em or en dashes, zero numbered headings or cards, and clear next-action navigation links.
+
 ## 1.0.4 - 2026-11-20
 
 ### Changed
