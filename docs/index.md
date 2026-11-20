@@ -1,6 +1,5 @@
 ---
 hide:
-  - navigation
   - toc
 ---
 
@@ -29,6 +28,13 @@ hide:
     <rect width="1200" height="18" fill="url(#pm-chevron-pattern)"/>
   </svg>
 </section>
+
+<div class="pm-badges">
+  <a href="https://pypi.org/project/py-momo-sdk/"><img src="https://img.shields.io/pypi/v/py-momo-sdk.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/py-momo-sdk/"><img src="https://img.shields.io/pypi/pyversions/py-momo-sdk.svg" alt="Python versions"></a>
+  <a href="https://github.com/wkambale/pymomo/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <a href="https://github.com/wkambale/pymomo/actions/workflows/ci.yml"><img src="https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</div>
 
 ## Supported products
 
@@ -123,17 +129,20 @@ with PyMomoSDK(config) as client:
 
 ## Explore the guides
 
-- [Quickstart guide](quickstart.md)
-- [Authentication configuration](authentication.md)
-- [Collection API reference](collection.md)
-- [Disbursement API reference](disbursement.md)
-- [Remittance API reference](remittance.md)
-- [Airtel Money reference](airtel.md)
-- [Sandbox provisioning](sandbox.md)
-- [Webhook processing](webhooks.md)
-- [Asynchronous client support](async.md)
-- [Error handling](error-handling.md)
-- [Command line interface reference](cli.md)
-- [Contributing guide](contributing.md)
+<ul class="pm-directory">
+  <li><a href="quickstart/">Quickstart guide</a></li>
+  <li><a href="authentication/">Authentication configuration</a></li>
+  <li><a href="collection/">Collection API reference</a></li>
+  <li><a href="disbursement/">Disbursement API reference</a></li>
+  <li><a href="remittance/">Remittance API reference</a></li>
+  <li><a href="airtel/">Airtel Money reference</a></li>
+  <li><a href="sandbox/">Sandbox provisioning</a></li>
+  <li><a href="webhooks/">Webhook processing</a></li>
+  <li><a href="async/">Asynchronous client support</a></li>
+  <li><a href="error-handling/">Error handling</a></li>
+  <li><a href="cli/">Command line interface</a></li>
+  <li><a href="changelog/">Changelog</a></li>
+  <li><a href="contributing/">Contributing guide</a></li>
+</ul>
 
 </div>
