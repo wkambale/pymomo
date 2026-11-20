@@ -16,7 +16,7 @@ class Disbursement(AsyncBaseProduct):
     """Asynchronous Disbursement product client."""
 
     _product_name = "disbursement"
-    _token_path = "/disbursement/token/"
+    _token_path = "/disbursement/token/"  # nosec B105
 
     async def transfer(
         self,
