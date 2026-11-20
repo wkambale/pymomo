@@ -1,23 +1,58 @@
 # Webhooks
 
-MTN MoMo uses webhooks (callbacks) to notify your server of transaction updates. When you initiate a write request (like a request to pay or a transfer) and specify a callback URL, the API sends a `POST` request to that URL containing the final transaction details.
+MTN MoMo uses webhooks (callbacks) to notify your server of transaction updates. When you initiate a write request (such as a request to pay or a transfer) and specify a callback URL, the API sends a `POST` request to that URL containing the transaction details.
 
-## Webhook signature validation
+## Verifying webhook authenticity
 
-The MTN Developer portal currently does not attach cryptographic request signatures to webhook notifications. To ensure callbacks originate securely from the MTN platform, you must:
+The MTN Developer portal currently does not attach cryptographic request signatures to direct webhook notifications. To defend against spoofed callbacks, always apply layered verification before fulfilling an order:
 
-1.  **Expose callback endpoints over HTTPS**: Ensure your callback URL starts with `https://`.
-2.  **Filter incoming IP addresses**: Restrict incoming traffic to your webhook endpoints so that only requests originating from official MTN API gateway IP addresses are allowed.
+1. **Expose callback endpoints over HTTPS**: Ensure your `callback_url` starts with `https://`.
+2. **Restrict source IP addresses**: Verify the peer IP address against your allowed gateway IP or CIDR ranges with `WebhookHandler.verify_source_ip`.
+3. **Verify gateway HMAC signatures (when behind a signing proxy or gateway)**: Use `WebhookHandler.verify_hmac_signature` for constant-time HMAC-SHA256 or HMAC-SHA512 verification.
+4. **Re-query the authoritative MTN status endpoint**: Treat incoming callbacks as notifications and confirm final transaction settlement via `client.collection.get_payment_status(reference_id)` (or the corresponding disbursement/remittance status method) before crediting balances or shipping goods.
 
+### Source IP verification
+
+```python
+from pymomo import WebhookHandler, WebhookVerificationError
+
+allowed_cidrs = ["196.201.214.0/24", "203.0.113.10/32"]
+
+try:
+    WebhookHandler.verify_source_ip("196.201.214.42", allowed_cidrs)
+except WebhookVerificationError:
+    # Reject untrusted source with HTTP 403
+    raise
+```
+
+### HMAC signature verification
+
+```python
+from pymomo import WebhookHandler, WebhookVerificationError
+
+raw_body = b'{"status":"SUCCESSFUL","amount":"1500.00","currency":"UGX"}'
+signature_header = "sha256=<hex-digest-from-header>"
+shared_secret = "your-webhook-secret"
+
+try:
+    WebhookHandler.verify_hmac_signature(
+        raw_body,
+        signature_header,
+        shared_secret,
+        algorithm="sha256",
+    )
+except WebhookVerificationError:
+    # Reject forged or tampered payload with HTTP 401/403
+    raise
+```
 
 ## Processing webhook notifications
 
-Use the `WebhookHandler` class to parse incoming webhook JSON payloads into typed model objects:
+Use `WebhookHandler.parse_transaction_notification` to parse and validate incoming webhook JSON payloads into typed `TransactionResult` objects. Invalid payloads raise `WebhookVerificationError`.
 
 ```python
 from pymomo import WebhookHandler
 
-# Example webhook payload received by your web server
 webhook_payload = {
     "financialTransactionId": "88771122",
     "externalId": "invoice-9922",
@@ -26,24 +61,21 @@ webhook_payload = {
     "status": "SUCCESSFUL",
     "payer": {
         "partyIdType": "MSISDN",
-        "partyId": "256771234567"
-    }
+        "partyId": "256771234567",
+    },
 }
 
-# Parse payload into a TransactionResult object
 result = WebhookHandler.parse_transaction_notification(webhook_payload)
-
 print(f"Status: {result.status}")
 print(f"Is successful: {result.is_successful()}")
-print(f"Financial Transaction ID: {result.financial_transaction_id}")
+print(f"Financial transaction ID: {result.financial_transaction_id}")
 ```
 
 ## Quick success checks
 
-If you only need to determine if a webhook call indicates a successful transaction without parsing other fields:
+To check whether a parsed webhook payload reports a successful status:
 
 ```python
-is_ok = WebhookHandler.is_successful(webhook_payload)
-if is_ok:
-    print("Transaction settled successfully.")
+if WebhookHandler.is_successful(webhook_payload):
+    print("Notification reports successful transaction; verify via status API.")
 ```
