@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from pymomo.exceptions import WebhookVerificationError
-from pymomo.models import TransactionStatus
-from pymomo.webhooks import WebhookHandler
+from py_momo_api.exceptions import WebhookVerificationError
+from py_momo_api.models import TransactionStatus
+from py_momo_api.webhooks import WebhookHandler
 
 
 def test_webhook_handler_parse() -> None:

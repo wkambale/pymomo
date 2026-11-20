@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pymomo.auth import TokenCache
+from py_momo_api.auth import TokenCache
 
 
 def test_token_cache_get_set_invalidate() -> None:
@@ -34,8 +34,8 @@ def test_token_cache_safety_margin_expiry() -> None:
 
 def test_token_cache_and_airtel_auth_redaction() -> None:
     """Verify token caches and AirtelAuth redact secrets in repr and str."""
-    from pymomo.airtel.auth import AirtelAuth, AirtelTokenCache
-    from pymomo.auth import _CachedToken
+    from py_momo_api.airtel.auth import AirtelAuth, AirtelTokenCache
+    from py_momo_api.auth import _CachedToken
 
     cache = TokenCache()
     cache.set("collection", "super-secret-bearer-token", 3600)
@@ -63,7 +63,7 @@ def test_token_cache_and_airtel_auth_redaction() -> None:
 
 def test_conditional_token_invalidation_prevents_stale_eviction() -> None:
     """Verify expected_token prevents a stale 401 from evicting a fresh token."""
-    from pymomo.airtel.auth import AirtelTokenCache
+    from py_momo_api.airtel.auth import AirtelTokenCache
 
     cache = TokenCache()
     cache.set("collection", "fresh-token", 3600)

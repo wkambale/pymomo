@@ -6,21 +6,21 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
-from pymomo._async.http import AsyncHttpClient
-from pymomo.exceptions import (
+from py_momo_api._async.http import AsyncHttpClient
+from py_momo_api.exceptions import (
     BadRequestError,
     ConflictError,
-    MomoServerError,
-    PyMoMoError,
+    PyMomoAPIError,
+    PyMomoAPIServerError,
     ResourceNotFoundError,
 )
-from pymomo.http import HttpClient
+from py_momo_api.http import HttpClient
 
 
 def test_https_enforcement_sync() -> None:
-    """Verify sync HttpClient constructor raises PyMoMoError on non-HTTPS schemes."""
+    """Verify sync HttpClient constructor raises PyMomoAPIError on non-HTTPS schemes."""
     # Invalid HTTP
-    with pytest.raises(PyMoMoError) as excinfo:
+    with pytest.raises(PyMomoAPIError) as excinfo:
         HttpClient("http://example.com", 30.0)
     assert "Base URL must use HTTPS" in str(excinfo.value)
 
@@ -54,9 +54,9 @@ def test_https_enforcement_sync() -> None:
 )
 def test_https_enforcement_rejects_url_parser_bypasses(bad_url: str) -> None:
     """Verify URL parser differentials and unsafe schemes are rejected."""
-    with pytest.raises(PyMoMoError):
+    with pytest.raises(PyMomoAPIError):
         HttpClient(bad_url, 30.0)
-    with pytest.raises(PyMoMoError):
+    with pytest.raises(PyMomoAPIError):
         AsyncHttpClient(bad_url, 30.0)
 
 
@@ -75,7 +75,7 @@ def test_https_enforcement_rejects_url_parser_bypasses(bad_url: str) -> None:
 def test_request_rejects_non_relative_paths_sync(bad_path: str) -> None:
     """Verify HttpClient.request rejects absolute or protocol-relative paths."""
     client = HttpClient("https://example.com", 30.0)
-    with pytest.raises(PyMoMoError):
+    with pytest.raises(PyMomoAPIError):
         client.request("GET", bad_path, headers={})
 
 
@@ -92,27 +92,27 @@ def test_request_rejects_non_relative_paths_sync(bad_path: str) -> None:
 async def test_request_rejects_non_relative_paths_async(bad_path: str) -> None:
     """Verify AsyncHttpClient.request rejects absolute or protocol-relative paths."""
     client = AsyncHttpClient("https://example.com", 30.0)
-    with pytest.raises(PyMoMoError):
+    with pytest.raises(PyMomoAPIError):
         await client.request("GET", bad_path, headers={})
 
 
 def test_clients_reject_missing_base_url_without_assert() -> None:
-    """Verify MomoClient and AsyncMomoClient reject empty base_url cleanly."""
-    from pymomo import AsyncMomoClient, MomoClient
-    from pymomo.config import MomoConfig
+    """Verify PyMomoAPI and AsyncPyMomoAPI reject empty base_url cleanly."""
+    from py_momo_api import AsyncPyMomoAPI, PyMomoAPI
+    from py_momo_api.config import PyMomoAPIConfig
 
-    config = MomoConfig()
+    config = PyMomoAPIConfig()
     config.base_url = ""
-    with pytest.raises(PyMoMoError, match="Base URL must use HTTPS"):
-        MomoClient(config)
-    with pytest.raises(PyMoMoError, match="Base URL must use HTTPS"):
-        AsyncMomoClient(config)
+    with pytest.raises(PyMomoAPIError, match="Base URL must use HTTPS"):
+        PyMomoAPI(config)
+    with pytest.raises(PyMomoAPIError, match="Base URL must use HTTPS"):
+        AsyncPyMomoAPI(config)
 
 
 @pytest.mark.asyncio
 async def test_https_enforcement_async() -> None:
-    """Verify AsyncHttpClient constructor raises PyMoMoError on non-HTTPS schemes."""
-    with pytest.raises(PyMoMoError) as excinfo:
+    """Verify AsyncHttpClient constructor raises PyMomoAPIError on non-HTTPS schemes."""
+    with pytest.raises(PyMomoAPIError) as excinfo:
         AsyncHttpClient("http://example.com", 30.0)
     assert "Base URL must use HTTPS" in str(excinfo.value)
 
@@ -121,14 +121,14 @@ async def test_https_enforcement_async() -> None:
 
 
 def test_http_exceptions_handling_sync() -> None:
-    """Verify connection errors and timeouts raise PyMoMoError in sync client."""
+    """Verify connection errors and timeouts raise PyMomoAPIError in sync client."""
     client = HttpClient("https://example.com", 30.0)
 
     # Timeout
     with patch.object(
         client._client, "request", side_effect=httpx.TimeoutException("timeout")
     ):
-        with pytest.raises(PyMoMoError) as excinfo:
+        with pytest.raises(PyMomoAPIError) as excinfo:
             client.request("GET", "/test", headers={})
         assert "Request timed out" in str(excinfo.value)
 
@@ -136,21 +136,21 @@ def test_http_exceptions_handling_sync() -> None:
     with patch.object(
         client._client, "request", side_effect=httpx.RequestError("connect")
     ):
-        with pytest.raises(PyMoMoError) as excinfo:
+        with pytest.raises(PyMomoAPIError) as excinfo:
             client.request("GET", "/test", headers={})
         assert "Connection error" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
 async def test_http_exceptions_handling_async() -> None:
-    """Verify connection errors and timeouts raise PyMoMoError in async client."""
+    """Verify connection errors and timeouts raise PyMomoAPIError in async client."""
     client = AsyncHttpClient("https://example.com", 30.0)
 
     # Timeout
     with patch.object(
         client._client, "request", side_effect=httpx.TimeoutException("timeout")
     ):
-        with pytest.raises(PyMoMoError) as excinfo:
+        with pytest.raises(PyMomoAPIError) as excinfo:
             await client.request("GET", "/test", headers={})
         assert "Request timed out" in str(excinfo.value)
 
@@ -158,7 +158,7 @@ async def test_http_exceptions_handling_async() -> None:
     with patch.object(
         client._client, "request", side_effect=httpx.RequestError("connect")
     ):
-        with pytest.raises(PyMoMoError) as excinfo:
+        with pytest.raises(PyMomoAPIError) as excinfo:
             await client.request("GET", "/test", headers={})
         assert "Connection error" in str(excinfo.value)
 
@@ -202,7 +202,7 @@ def test_status_code_mappings_sync(httpx_mock: HTTPXMock) -> None:
         url="https://example.com/test-500",
         status_code=500,
     )
-    with pytest.raises(MomoServerError):
+    with pytest.raises(PyMomoAPIServerError):
         client.request("GET", "/test-500", headers={})
 
     # 418 Unexpected status
@@ -211,7 +211,7 @@ def test_status_code_mappings_sync(httpx_mock: HTTPXMock) -> None:
         url="https://example.com/test-418",
         status_code=418,
     )
-    with pytest.raises(PyMoMoError) as excinfo:
+    with pytest.raises(PyMomoAPIError) as excinfo:
         client.request("GET", "/test-418", headers={})
     assert "Unexpected HTTP status: 418" in str(excinfo.value)
 
@@ -256,12 +256,12 @@ async def test_status_code_mappings_async(httpx_mock: HTTPXMock) -> None:
         url="https://example.com/test-500",
         status_code=500,
     )
-    with pytest.raises(MomoServerError):
+    with pytest.raises(PyMomoAPIServerError):
         await client.request("GET", "/test-500", headers={})
 
 
 def test_http_exceptions_do_not_chain_raw_httpx_request_headers() -> None:
-    """Verify httpx exceptions are not chained via __cause__ onto PyMoMoError."""
+    """Verify httpx exceptions are not chained via __cause__ onto PyMomoAPIError."""
     client = HttpClient("https://example.com", 30.0)
     req = httpx.Request(
         "GET",
@@ -276,7 +276,7 @@ def test_http_exceptions_do_not_chain_raw_httpx_request_headers() -> None:
         "request",
         side_effect=httpx.ReadTimeout("timed out", request=req),
     ):
-        with pytest.raises(PyMoMoError) as excinfo:
+        with pytest.raises(PyMomoAPIError) as excinfo:
             client.request("GET", "/secret", headers=dict(req.headers))
         assert excinfo.value.__cause__ is None
         assert "live-secret-token" not in str(excinfo.value)
@@ -284,8 +284,8 @@ def test_http_exceptions_do_not_chain_raw_httpx_request_headers() -> None:
 
 
 def test_non_dict_json_error_body_and_parse_json_dict(httpx_mock: HTTPXMock) -> None:
-    """Verify non-dict 400 JSON bodies and invalid 200 JSON bodies raise PyMoMoError."""
-    from pymomo.http import parse_json_dict
+    """Verify non-dict 400 JSON bodies and invalid 200 JSON bodies raise PyMomoAPIError."""
+    from py_momo_api.http import parse_json_dict
 
     client = HttpClient("https://example.com", 30.0)
     httpx_mock.add_response(
@@ -299,16 +299,16 @@ def test_non_dict_json_error_body_and_parse_json_dict(httpx_mock: HTTPXMock) -> 
     assert excinfo.value.response_body == {}
 
     html_resp = httpx.Response(200, text="<html>error</html>")
-    with pytest.raises(PyMoMoError, match="invalid JSON"):
+    with pytest.raises(PyMomoAPIError, match="invalid JSON"):
         parse_json_dict(html_resp)
 
     list_resp = httpx.Response(200, json=[1, 2, 3])
-    with pytest.raises(PyMoMoError, match="non-object JSON"):
+    with pytest.raises(PyMomoAPIError, match="non-object JSON"):
         parse_json_dict(list_resp)
 
-    from pymomo.http import parse_model
-    from pymomo.models import Balance
+    from py_momo_api.http import parse_model
+    from py_momo_api.models import Balance
 
     bad_schema_resp = httpx.Response(200, json={"unexpected": "value"})
-    with pytest.raises(PyMoMoError, match="did not match expected Balance schema"):
+    with pytest.raises(PyMomoAPIError, match="did not match expected Balance schema"):
         parse_model(bad_schema_resp, Balance)

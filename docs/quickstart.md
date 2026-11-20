@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide provides a walk-through to get started with PyMoMo, from installing the package to initiating and checking transactions in the sandbox.
+This guide provides a walk-through to get started with Py MoMo API, from installing the package to initiating and checking transactions in the sandbox.
 
 ## Installation
 
@@ -15,11 +15,11 @@ pip install py-momo-api
 Before writing code, you need to create a sandbox account on the MTN MoMo developer portal to obtain a subscription key. With that subscription key, you can provision an API user and API key:
 
 ```python
-from pymomo import MomoClient, MomoConfig
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig
 
-config = MomoConfig(environment="sandbox")
+config = PyMomoAPIConfig(environment="sandbox")
 
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     # Use the sandbox provisioner to bootstrap a sandbox API user and key
     provisioner = client.create_sandbox_provisioner("your-subscription-key")
     credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
@@ -33,10 +33,10 @@ Once you have your credentials, you can configure the client and request a payme
 
 ```python
 import time
-from pymomo import MomoClient, MomoConfig, ProductConfig
-from pymomo.exceptions import PyMoMoError
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
+from py_momo_api.exceptions import PyMomoAPIError
 
-config = MomoConfig(
+config = PyMomoAPIConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
@@ -45,7 +45,7 @@ config = MomoConfig(
     ),
 )
 
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     try:
         # Initiate payment
         reference_id = client.collection.request_to_pay(
@@ -57,7 +57,7 @@ with MomoClient(config) as client:
             payee_note="June invoice",
         )
         print(f"Payment initiated. Reference ID: {reference_id}")
-    except PyMoMoError as e:
+    except PyMomoAPIError as e:
         print(f"Failed to initiate payment: {e}")
 ```
 
@@ -66,7 +66,7 @@ with MomoClient(config) as client:
 Transactions on the MTN MoMo network are processed asynchronously. When you submit a write request, you get a `reference_id` back, which you must poll to obtain the final outcome:
 
 ```python
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     reference_id = "550e8400-e29b-41d4-a716-446655440000"
 
     # Simple polling loop to check status
@@ -81,7 +81,7 @@ with MomoClient(config) as client:
             elif result.is_failed():
                 print(f"Transaction failed. Reason: {result.reason}")
                 break
-        except PyMoMoError as e:
+        except PyMomoAPIError as e:
             print(f"Status check failed: {e}")
 
         time.sleep(3)
@@ -89,22 +89,22 @@ with MomoClient(config) as client:
 
 ## Handling errors
 
-All exceptions thrown by the package inherit from `PyMoMoError`. You can write targeted exception handlers to handle specific states, such as a bad request or expired credentials:
+All exceptions thrown by the package inherit from `PyMomoAPIError`. You can write targeted exception handlers to handle specific states, such as a bad request or expired credentials:
 
 ```python
-from pymomo.exceptions import (
+from py_momo_api.exceptions import (
     AuthenticationError,
     BadRequestError,
-    PyMoMoError,
+    PyMomoAPIError,
 )
 
 try:
-    with MomoClient(config) as client:
+    with PyMomoAPI(config) as client:
         client.collection.get_balance()
 except AuthenticationError:
     print("Authentication failed. Please verify your credentials and keys.")
 except BadRequestError as e:
     print(f"Bad request: {e}. API details: {e.response_body}")
-except PyMoMoError as e:
+except PyMomoAPIError as e:
     print(f"General library error occurred: {e}")
 ```

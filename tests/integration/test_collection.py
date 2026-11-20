@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from pytest_httpx import HTTPXMock
 
-from pymomo import AsyncMomoClient, MomoClient
-from pymomo.exceptions import AuthenticationError
-from pymomo.models import TransactionStatus
+from py_momo_api import AsyncPyMomoAPI, PyMomoAPI
+from py_momo_api.exceptions import AuthenticationError
+from py_momo_api.models import TransactionStatus
 
 
 # Helper to mock token endpoint responses
@@ -22,7 +22,7 @@ def mock_token_response(httpx_mock: HTTPXMock) -> None:
     )
 
 
-def test_collection_get_balance_sync(client: MomoClient, httpx_mock: HTTPXMock) -> None:
+def test_collection_get_balance_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
     """Test getting collection balance synchronously."""
     mock_token_response(httpx_mock)
     httpx_mock.add_response(
@@ -39,7 +39,7 @@ def test_collection_get_balance_sync(client: MomoClient, httpx_mock: HTTPXMock) 
 
 @pytest.mark.asyncio
 async def test_collection_get_balance_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting collection balance asynchronously."""
     mock_token_response(httpx_mock)
@@ -56,7 +56,7 @@ async def test_collection_get_balance_async(
 
 
 def test_collection_request_to_pay_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test request to pay synchronously."""
     mock_token_response(httpx_mock)
@@ -77,7 +77,7 @@ def test_collection_request_to_pay_sync(
 
 @pytest.mark.asyncio
 async def test_collection_request_to_pay_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test request to pay asynchronously."""
     mock_token_response(httpx_mock)
@@ -97,7 +97,7 @@ async def test_collection_request_to_pay_async(
 
 
 def test_collection_get_payment_status_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting payment status synchronously."""
     mock_token_response(httpx_mock)
@@ -119,7 +119,7 @@ def test_collection_get_payment_status_sync(
     assert result.financial_transaction_id == "tx-999"
 
 
-def test_collection_401_retry_sync(client: MomoClient, httpx_mock: HTTPXMock) -> None:
+def test_collection_401_retry_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
     """Test that a 401 automatically refreshes token and retries request."""
     # First token fetch
     mock_token_response(httpx_mock)
@@ -156,7 +156,7 @@ def test_collection_401_retry_sync(client: MomoClient, httpx_mock: HTTPXMock) ->
 
 
 def test_collection_401_fails_twice_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test that if retry also returns 401, AuthenticationError is raised."""
     mock_token_response(httpx_mock)
@@ -178,7 +178,7 @@ def test_collection_401_fails_twice_sync(
 
 @pytest.mark.asyncio
 async def test_collection_401_retry_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test that a 401 automatically refreshes token and retries request asynchronously."""
     # First token fetch
@@ -217,7 +217,7 @@ async def test_collection_401_retry_async(
 
 @pytest.mark.asyncio
 async def test_collection_401_fails_twice_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test that if retry also returns 401, AuthenticationError is raised asynchronously."""
     mock_token_response(httpx_mock)
@@ -238,7 +238,7 @@ async def test_collection_401_fails_twice_async(
 
 
 def test_collection_request_to_withdraw_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test request to withdraw synchronously."""
     mock_token_response(httpx_mock)
@@ -257,9 +257,7 @@ def test_collection_request_to_withdraw_sync(
     assert len(ref_id) == 36
 
 
-def test_collection_bc_authorize_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
-) -> None:
+def test_collection_bc_authorize_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
     """Test CIBA backchannel authorization synchronously."""
     mock_token_response(httpx_mock)
     httpx_mock.add_response(
@@ -283,7 +281,7 @@ def test_collection_bc_authorize_sync(
 
 
 def test_collection_get_basic_user_info_by_reference_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test retrieving user info by reference ID synchronously."""
     mock_token_response(httpx_mock)
@@ -307,7 +305,7 @@ def test_collection_get_basic_user_info_by_reference_sync(
 
 @pytest.mark.asyncio
 async def test_collection_get_payment_status_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting payment status asynchronously."""
     mock_token_response(httpx_mock)
@@ -331,7 +329,7 @@ async def test_collection_get_payment_status_async(
 
 @pytest.mark.asyncio
 async def test_collection_request_to_withdraw_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test request to withdraw asynchronously."""
     mock_token_response(httpx_mock)
@@ -352,7 +350,7 @@ async def test_collection_request_to_withdraw_async(
 
 @pytest.mark.asyncio
 async def test_collection_get_withdraw_status_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting withdraw status asynchronously."""
     mock_token_response(httpx_mock)
@@ -376,7 +374,7 @@ async def test_collection_get_withdraw_status_async(
 
 @pytest.mark.asyncio
 async def test_collection_bc_authorize_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test CIBA backchannel authorization asynchronously."""
     mock_token_response(httpx_mock)
@@ -401,7 +399,7 @@ async def test_collection_bc_authorize_async(
 
 @pytest.mark.asyncio
 async def test_collection_get_basic_user_info_by_reference_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test retrieving user info by reference ID asynchronously."""
     mock_token_response(httpx_mock)
@@ -423,7 +421,7 @@ async def test_collection_get_basic_user_info_by_reference_async(
 
 @pytest.mark.asyncio
 async def test_collection_is_account_holder_active_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test checking active account holder asynchronously."""
     mock_token_response(httpx_mock)
@@ -440,7 +438,7 @@ async def test_collection_is_account_holder_active_async(
 
 @pytest.mark.asyncio
 async def test_collection_get_basic_user_info_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test retrieving basic user info asynchronously."""
     mock_token_response(httpx_mock)
@@ -461,7 +459,7 @@ async def test_collection_get_basic_user_info_async(
 
 @pytest.mark.asyncio
 async def test_collection_get_balance_for_currency_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test retrieving balance for specific currency asynchronously."""
     mock_token_response(httpx_mock)
@@ -478,10 +476,10 @@ async def test_collection_get_balance_for_currency_async(
 
 
 def test_collection_path_parameter_validation_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Verify sync product methods reject path traversal and handle enums/emails."""
-    from pymomo.models import AccountHolderIdType
+    from py_momo_api.models import AccountHolderIdType
 
     with pytest.raises(ValueError):
         client.collection.get_balance_for_currency("../../requesttopay")
@@ -518,10 +516,10 @@ def test_collection_path_parameter_validation_sync(
 
 @pytest.mark.asyncio
 async def test_collection_path_parameter_validation_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Verify async product methods reject path traversal and encode emails."""
-    from pymomo.models import AccountHolderIdType
+    from py_momo_api.models import AccountHolderIdType
 
     with pytest.raises(ValueError):
         await async_client.collection.get_balance_for_currency("../balance")
@@ -548,7 +546,7 @@ async def test_collection_path_parameter_validation_async(
 
 
 def test_collection_create_oauth2_token_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test exchanging a CIBA auth_req_id for an OAuth2 token synchronously."""
     httpx_mock.add_response(
@@ -586,7 +584,7 @@ def test_collection_create_oauth2_token_sync(
 
 @pytest.mark.asyncio
 async def test_collection_create_oauth2_token_async(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Test exchanging a CIBA auth_req_id for an OAuth2 token asynchronously."""
     httpx_mock.add_response(
@@ -614,10 +612,10 @@ async def test_collection_create_oauth2_token_async(
 
 
 def test_collection_bc_authorize_validation_and_bad_schema_sync(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
-    """Verify bc_authorize input checks and schema-mismatch wrapping to PyMoMoError."""
-    from pymomo.exceptions import PyMoMoError
+    """Verify bc_authorize input checks and schema-mismatch wrapping to PyMomoAPIError."""
+    from py_momo_api.exceptions import PyMomoAPIError
 
     with pytest.raises(ValueError, match="login_hint"):
         client.collection.bc_authorize("   ")
@@ -634,13 +632,13 @@ def test_collection_bc_authorize_validation_and_bad_schema_sync(
         json={"unexpected": "missing-status"},
         status_code=200,
     )
-    with pytest.raises(PyMoMoError, match="TransactionResult schema"):
+    with pytest.raises(PyMomoAPIError, match="TransactionResult schema"):
         client.collection.get_payment_status(ref_id)
 
 
 @pytest.mark.asyncio
 async def test_collection_concurrent_async_calls_fetch_token_once(
-    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Verify concurrent async calls on a cold cache fetch only one OAuth token."""
     import asyncio
@@ -665,7 +663,7 @@ async def test_collection_concurrent_async_calls_fetch_token_once(
 
 
 def test_collection_malformed_token_response_raises_auth_error(
-    client: MomoClient, httpx_mock: HTTPXMock
+    client: PyMomoAPI, httpx_mock: HTTPXMock
 ) -> None:
     """Verify empty access_token or non-positive expires_in raises AuthenticationError."""
     httpx_mock.add_response(

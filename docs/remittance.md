@@ -4,12 +4,12 @@ The Remittance product allows you to execute domestic or international wallet-to
 
 ## Initializing remittance client
 
-Access remittance methods via the `.remittance` property of a `MomoClient` instance:
+Access remittance methods via the `.remittance` property of a `PyMomoAPI` instance:
 
 ```python
-from pymomo import MomoClient, MomoConfig, ProductConfig
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
 
-config = MomoConfig(
+config = PyMomoAPIConfig(
     environment="sandbox",
     remittance=ProductConfig(
         subscription_key="your-subscription-key",
@@ -18,7 +18,7 @@ config = MomoConfig(
     ),
 )
 
-client = MomoClient(config)
+client = PyMomoAPI(config)
 remittance_client = client.remittance
 ```
 

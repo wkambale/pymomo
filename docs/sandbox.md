@@ -7,11 +7,11 @@ The sandbox environment allows testing your integration without moving actual fu
 The `SandboxProvisioner.provision()` method creates a sandbox API user and generates an API key in a single call:
 
 ```python
-from pymomo import MomoClient, MomoConfig
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig
 
-config = MomoConfig(environment="sandbox")
+config = PyMomoAPIConfig(environment="sandbox")
 
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     # Create a provisioner with your sandbox subscription key
     provisioner = client.create_sandbox_provisioner("your-subscription-key")
 
@@ -21,15 +21,15 @@ with MomoClient(config) as client:
     print(f"API Key: {credentials['api_key']}")
 ```
 
-You can also provision asynchronously with `AsyncMomoClient.create_sandbox_provisioner(...)`:
+You can also provision asynchronously with `AsyncPyMomoAPI.create_sandbox_provisioner(...)`:
 
 ```python
 import asyncio
-from pymomo import AsyncMomoClient, MomoConfig
+from py_momo_api import AsyncPyMomoAPI, PyMomoAPIConfig
 
 async def main() -> None:
-    config = MomoConfig(environment="sandbox")
-    async with AsyncMomoClient(config) as client:
+    config = PyMomoAPIConfig(environment="sandbox")
+    async with AsyncPyMomoAPI(config) as client:
         provisioner = client.create_sandbox_provisioner("your-subscription-key")
         credentials = await provisioner.provision(
             callback_host="https://pymomo.aiforuganda.org"
@@ -51,7 +51,7 @@ If you need fine-grained control over the sandbox environment setup, you can run
 Create a new sandbox API user. You can supply a canonical UUID v4 or omit `api_user` to let the library generate one automatically:
 
 ```python
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     provisioner = client.create_sandbox_provisioner("your-subscription-key")
 
     # Create the user and get back the UUID (omit api_user to auto-generate)
