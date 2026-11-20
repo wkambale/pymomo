@@ -4,12 +4,12 @@ The Collection product allows you to receive payments and withdrawal requests fr
 
 ## Initializing the collection client
 
-Access collection methods via the `.collection` property of a `PyMomoAPI` instance:
+Access collection methods via the `.collection` property of a `PyMomoSDK` instance:
 
 ```python
-from py_momo_api import ProductConfig, PyMomoAPI, PyMomoAPIConfig
+from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
 
-config = PyMomoAPIConfig(
+config = PyMomoSDKConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
@@ -18,7 +18,7 @@ config = PyMomoAPIConfig(
     ),
 )
 
-client = PyMomoAPI(config)
+client = PyMomoSDK(config)
 collection_client = client.collection
 ```
 

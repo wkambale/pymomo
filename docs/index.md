@@ -11,9 +11,9 @@ hide:
   </svg>
   <div class="pm-hero__eyebrow">
     <span class="pm-hero__eyebrow-line" aria-hidden="true"></span>
-    <span>Python SDK version 1.0.5</span>
+    <span>Python SDK version 1.0.6</span>
   </div>
-  <h1 class="pm-hero__title">Py MoMo API for MTN Mobile Money and Airtel Money</h1>
+  <h1 class="pm-hero__title">Py MoMo SDK for MTN Mobile Money and Airtel Money</h1>
   <p class="pm-hero__lead">A strictly typed, production-grade Python client for MTN MoMo and Airtel Money. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
   <div class="pm-hero__actions">
     <a class="pm-btn-primary" href="quickstart/">Get started</a>
@@ -31,7 +31,7 @@ hide:
 
 ## Supported products
 
-Py MoMo API covers every product exposed by the MTN MoMo Developer portal alongside Airtel Money collections and disbursements.
+Py MoMo SDK covers every product exposed by the MTN MoMo Developer portal alongside Airtel Money collections and disbursements.
 
 <div class="pm-card-grid">
   <article class="pm-card">
@@ -77,16 +77,16 @@ Py MoMo API covers every product exposed by the MTN MoMo Developer portal alongs
 
 ## Install and query a balance in ten lines
 
-Install `py-momo-api` from PyPI and import the `py_momo_api` package:
+Install `py-momo-sdk` from PyPI and import the `py_momo_sdk` package:
 
 ```bash
-pip install py-momo-api
+pip install py-momo-sdk
 ```
 
 ```python
-from py_momo_api import ProductConfig, PyMomoAPI, PyMomoAPIConfig
+from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
 
-config = PyMomoAPIConfig(
+config = PyMomoSDKConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
@@ -95,7 +95,7 @@ config = PyMomoAPIConfig(
     ),
 )
 
-with PyMomoAPI(config) as client:
+with PyMomoSDK(config) as client:
     balance = client.collection.get_balance()
     print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
@@ -105,7 +105,7 @@ with PyMomoAPI(config) as client:
 <div class="pm-spotlight-grid">
   <div class="pm-spotlight pm-spotlight--accent">
     <h3>Sync and async parity</h3>
-    <p>Switch cleanly between <code>PyMomoAPI</code> and <code>AsyncPyMomoAPI</code> with identical method signatures, Pydantic v2 models, and thread-safe or async-safe token refresh locking.</p>
+    <p>Switch cleanly between <code>PyMomoSDK</code> and <code>AsyncPyMomoSDK</code> with identical method signatures, Pydantic v2 models, and thread-safe or async-safe token refresh locking.</p>
   </div>
   <div class="pm-spotlight pm-spotlight--brand">
     <h3>Security by default</h3>

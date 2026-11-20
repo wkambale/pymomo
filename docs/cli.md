@@ -1,16 +1,16 @@
 # Command line interface
 
-Py MoMo API provides a Typer-based command-line tool named `py-momo-api` for sandbox provisioning, balance inquiries, payment initiation, and status checks.
+Py MoMo SDK provides a Typer-based command-line tool named `py-momo-sdk` for sandbox provisioning, balance inquiries, payment initiation, and status checks.
 
 ## General options
 
-Show the installed Py MoMo API version:
+Show the installed Py MoMo SDK version:
 
 ```bash
-py-momo-api --version
+py-momo-sdk --version
 ```
 
-All API commands also accept `--base-url` (or the `PY_MOMO_API_BASE_URL` environment variable) to target a custom HTTPS endpoint or local mock proxy.
+All API commands also accept `--base-url` (or the `PY_MOMO_SDK_BASE_URL` environment variable) to target a custom HTTPS endpoint or local mock proxy.
 
 ## Credentials security
 
@@ -26,7 +26,7 @@ The CLI adheres to strict credential security rules:
 Create a sandbox API user and generate its API key:
 
 ```bash
-py-momo-api sandbox provision --subscription-key "your-subscription-key" --callback-host "https://pymomo.aiforuganda.org"
+py-momo-sdk sandbox provision --subscription-key "your-subscription-key" --callback-host "https://example.com"
 ```
 
 Output:
@@ -42,13 +42,13 @@ Output:
 Retrieve target environment configuration:
 
 ```bash
-py-momo-api sandbox get-user "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-subscription-key"
+py-momo-sdk sandbox get-user "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-subscription-key"
 ```
 
 Output:
 ```json
 {
-  "providerCallbackHost": "https://pymomo.aiforuganda.org",
+  "providerCallbackHost": "https://example.com",
   "targetEnvironment": "sandbox"
 }
 ```
@@ -61,7 +61,7 @@ Output:
 Retrieve balance details:
 
 ```bash
-py-momo-api collection balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+py-momo-sdk collection balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Output:
@@ -77,7 +77,7 @@ Output:
 Initiate a collection:
 
 ```bash
-py-momo-api collection request-to-pay "256771234567" "10.00" "EUR" "inv-100" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+py-momo-sdk collection request-to-pay "256771234567" "10.00" "EUR" "inv-100" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Output:
@@ -92,7 +92,7 @@ Output:
 Query the status of a previously submitted Request to Pay transaction:
 
 ```bash
-py-momo-api collection status "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+py-momo-sdk collection status "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Output:
@@ -112,13 +112,13 @@ Output:
 ### Get disbursement balance
 
 ```bash
-py-momo-api disbursement balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+py-momo-sdk disbursement balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 ### Get remittance balance
 
 ```bash
-py-momo-api remittance balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
+py-momo-sdk remittance balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
 Next step: [Review the changelog](changelog.md).

@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from pytest_httpx import HTTPXMock
 
-from py_momo_api import AsyncPyMomoAPI, PyMomoAPI
+from py_momo_sdk import AsyncPyMomoSDK, PyMomoSDK
 
 
-def test_sandbox_provision_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
+def test_sandbox_provision_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
     """Test sandbox provisioning synchronously."""
     # Mock create_api_user POST
     httpx_mock.add_response(
@@ -24,7 +24,7 @@ def test_sandbox_provision_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> Non
     )
 
     # We patch generate_reference_id to return a predictable user ID for testing
-    from py_momo_api import sandbox
+    from py_momo_sdk import sandbox
 
     original_gen = sandbox.generate_reference_id
     sandbox.generate_reference_id = lambda: "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
@@ -40,7 +40,7 @@ def test_sandbox_provision_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> Non
 
 @pytest.mark.asyncio
 async def test_sandbox_provision_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test sandbox provisioning asynchronously."""
     # Mock create_api_user POST
@@ -59,7 +59,7 @@ async def test_sandbox_provision_async(
     )
 
     # Patch generate_reference_id for async_sandbox
-    from py_momo_api._async import sandbox as async_sandbox
+    from py_momo_sdk._async import sandbox as async_sandbox
 
     original_gen = async_sandbox.generate_reference_id
     async_sandbox.generate_reference_id = lambda: "c38b25e7-a9a3-4874-9cb3-671e6268f760"
@@ -72,7 +72,7 @@ async def test_sandbox_provision_async(
         async_sandbox.generate_reference_id = original_gen
 
 
-def test_sandbox_get_api_user_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> None:
+def test_sandbox_get_api_user_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
     """Test getting API user information synchronously."""
     user_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
     httpx_mock.add_response(
@@ -92,7 +92,7 @@ def test_sandbox_get_api_user_sync(client: PyMomoAPI, httpx_mock: HTTPXMock) -> 
 
 @pytest.mark.asyncio
 async def test_sandbox_get_api_user_async(
-    async_client: AsyncPyMomoAPI, httpx_mock: HTTPXMock
+    async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
 ) -> None:
     """Test getting API user information asynchronously."""
     user_id = "c38b25e7-a9a3-4874-9cb3-671e6268f760"
@@ -113,27 +113,27 @@ async def test_sandbox_get_api_user_async(
 
 def test_sandbox_provisioner_guards_and_redaction() -> None:
     """Verify SandboxProvisioner rejects production env, missing key/http, and redacts key."""
-    from py_momo_api import AsyncSandboxProvisioner, SandboxProvisioner
-    from py_momo_api.config import MTN_UGANDA, ProductConfig, PyMomoAPIConfig
-    from py_momo_api.exceptions import MissingCredentialsError, PyMomoAPIError
-    from py_momo_api.http import HttpClient
+    from py_momo_sdk import AsyncSandboxProvisioner, SandboxProvisioner
+    from py_momo_sdk.config import MTN_UGANDA, ProductConfig, PyMomoSDKConfig
+    from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
+    from py_momo_sdk.http import HttpClient
 
     http = HttpClient("https://sandbox.momodeveloper.mtn.com", 30.0)
     try:
         # Missing HTTP client
-        with pytest.raises(PyMomoAPIError, match="HTTP client is required"):
+        with pytest.raises(PyMomoSDKError, match="HTTP client is required"):
             SandboxProvisioner(
-                subscription_key="sub-key", config=PyMomoAPIConfig(), http=None
+                subscription_key="sub-key", config=PyMomoSDKConfig(), http=None
             )
 
         # Missing subscription key
         with pytest.raises(
             MissingCredentialsError, match="Subscription key is required"
         ):
-            SandboxProvisioner(config=PyMomoAPIConfig(), http=http)
+            SandboxProvisioner(config=PyMomoSDKConfig(), http=http)
 
         # Non-sandbox environment rejected
-        prod_config = PyMomoAPIConfig(
+        prod_config = PyMomoSDKConfig(
             environment=MTN_UGANDA,
             collection=ProductConfig(
                 subscription_key="prod-sub-key",
@@ -141,13 +141,13 @@ def test_sandbox_provisioner_guards_and_redaction() -> None:
                 api_key="prod-api-key",
             ),
         )
-        with pytest.raises(PyMomoAPIError, match="sandbox environment"):
+        with pytest.raises(PyMomoSDKError, match="sandbox environment"):
             SandboxProvisioner(config=prod_config, http=http)
 
         # Subscription key redacted in repr/str
         provisioner = SandboxProvisioner(
             subscription_key="secret-sandbox-sub-key",
-            config=PyMomoAPIConfig(),
+            config=PyMomoSDKConfig(),
             http=http,
         )
         assert "secret-sandbox-sub-key" not in repr(provisioner)
@@ -155,17 +155,17 @@ def test_sandbox_provisioner_guards_and_redaction() -> None:
         assert "subscription_key=<redacted>" in repr(provisioner)
 
         # Async guards
-        with pytest.raises(PyMomoAPIError, match="HTTP client is required"):
+        with pytest.raises(PyMomoSDKError, match="HTTP client is required"):
             AsyncSandboxProvisioner(
-                subscription_key="sub-key", config=PyMomoAPIConfig(), http=None
+                subscription_key="sub-key", config=PyMomoSDKConfig(), http=None
             )
     finally:
         http.close()
 
 
 def test_create_sandbox_provisioner_sync(httpx_mock: HTTPXMock) -> None:
-    """Test PyMomoAPI.create_sandbox_provisioner with an explicit subscription key."""
-    from py_momo_api import PyMomoAPIConfig
+    """Test PyMomoSDK.create_sandbox_provisioner with an explicit subscription key."""
+    from py_momo_sdk import PyMomoSDKConfig
 
     user_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
     httpx_mock.add_response(
@@ -178,7 +178,7 @@ def test_create_sandbox_provisioner_sync(httpx_mock: HTTPXMock) -> None:
         status_code=200,
     )
 
-    with PyMomoAPI(PyMomoAPIConfig(environment="sandbox")) as bare_client:
+    with PyMomoSDK(PyMomoSDKConfig(environment="sandbox")) as bare_client:
         provisioner = bare_client.create_sandbox_provisioner("explicit-sub-key")
         info = provisioner.get_api_user(user_id)
 
@@ -190,8 +190,8 @@ def test_create_sandbox_provisioner_sync(httpx_mock: HTTPXMock) -> None:
 
 @pytest.mark.asyncio
 async def test_create_sandbox_provisioner_async(httpx_mock: HTTPXMock) -> None:
-    """Test AsyncPyMomoAPI.create_sandbox_provisioner with an explicit subscription key."""
-    from py_momo_api import PyMomoAPIConfig
+    """Test AsyncPyMomoSDK.create_sandbox_provisioner with an explicit subscription key."""
+    from py_momo_sdk import PyMomoSDKConfig
 
     user_id = "c38b25e7-a9a3-4874-9cb3-671e6268f760"
     httpx_mock.add_response(
@@ -204,7 +204,7 @@ async def test_create_sandbox_provisioner_async(httpx_mock: HTTPXMock) -> None:
         status_code=200,
     )
 
-    async with AsyncPyMomoAPI(PyMomoAPIConfig(environment="sandbox")) as bare_client:
+    async with AsyncPyMomoSDK(PyMomoSDKConfig(environment="sandbox")) as bare_client:
         provisioner = bare_client.create_sandbox_provisioner("explicit-async-key")
         info = await provisioner.get_api_user(user_id)
 
