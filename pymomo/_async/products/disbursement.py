@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pymomo._async.products.base import AsyncBaseProduct
+from pymomo.http import parse_model
 from pymomo.models import (
     DepositRequest,
     Party,
@@ -87,7 +88,7 @@ class Disbursement(AsyncBaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     async def deposit(
         self,
@@ -159,7 +160,7 @@ class Disbursement(AsyncBaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     async def refund(
         self,
@@ -229,4 +230,4 @@ class Disbursement(AsyncBaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)

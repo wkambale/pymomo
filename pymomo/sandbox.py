@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pymomo.config import SANDBOX, MomoConfig
 from pymomo.exceptions import MissingCredentialsError, PyMoMoError
-from pymomo.http import HttpClient, parse_json_dict
+from pymomo.http import HttpClient, parse_model
 from pymomo.models import ApiKeyResult, ApiUserInfo
 from pymomo.utils import (
     generate_reference_id,
@@ -112,7 +112,7 @@ class SandboxProvisioner:
                 "Ocp-Apim-Subscription-Key": self._subscription_key,
             },
         )
-        return ApiUserInfo.model_validate(parse_json_dict(response))
+        return parse_model(response, ApiUserInfo)
 
     def create_api_key(self, api_user: str) -> str:
         """Create an API key for an existing sandbox user. Returns the api_key."""
@@ -124,7 +124,7 @@ class SandboxProvisioner:
                 "Ocp-Apim-Subscription-Key": self._subscription_key,
             },
         )
-        result = ApiKeyResult.model_validate(parse_json_dict(response))
+        result = parse_model(response, ApiKeyResult)
         return result.api_key
 
     def provision(

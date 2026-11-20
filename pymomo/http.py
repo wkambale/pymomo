@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from pymomo.auth import TokenCache
 from pymomo.exceptions import (
@@ -107,6 +108,9 @@ class HttpClient:
         self.close()
 
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
 def parse_json_dict(response: httpx.Response) -> dict[str, Any]:
     """Decode an HTTP response body as a JSON object.
 
@@ -120,6 +124,22 @@ def parse_json_dict(response: httpx.Response) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise PyMoMoError("API returned unexpected non-object JSON response")
     return parsed
+
+
+def parse_model(response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
+    """Decode a JSON object response and validate it against a Pydantic model.
+
+    Raises:
+        PyMoMoError: If the response body is not valid JSON or does not match
+            the expected model schema.
+    """
+    data = parse_json_dict(response)
+    try:
+        return model_cls.model_validate(data)
+    except ValidationError:
+        raise PyMoMoError(
+            f"API response did not match expected {model_cls.__name__} schema"
+        ) from None
 
 
 def _raise_for_status(response: httpx.Response) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pymomo._async.products.base import AsyncBaseProduct
+from pymomo.http import parse_model
 from pymomo.models import Party, TransactionResult, TransferRequest
 from pymomo.utils import generate_reference_id, normalise_msisdn, validate_reference_id
 
@@ -81,4 +82,4 @@ class Remittance(AsyncBaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)

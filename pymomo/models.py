@@ -4,7 +4,13 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pymomo.utils import validate_amount, validate_currency
+from pymomo.utils import validate_amount, validate_currency, validate_header_value
+
+
+def _validate_external_id(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("external_id must be a non-empty string")
+    return validate_header_value(value, field_name="external_id")
 
 
 class TransactionStatus(str, Enum):
@@ -49,6 +55,11 @@ class RequestToPayRequest(BaseModel):
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
 
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
+
 
 class TransferRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -69,6 +80,11 @@ class TransferRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
 
 
 class DepositRequest(BaseModel):
@@ -91,6 +107,11 @@ class DepositRequest(BaseModel):
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
 
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
+
 
 class RefundRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -112,6 +133,11 @@ class RefundRequest(BaseModel):
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
 
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
+
 
 class RequestToWithdrawRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -132,6 +158,11 @@ class RequestToWithdrawRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
 
 
 class BcAuthorizeRequest(BaseModel):

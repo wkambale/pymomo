@@ -8,6 +8,7 @@ from pymomo.airtel.models import (
     AirtelTransactionRequest,
     AirtelTransactionResponse,
 )
+from pymomo.http import parse_model
 from pymomo.utils import generate_reference_id, normalise_msisdn, validate_reference_id
 
 if TYPE_CHECKING:
@@ -75,4 +76,4 @@ class Collection:
             "GET",
             f"/standard/v1/payments/{reference_id}",
         )
-        return AirtelTransactionResponse.model_validate(response.json())
+        return parse_model(response, AirtelTransactionResponse)

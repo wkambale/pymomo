@@ -117,3 +117,12 @@ def test_request_models_validate_amount_and_currency() -> None:
             external_id="ext-1",
             payer=Party(party_id_type="MSISDN", party_id="256771234567"),
         )
+
+    for bad_ext_id in ("", "   ", "ext\r\ninjected"):
+        with pytest.raises(ValidationError):
+            RequestToPayRequest(
+                amount="100.00",
+                currency="UGX",
+                external_id=bad_ext_id,
+                payer=Party(party_id_type="MSISDN", party_id="256771234567"),
+            )

@@ -305,3 +305,10 @@ def test_non_dict_json_error_body_and_parse_json_dict(httpx_mock: HTTPXMock) -> 
     list_resp = httpx.Response(200, json=[1, 2, 3])
     with pytest.raises(PyMoMoError, match="non-object JSON"):
         parse_json_dict(list_resp)
+
+    from pymomo.http import parse_model
+    from pymomo.models import Balance
+
+    bad_schema_resp = httpx.Response(200, json={"unexpected": "value"})
+    with pytest.raises(PyMoMoError, match="did not match expected Balance schema"):
+        parse_model(bad_schema_resp, Balance)

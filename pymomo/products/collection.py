@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pymomo.http import parse_json_dict
+from pymomo.http import parse_model
 from pymomo.models import (
     BasicUserInfo,
     BcAuthorizeResponse,
@@ -96,7 +96,7 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     def request_to_withdraw(
         self,
@@ -168,7 +168,7 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     def get_basic_user_info_by_reference(
         self,
@@ -191,7 +191,7 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return BasicUserInfo.model_validate(response.json())
+        return parse_model(response, BasicUserInfo)
 
     def bc_authorize(
         self,
@@ -209,10 +209,20 @@ class Collection(BaseProduct):
         Returns:
             A BcAuthorizeResponse containing auth_req_id and details.
         """
+        if not isinstance(login_hint, str) or not login_hint.strip():
+            raise ValueError("login_hint must be a non-empty string")
+        validate_header_value(login_hint, field_name="login_hint")
+        if not isinstance(scope, str) or not scope.strip():
+            raise ValueError("scope must be a non-empty string")
+        validate_header_value(scope, field_name="scope")
+        if not isinstance(access_type, str) or not access_type.strip():
+            raise ValueError("access_type must be a non-empty string")
+        validate_header_value(access_type, field_name="access_type")
+
         if login_hint.isdigit() or login_hint.startswith("+"):
             login_hint = f"ID:{normalise_msisdn(login_hint)}/MSISDN"
 
-        from pymomo.models import BcAuthorizeRequest, BcAuthorizeResponse
+        from pymomo.models import BcAuthorizeRequest
 
         payload = BcAuthorizeRequest(
             login_hint=login_hint,
@@ -232,7 +242,7 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return BcAuthorizeResponse.model_validate(parse_json_dict(response))
+        return parse_model(response, BcAuthorizeResponse)
 
     def create_oauth2_token(
         self,
@@ -280,4 +290,4 @@ class Collection(BaseProduct):
                 "auth_req_id": auth_req_id,
             },
         )
-        return OAuth2TokenResponse.model_validate(parse_json_dict(response))
+        return parse_model(response, OAuth2TokenResponse)

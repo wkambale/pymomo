@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
-from pymomo.http import HttpClient, parse_json_dict
+from pymomo.exceptions import AuthenticationError, PyMoMoError
+from pymomo.http import HttpClient, parse_json_dict, parse_model
 from pymomo.models import AccountHolderIdType, Balance, BasicUserInfo, TokenResponse
 from pymomo.utils import (
     build_basic_auth_header,
@@ -53,7 +54,10 @@ class BaseProduct:
                 "X-Target-Environment": self._config.environment,
             },
         )
-        token = TokenResponse.model_validate(parse_json_dict(response))
+        try:
+            token = parse_model(response, TokenResponse)
+        except PyMoMoError:
+            raise AuthenticationError("Invalid token response from API") from None
         self._token_cache.set(
             self._product_name,
             token.access_token,
@@ -98,7 +102,7 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return Balance.model_validate(parse_json_dict(response))
+        return parse_model(response, Balance)
 
     def get_balance_for_currency(self, currency: str) -> Balance:
         """Get the account balance for a specific currency.
@@ -118,7 +122,7 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return Balance.model_validate(parse_json_dict(response))
+        return parse_model(response, Balance)
 
     def is_account_holder_active(
         self,
@@ -184,4 +188,4 @@ class BaseProduct:
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return BasicUserInfo.model_validate(parse_json_dict(response))
+        return parse_model(response, BasicUserInfo)

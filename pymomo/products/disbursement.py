@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pymomo.http import parse_model
 from pymomo.models import (
     DepositRequest,
     Party,
@@ -87,7 +88,7 @@ class Disbursement(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     def deposit(
         self,
@@ -159,7 +160,7 @@ class Disbursement(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
 
     def refund(
         self,
@@ -229,4 +230,4 @@ class Disbursement(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return TransactionResult.model_validate(response.json())
+        return parse_model(response, TransactionResult)
