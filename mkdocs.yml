@@ -23,12 +23,13 @@ theme:
     - navigation.tabs.sticky
     - navigation.sections
     - navigation.footer
+    - navigation.top
     - search.suggest
     - search.highlight
     - content.code.copy
 
 extra_css:
-  - stylesheets/extra.css
+  - stylesheets/design.css
 
 extra_javascript:
   - javascripts/scroll.js
