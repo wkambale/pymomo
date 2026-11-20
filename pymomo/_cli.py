@@ -29,9 +29,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _get_version() -> str:
-    """Return the installed pymomo package version."""
+    """Return the installed py-momo-api package version."""
     try:
-        return package_version("pymomo")
+        return package_version("py-momo-api")
     except PackageNotFoundError:
         return "0.0.0"
 

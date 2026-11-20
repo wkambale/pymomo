@@ -7,7 +7,7 @@ This guide provides a walk-through to get started with PyMoMo, from installing t
 Install the package via pip:
 
 ```bash
-pip install pymomo
+pip install py-momo-api
 ```
 
 ## Setting up sandbox credentials

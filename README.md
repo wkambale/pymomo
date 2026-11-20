@@ -1,6 +1,6 @@
 # PyMoMo
 
-[![PyPI Version](https://img.shields.io/pypi/v/pymomo.svg)](https://pypi.org/project/pymomo/)
+[![PyPI Version](https://img.shields.io/pypi/v/py-momo-api.svg)](https://pypi.org/project/py-momo-api/)
 [![Build Status](https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg)](https://github.com/wkambale/pymomo/actions)
 [![License](https://img.shields.io/github/license/wkambale/pymomo.svg)](https://github.com/wkambale/pymomo/blob/main/LICENSE)
 
@@ -25,7 +25,7 @@ Developed for high reliability and clean developer experience, PyMoMo adheres to
 Install PyMoMo from PyPI using pip:
 
 ```bash
-pip install pymomo
+pip install py-momo-api
 ```
 
 For development dependencies, install with:
