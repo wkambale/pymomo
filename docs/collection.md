@@ -35,7 +35,8 @@ reference_id = client.collection.request_to_pay(
     external_id="invoice-9922",
     payer_message="Invoice payment",
     payee_note="Receipt note",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Transaction Reference: {reference_id}")
 ```
@@ -64,7 +65,8 @@ reference_id = client.collection.request_to_withdraw(
     external_id="withdrawal-1002",
     payer_message="Withdraw approval",
     payee_note="Agent payout",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Withdraw Reference: {reference_id}")
 ```
@@ -151,7 +153,9 @@ print(f"Expires in: {oauth_token.expires_in} seconds")
 Retrieve a user's profile details using the reference ID of a consent query.
 
 ```python
-user_info = client.collection.get_basic_user_info_by_reference("your-consent-reference-uuid")
+user_info = client.collection.get_basic_user_info_by_reference(
+    "550e8400-e29b-41d4-a716-446655440000"
+)
 print(f"Name: {user_info.name}")
 print(f"Gender: {user_info.gender}")
 ```

@@ -106,6 +106,23 @@ class AsyncMomoClient:
             http=self._http,
         )
 
+    def create_sandbox_provisioner(
+        self, subscription_key: str
+    ) -> AsyncSandboxProvisioner:
+        """Create an AsyncSandboxProvisioner using an explicit subscription key.
+
+        Args:
+            subscription_key: The sandbox Ocp-Apim-Subscription-Key.
+
+        Returns:
+            A configured AsyncSandboxProvisioner sharing this client's HTTP session.
+        """
+        return AsyncSandboxProvisioner(
+            subscription_key=subscription_key,
+            config=self._config,
+            http=self._http,
+        )
+
     async def close(self) -> None:
         """Close the underlying AsyncHttpClient session."""
         await self._http.close()

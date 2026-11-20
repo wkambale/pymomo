@@ -42,11 +42,14 @@ config = MomoConfig(
 with MomoClient(config) as client:
     try:
         client.collection.request_to_pay(
-            amount="abc",  # Invalid amount format will trigger HTTP 400
+            amount="100.00",
             currency="UGX",
             payer_msisdn="256771234567",
             external_id="invoice-1",
         )
+    except ValueError as e:
+        # Raised immediately on client-side validation errors (e.g. amount="abc")
+        print(f"Invalid request input: {e}")
     except BadRequestError as e:
         print(f"Server rejected request: {e}")
         # Inspect raw API response body returned by the gateway
@@ -63,4 +66,4 @@ with MomoClient(config) as client:
 
 For security and privacy compliance:
 - Subscription keys, API user UUIDs, and API keys are redacted or excluded from all exception messages, string formats (`__str__`), and debug records.
-- Exception trackbacks do not expose request headers or request bodies.
+- Exception tracebacks do not expose request headers or request bodies.

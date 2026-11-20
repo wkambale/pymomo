@@ -161,3 +161,54 @@ def test_sandbox_provisioner_guards_and_redaction() -> None:
             )
     finally:
         http.close()
+
+
+def test_create_sandbox_provisioner_sync(httpx_mock: HTTPXMock) -> None:
+    """Test MomoClient.create_sandbox_provisioner with an explicit subscription key."""
+    from pymomo import MomoConfig
+
+    user_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/v1_0/apiuser/{user_id}",
+        json={
+            "providerCallbackHost": "https://callback.example.com",
+            "targetEnvironment": "sandbox",
+        },
+        status_code=200,
+    )
+
+    with MomoClient(MomoConfig(environment="sandbox")) as bare_client:
+        provisioner = bare_client.create_sandbox_provisioner("explicit-sub-key")
+        info = provisioner.get_api_user(user_id)
+
+    assert info.provider_callback_host == "https://callback.example.com"
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 1
+    assert requests[0].headers["Ocp-Apim-Subscription-Key"] == "explicit-sub-key"
+
+
+@pytest.mark.asyncio
+async def test_create_sandbox_provisioner_async(httpx_mock: HTTPXMock) -> None:
+    """Test AsyncMomoClient.create_sandbox_provisioner with an explicit subscription key."""
+    from pymomo import MomoConfig
+
+    user_id = "c38b25e7-a9a3-4874-9cb3-671e6268f760"
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/v1_0/apiuser/{user_id}",
+        json={
+            "providerCallbackHost": "https://async-callback.example.com",
+            "targetEnvironment": "sandbox",
+        },
+        status_code=200,
+    )
+
+    async with AsyncMomoClient(MomoConfig(environment="sandbox")) as bare_client:
+        provisioner = bare_client.create_sandbox_provisioner("explicit-async-key")
+        info = await provisioner.get_api_user(user_id)
+
+    assert info.provider_callback_host == "https://async-callback.example.com"
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 1
+    assert requests[0].headers["Ocp-Apim-Subscription-Key"] == "explicit-async-key"

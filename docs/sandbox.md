@@ -4,25 +4,39 @@ The sandbox environment allows testing your integration without moving actual fu
 
 ## Bootstrapping credentials in a single call
 
-The `SandboxProvisioner.provision()` method creates a sandbox API user and generates an API key in a single transaction:
+The `SandboxProvisioner.provision()` method creates a sandbox API user and generates an API key in a single call:
 
 ```python
-from pymomo import MomoClient, MomoConfig, SandboxProvisioner
+from pymomo import MomoClient, MomoConfig
 
 config = MomoConfig(environment="sandbox")
 
 with MomoClient(config) as client:
-    # Initialize the provisioner with your sandbox subscription key
-    provisioner = SandboxProvisioner(
-        subscription_key="your-subscription-key",
-        config=config,
-        http=client._http,
-    )
-    
+    # Create a provisioner with your sandbox subscription key
+    provisioner = client.create_sandbox_provisioner("your-subscription-key")
+
     # Provision credentials
     credentials = provisioner.provision(callback_host="https://pymomo.aiforuganda.org")
     print(f"API User UUID: {credentials['api_user']}")
     print(f"API Key: {credentials['api_key']}")
+```
+
+You can also provision asynchronously with `AsyncMomoClient.create_sandbox_provisioner(...)`:
+
+```python
+import asyncio
+from pymomo import AsyncMomoClient, MomoConfig
+
+async def main() -> None:
+    config = MomoConfig(environment="sandbox")
+    async with AsyncMomoClient(config) as client:
+        provisioner = client.create_sandbox_provisioner("your-subscription-key")
+        credentials = await provisioner.provision(
+            callback_host="https://pymomo.aiforuganda.org"
+        )
+        print(f"API User UUID: {credentials['api_user']}")
+
+asyncio.run(main())
 ```
 
 You can now use these generated values as the `api_user` and `api_key` properties in `ProductConfig` when making product client requests.
@@ -34,19 +48,15 @@ If you need fine-grained control over the sandbox environment setup, you can run
 
 ### Step 1: Create a sandbox API user
 
-Create a new sandbox API user. You can supply a custom UUID or let the library generate one automatically:
+Create a new sandbox API user. You can supply a canonical UUID v4 or omit `api_user` to let the library generate one automatically:
 
 ```python
 with MomoClient(config) as client:
-    provisioner = SandboxProvisioner(
-        subscription_key="your-subscription-key",
-        config=config,
-        http=client._http,
-    )
-    
-    # Create the user and get back the UUID
+    provisioner = client.create_sandbox_provisioner("your-subscription-key")
+
+    # Create the user and get back the UUID (omit api_user to auto-generate)
     api_user = provisioner.create_api_user(
-        api_user="optional-custom-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         callback_host="https://your-callback-host.com",
     )
     print(f"API User UUID: {api_user}")

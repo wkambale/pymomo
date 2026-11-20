@@ -35,7 +35,8 @@ reference_id = client.remittance.transfer(
     external_id="remit-404",
     payer_message="Family support",
     payee_note="Support package",
-    reference_id="optional-custom-uuid",
+    # Optional canonical UUID v4; omit to auto-generate
+    reference_id="550e8400-e29b-41d4-a716-446655440000",
 )
 print(f"Remittance Reference: {reference_id}")
 ```
