@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 
 from py_momo_sdk.exceptions import MissingCredentialsError
+from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     validate_callback_url,
     validate_environment_name,
@@ -64,6 +65,7 @@ class PyMomoSDKConfig:
     collection: ProductConfig | None = None
     disbursement: ProductConfig | None = None
     remittance: ProductConfig | None = None
+    telemetry: TelemetryHook | None = None
 
     def __post_init__(self) -> None:
         validate_environment_name(self.environment)

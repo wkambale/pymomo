@@ -17,8 +17,8 @@ Developed for high reliability and clean developer experience, Py MoMo SDK adher
 - **Sync and async parity:** `PyMomoSDK` and `AsyncPyMomoSDK` backed by `httpx.Client` and `httpx.AsyncClient` with matching interfaces.
 - **Pydantic v2 models:** Fully typed request and response validation and serialization.
 - **Automated token caching:** Thread-safe and async-safe in-memory token management with automatic cache invalidation and retry-once logic.
-- **Comprehensive API coverage:** Full MTN MoMo Collection (including CIBA and OAuth2 token exchange), Disbursement, Remittance, Sandbox, and Airtel Money APIs.
-- **Robust security:** Strict HTTPS and input validation, constant-time webhook HMAC and source IP verification, and secret-redacting exceptions and representations.
+- **Comprehensive API coverage:** Full MTN MoMo Collection (including CIBA and OAuth2 token exchange), Disbursement, Remittance, Sandbox, synchronous and asynchronous Airtel Money (`AirtelClient` and `AsyncAirtelClient`), Wave, M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money adapters behind `PaymentRouter`.
+- **Resilience and observability:** Configurable idempotent retries with `Retry-After` and jitter, settlement polling helpers, `TelemetryHook` observability events, MSISDN carrier auto-routing, FastAPI and Django webhook verifiers, and a local `py-momo-sdk mock` simulator.
 - **CLI utility:** Ships with the `py-momo-sdk` Typer-powered CLI to bootstrap sandbox credentials, initiate payments, and query balances or transaction status.
 
 ## Installation

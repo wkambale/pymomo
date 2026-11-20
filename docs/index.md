@@ -132,6 +132,8 @@ with PyMomoSDK(config) as client:
 <ul class="pm-directory">
   <li><a href="quickstart/">Quickstart guide</a></li>
   <li><a href="authentication/">Authentication configuration</a></li>
+  <li><a href="providers/">Multi-provider orchestration</a></li>
+  <li><a href="resilience/">Resilience and observability</a></li>
   <li><a href="collection/">Collection API reference</a></li>
   <li><a href="disbursement/">Disbursement API reference</a></li>
   <li><a href="remittance/">Remittance API reference</a></li>

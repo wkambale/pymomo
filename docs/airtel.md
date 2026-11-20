@@ -98,4 +98,26 @@ with AirtelClient(config) as client:
 - All requests enforce HTTPS base URLs and disable automatic HTTP redirects to prevent credential leakage.
 - OAuth2 access tokens are cached in memory with thread-safe refresh locking and automatic retry-once handling on HTTP 401 responses.
 
+## Asynchronous Airtel client
+
+Use `AsyncAirtelClient` for full non-blocking parity in FastAPI, Starlette, or asyncio services:
+
+```python
+import asyncio
+from py_momo_sdk import AirtelConfig, AsyncAirtelClient
+
+async def main() -> None:
+    config = AirtelConfig(
+        client_id="your-airtel-client-id",
+        client_secret="your-airtel-client-secret",
+        country="UG",
+        currency="UGX",
+    )
+    async with AsyncAirtelClient(config) as client:
+        balance = await client.disbursement.get_balance()
+        print(balance.data.wallet.balance)
+
+asyncio.run(main())
+```
+
 Next step: [Review webhook security](webhooks.md).

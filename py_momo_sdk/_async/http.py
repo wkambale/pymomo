@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,7 @@ from py_momo_sdk.http import (
     _compute_retry_delay,
     _is_retryable_request,
 )
+from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
 from py_momo_sdk.utils import validate_base_url, validate_request_path
 
 if TYPE_CHECKING:
@@ -40,14 +42,40 @@ class AsyncHttpClient:
         max_retries: int = 0,
         retry_backoff: float = 0.5,
         client: httpx.AsyncClient | None = None,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
+        self._telemetry = telemetry
         self._client = client or httpx.AsyncClient(
             base_url=validated_url,
             timeout=timeout,
             follow_redirects=False,
+        )
+
+    def _emit_telemetry(
+        self,
+        method: str,
+        path: str,
+        status_code: int | None,
+        started: float,
+        attempt: int,
+        correlation_id: str | None,
+        error_type: str | None = None,
+    ) -> None:
+        if self._telemetry is None:
+            return
+        self._telemetry.on_request(
+            RequestTelemetryEvent(
+                method=method,
+                path=path,
+                status_code=status_code,
+                latency_ms=(time.monotonic() - started) * 1000.0,
+                attempt=attempt,
+                correlation_id=correlation_id,
+                error_type=error_type,
+            )
         )
 
     async def _send_with_transient_retries(
@@ -63,13 +91,24 @@ class AsyncHttpClient:
     ) -> httpx.Response:
         can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
         attempts = (self._max_retries + 1) if can_retry else 1
+        correlation_id = headers.get("X-Reference-Id")
 
         for attempt in range(attempts):
+            started = time.monotonic()
             try:
                 response = await self._client.request(
                     method, path, headers=headers, json=json, data=data
                 )
             except httpx.TimeoutException:
+                self._emit_telemetry(
+                    method,
+                    path,
+                    None,
+                    started,
+                    attempt + 1,
+                    correlation_id,
+                    "TimeoutException",
+                )
                 if attempt + 1 < attempts:
                     await asyncio.sleep(
                         _compute_retry_delay(attempt, self._retry_backoff, None)
@@ -77,6 +116,15 @@ class AsyncHttpClient:
                     continue
                 raise PyMomoSDKError(timeout_msg) from None
             except httpx.RequestError:
+                self._emit_telemetry(
+                    method,
+                    path,
+                    None,
+                    started,
+                    attempt + 1,
+                    correlation_id,
+                    "RequestError",
+                )
                 if attempt + 1 < attempts:
                     await asyncio.sleep(
                         _compute_retry_delay(attempt, self._retry_backoff, None)
@@ -84,6 +132,14 @@ class AsyncHttpClient:
                     continue
                 raise PyMomoSDKError(conn_msg) from None
 
+            self._emit_telemetry(
+                method,
+                path,
+                response.status_code,
+                started,
+                attempt + 1,
+                correlation_id,
+            )
             if (
                 response.status_code in _RETRYABLE_STATUS_CODES
                 and attempt + 1 < attempts

@@ -35,6 +35,7 @@ class AsyncPyMomoSDK:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            telemetry=config.telemetry,
         )
         self._collection: Collection | None = None
         self._disbursement: Disbursement | None = None
