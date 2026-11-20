@@ -210,7 +210,7 @@ def test_airtel_disbursement_flow(httpx_mock: HTTPXMock) -> None:
         # Mock status query response
         httpx_mock.add_response(
             method="GET",
-            url=f"https://openapiuat.airtel.africa/standard/v1/payments/{ref}",
+            url=f"https://openapiuat.airtel.africa/standard/v1/disbursements/{ref}",
             json={
                 "status": {"code": "200", "message": "Success", "result_code": "00"},
                 "data": {
@@ -534,3 +534,72 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
         with pytest.raises(PyMoMoError) as excinfo:
             client.request("GET", "/teapot")
         assert "Unexpected Airtel HTTP status: 418" in str(excinfo.value)
+
+
+def test_airtel_transaction_response_status_states() -> None:
+    """Verify transaction status takes precedence over API envelope result_code."""
+    from pymomo.airtel.models import (
+        AirtelDisbursementRequest,
+        AirtelTransactionResponse,
+    )
+
+    # Failed transaction with HTTP/API result_code="00" must NOT be successful
+    failed = AirtelTransactionResponse.model_validate(
+        {
+            "status": {"code": "200", "message": "Success", "result_code": "00"},
+            "data": {"transaction": {"id": "tx-1", "status": "TF"}},
+        }
+    )
+    assert failed.is_successful() is False
+    assert failed.is_pending() is False
+    assert failed.is_failed() is True
+
+    # Pending and Initiated transactions must NOT be successful
+    for pending_status in ("PENDING", "TIP", "Initiated", "TA"):
+        pending = AirtelTransactionResponse.model_validate(
+            {
+                "status": {"code": "200", "message": "Success", "result_code": "00"},
+                "data": {"transaction": {"id": "tx-2", "status": pending_status}},
+            }
+        )
+        assert pending.is_successful() is False
+        assert pending.is_pending() is True
+        assert pending.is_failed() is False
+
+    # Settled success statuses
+    for ok_status in ("TS", "SUCCESS", "SUCCESSFUL"):
+        ok = AirtelTransactionResponse.model_validate(
+            {
+                "status": {
+                    "code": "200",
+                    "message": "Success",
+                    "result_code": "DP00800001001",
+                },
+                "data": {"transaction": {"id": "tx-3", "status": ok_status}},
+            }
+        )
+        assert ok.is_successful() is True
+        assert ok.is_pending() is False
+        assert ok.is_failed() is False
+
+    # Missing transaction status fails closed on is_successful()
+    missing = AirtelTransactionResponse.model_validate(
+        {
+            "status": {"code": "200", "message": "Success", "result_code": "00"},
+            "data": {"transaction": {"id": "tx-4"}},
+        }
+    )
+    assert missing.is_successful() is False
+    assert missing.is_pending() is False
+    assert missing.is_failed() is False
+
+    # AirtelDisbursementRequest must redact PIN in repr and str
+    req = AirtelDisbursementRequest(
+        amount="5000",
+        number="256701987654",
+        reference="ref-1",
+        pin="secret-pin-4321",
+    )
+    assert "secret-pin-4321" not in repr(req)
+    assert "secret-pin-4321" not in str(req)
+    assert "pin=<redacted>" in repr(req)

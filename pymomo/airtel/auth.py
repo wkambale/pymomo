@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import httpx
@@ -16,21 +17,28 @@ class AirtelTokenCache:
     def __init__(self) -> None:
         self._access_token: str | None = None
         self._expires_at: float = 0.0
+        self._lock = threading.Lock()
 
     def get(self) -> str | None:
-        if self._access_token and time.monotonic() < self._expires_at:
-            return self._access_token
-        self._access_token = None
-        return None
+        """Return a valid cached token or None if absent or expired."""
+        with self._lock:
+            if self._access_token and time.monotonic() < self._expires_at:
+                return self._access_token
+            self._access_token = None
+            return None
 
     def set(self, access_token: str, expires_in: int) -> None:
-        # Subtract 30-second safety margin
-        self._expires_at = time.monotonic() + expires_in - 30
-        self._access_token = access_token
+        """Cache a token with a 30-second safety margin before expiry."""
+        expires_at = time.monotonic() + expires_in - 30
+        with self._lock:
+            self._access_token = access_token
+            self._expires_at = expires_at
 
     def invalidate(self) -> None:
-        self._access_token = None
-        self._expires_at = 0.0
+        """Remove the cached token, forcing the next call to re-authenticate."""
+        with self._lock:
+            self._access_token = None
+            self._expires_at = 0.0
 
 
 class AirtelAuth:
@@ -77,16 +85,37 @@ class AirtelAuth:
                 f"Airtel authentication failed: HTTP {response.status_code}"
             )
 
-        data = response.json()
-        token = data.get("access_token")
-        expires_in = data.get("expires_in")
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise AuthenticationError(
+                "Airtel OAuth response was not valid JSON"
+            ) from exc
 
-        if not isinstance(token, str) or expires_in is None:
+        if not isinstance(data, dict):
             raise AuthenticationError(
                 "Airtel OAuth response did not contain token data"
             )
 
-        self._cache.set(token, int(expires_in))
+        token = data.get("access_token")
+        expires_in = data.get("expires_in")
+
+        if not isinstance(token, str) or not token or expires_in is None:
+            raise AuthenticationError(
+                "Airtel OAuth response did not contain token data"
+            )
+        if isinstance(expires_in, bool):
+            raise AuthenticationError("Airtel OAuth response had invalid expires_in")
+        try:
+            expires_in_int = int(expires_in)
+        except (TypeError, ValueError) as exc:
+            raise AuthenticationError(
+                "Airtel OAuth response had invalid expires_in"
+            ) from exc
+        if expires_in_int <= 0:
+            raise AuthenticationError("Airtel OAuth response had invalid expires_in")
+
+        self._cache.set(token, expires_in_int)
         return token
 
     def invalidate(self) -> None:

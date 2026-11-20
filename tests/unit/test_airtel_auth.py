@@ -145,3 +145,76 @@ def test_airtel_auth_get_token_exceptions() -> None:
             assert "Airtel authentication request connection error" in str(
                 excinfo.value
             )
+
+
+def test_airtel_auth_handles_malformed_json_and_expiry(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify non-JSON, non-dict, and invalid expires_in raise AuthenticationError."""
+    auth = AirtelAuth(
+        client_id="my-client-id",
+        client_secret="my-client-secret",
+        base_url="https://openapiuat.airtel.africa",
+    )
+
+    with httpx.Client(base_url="https://openapiuat.airtel.africa") as client:
+        httpx_mock.add_response(
+            method="POST",
+            url="https://openapiuat.airtel.africa/auth/oauth2/token",
+            text="<html>Bad Gateway</html>",
+            status_code=200,
+        )
+        with pytest.raises(AuthenticationError, match="not valid JSON"):
+            auth.get_token(client)
+
+        httpx_mock.add_response(
+            method="POST",
+            url="https://openapiuat.airtel.africa/auth/oauth2/token",
+            json=["not", "a", "dict"],
+            status_code=200,
+        )
+        with pytest.raises(AuthenticationError, match="did not contain token data"):
+            auth.get_token(client)
+
+        httpx_mock.add_response(
+            method="POST",
+            url="https://openapiuat.airtel.africa/auth/oauth2/token",
+            json={"access_token": "tok", "expires_in": "not-an-int"},
+            status_code=200,
+        )
+        with pytest.raises(AuthenticationError, match="invalid expires_in"):
+            auth.get_token(client)
+
+        httpx_mock.add_response(
+            method="POST",
+            url="https://openapiuat.airtel.africa/auth/oauth2/token",
+            json={"access_token": "tok", "expires_in": True},
+            status_code=200,
+        )
+        with pytest.raises(AuthenticationError, match="invalid expires_in"):
+            auth.get_token(client)
+
+
+def test_airtel_token_cache_thread_safety() -> None:
+    """Verify AirtelTokenCache uses a lock and handles concurrent access safely."""
+    import threading
+
+    cache = AirtelTokenCache()
+    errors: list[Exception] = []
+
+    def worker(idx: int) -> None:
+        try:
+            for step in range(50):
+                cache.set(f"tok-{idx}-{step}", 3600)
+                _ = cache.get()
+                if step % 10 == 0:
+                    cache.invalidate()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors

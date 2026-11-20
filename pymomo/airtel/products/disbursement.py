@@ -67,7 +67,7 @@ class Disbursement:
         validate_reference_id(reference_id)
         response = self._client.request(
             "GET",
-            f"/standard/v1/payments/{reference_id}",
+            f"/standard/v1/disbursements/{reference_id}",
         )
         return AirtelTransactionResponse.model_validate(response.json())
 
