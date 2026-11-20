@@ -62,6 +62,33 @@ html {
   scroll-behavior: auto;
 }
 
+/* Balanced container width aligned with 1216px desktop grid */
+.md-grid {
+  max-width: 76rem;
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    width: 13.5rem;
+  }
+
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    border-right: 1px solid var(--line);
+    padding-right: 0.75rem;
+  }
+
+  .md-content__inner {
+    margin-left: 1.5rem;
+    margin-right: 1.5rem;
+  }
+
+  /* When navigation is hidden (homepage), let content use the full grid cleanly */
+  .md-sidebar--primary[hidden] ~ .md-content .md-content__inner {
+    margin-left: 0.8rem;
+    margin-right: 0.8rem;
+  }
+}
+
 /* Single modern sans-serif with OpenType stylistic sets */
 body,
 input,
