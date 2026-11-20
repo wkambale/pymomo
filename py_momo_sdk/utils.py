@@ -4,7 +4,7 @@ import math
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -385,3 +385,154 @@ def validate_reference_id(reference_id: str) -> None:
         ) from exc
     if val.version != 4:
         raise ValueError(f"The reference ID must be a version 4 UUID: {reference_id}")
+
+
+_CARRIER_PREFIX_MAP: tuple[tuple[str, str, str], ...] = (
+    # Uganda (256)
+    ("25677", "UG", "mtn_momo"),
+    ("25678", "UG", "mtn_momo"),
+    ("25676", "UG", "mtn_momo"),
+    ("25679", "UG", "mtn_momo"),
+    ("25639", "UG", "mtn_momo"),
+    ("25675", "UG", "airtel_money"),
+    ("25670", "UG", "airtel_money"),
+    ("25674", "UG", "airtel_money"),
+    # Ghana (233)
+    ("23324", "GH", "mtn_momo"),
+    ("23354", "GH", "mtn_momo"),
+    ("23355", "GH", "mtn_momo"),
+    ("23359", "GH", "mtn_momo"),
+    ("23327", "GH", "airtel_money"),
+    ("23357", "GH", "airtel_money"),
+    ("23326", "GH", "airtel_money"),
+    # Kenya (254)
+    ("25470", "KE", "mpesa"),
+    ("25471", "KE", "mpesa"),
+    ("25472", "KE", "mpesa"),
+    ("25474", "KE", "mpesa"),
+    ("25479", "KE", "mpesa"),
+    ("25411", "KE", "mpesa"),
+    ("25473", "KE", "airtel_money"),
+    ("25478", "KE", "airtel_money"),
+    # Rwanda (250)
+    ("25078", "RW", "mtn_momo"),
+    ("25079", "RW", "mtn_momo"),
+    ("25072", "RW", "airtel_money"),
+    ("25073", "RW", "airtel_money"),
+    # Ivory Coast (225)
+    ("22505", "CI", "mtn_momo"),
+    ("22507", "CI", "orange_money"),
+    ("22501", "CI", "moov_money"),
+    # Senegal (221)
+    ("22177", "SN", "orange_money"),
+    ("22178", "SN", "orange_money"),
+    ("22176", "SN", "wave"),
+    ("22170", "SN", "wave"),
+)
+
+
+def detect_carrier_from_msisdn(msisdn: str) -> tuple[str, str] | None:
+    """Infer ``(country_code, provider_id)`` from an MSISDN prefix.
+
+    Returns ``None`` if the prefix is not in the built-in routing table. Callers
+    should allow explicit provider overrides for ported numbers.
+    """
+    digits = re.sub(r"\D", "", msisdn)
+    for prefix, country, provider in _CARRIER_PREFIX_MAP:
+        if digits.startswith(prefix):
+            return (country, provider)
+    return None
+
+
+def wait_for_settlement(
+    poll_fn: Any,
+    *,
+    timeout: float = 60.0,
+    interval: float = 2.0,
+    backoff: float = 1.5,
+    max_interval: float = 10.0,
+    sleep_fn: Any = None,
+) -> Any:
+    """Poll ``poll_fn`` until a transaction leaves the pending state.
+
+    Args:
+        poll_fn: Zero-argument callable returning an object with ``is_pending()``
+            or ``status``.
+        timeout: Maximum total wait time in seconds.
+        interval: Initial sleep interval between polls in seconds.
+        backoff: Multiplier applied to ``interval`` after each pending poll.
+        max_interval: Maximum sleep interval between polls in seconds.
+        sleep_fn: Optional sleep callable (defaults to ``time.sleep``).
+
+    Returns:
+        The settled status object.
+
+    Raises:
+        PyMomoSDKError: If ``timeout`` expires while the transaction is still
+            pending.
+    """
+    import time
+
+    from py_momo_sdk.exceptions import PyMomoSDKError
+
+    validate_timeout(timeout)
+    if interval <= 0 or backoff < 1.0 or max_interval <= 0:
+        raise ValueError("Polling interval, backoff, and max_interval must be valid")
+
+    sleeper = sleep_fn or time.sleep
+    deadline = time.monotonic() + timeout
+    delay = min(interval, max_interval)
+
+    while True:
+        result = poll_fn()
+        is_pending = (
+            result.is_pending()
+            if hasattr(result, "is_pending")
+            else getattr(result, "status", None) == "PENDING"
+        )
+        if not is_pending:
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PyMomoSDKError("Transaction settlement polling timed out")
+        sleeper(min(delay, remaining))
+        delay = min(delay * backoff, max_interval)
+
+
+async def async_wait_for_settlement(
+    poll_fn: Any,
+    *,
+    timeout: float = 60.0,
+    interval: float = 2.0,
+    backoff: float = 1.5,
+    max_interval: float = 10.0,
+    sleep_fn: Any = None,
+) -> Any:
+    """Asynchronously poll ``poll_fn`` until a transaction leaves pending state."""
+    import asyncio
+    import time
+
+    from py_momo_sdk.exceptions import PyMomoSDKError
+
+    validate_timeout(timeout)
+    if interval <= 0 or backoff < 1.0 or max_interval <= 0:
+        raise ValueError("Polling interval, backoff, and max_interval must be valid")
+
+    sleeper = sleep_fn or asyncio.sleep
+    deadline = time.monotonic() + timeout
+    delay = min(interval, max_interval)
+
+    while True:
+        result = await poll_fn()
+        is_pending = (
+            result.is_pending()
+            if hasattr(result, "is_pending")
+            else getattr(result, "status", None) == "PENDING"
+        )
+        if not is_pending:
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PyMomoSDKError("Transaction settlement polling timed out")
+        await sleeper(min(delay, remaining))
+        delay = min(delay * backoff, max_interval)

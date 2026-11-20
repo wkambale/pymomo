@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,11 @@ from py_momo_sdk.exceptions import (
     PyMomoSDKServerError,
     ResourceNotFoundError,
 )
+from py_momo_sdk.http import (
+    _RETRYABLE_STATUS_CODES,
+    _compute_retry_delay,
+    _is_retryable_request,
+)
 from py_momo_sdk.utils import validate_base_url, validate_request_path
 
 if TYPE_CHECKING:
@@ -26,13 +32,75 @@ logger = logging.getLogger("py_momo_sdk.http")
 class AsyncHttpClient:
     """Thin wrapper around httpx.AsyncClient with retry logic and error mappings."""
 
-    def __init__(self, base_url: str, timeout: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float,
+        *,
+        max_retries: int = 0,
+        retry_backoff: float = 0.5,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         validated_url = validate_base_url(base_url)
-        self._client = httpx.AsyncClient(
+        self._max_retries = max_retries
+        self._retry_backoff = retry_backoff
+        self._client = client or httpx.AsyncClient(
             base_url=validated_url,
             timeout=timeout,
             follow_redirects=False,
         )
+
+    async def _send_with_transient_retries(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        json: Any,
+        data: Any,
+        timeout_msg: str,
+        conn_msg: str,
+    ) -> httpx.Response:
+        can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
+        attempts = (self._max_retries + 1) if can_retry else 1
+
+        for attempt in range(attempts):
+            try:
+                response = await self._client.request(
+                    method, path, headers=headers, json=json, data=data
+                )
+            except httpx.TimeoutException:
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(
+                        _compute_retry_delay(attempt, self._retry_backoff, None)
+                    )
+                    continue
+                raise PyMomoSDKError(timeout_msg) from None
+            except httpx.RequestError:
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(
+                        _compute_retry_delay(attempt, self._retry_backoff, None)
+                    )
+                    continue
+                raise PyMomoSDKError(conn_msg) from None
+
+            if (
+                response.status_code in _RETRYABLE_STATUS_CODES
+                and attempt + 1 < attempts
+            ):
+                delay = _compute_retry_delay(attempt, self._retry_backoff, response)
+                logger.debug(
+                    "Transient HTTP %s on %s %s; retrying in %.2fs",
+                    response.status_code,
+                    method,
+                    path,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            return response
+
+        raise PyMomoSDKError(conn_msg)
 
     async def request(
         self,
@@ -46,17 +114,18 @@ class AsyncHttpClient:
         token_cache: TokenCache | None = None,
         token_refresher: Callable[[], Coroutine[Any, Any, str]] | None = None,
     ) -> httpx.Response:
-        """Execute async HTTP request with 401 retry mapping."""
+        """Execute async HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
         logger.debug("%s %s", method, path)
-        try:
-            response = await self._client.request(
-                method, path, headers=headers, json=json, data=data
-            )
-        except httpx.TimeoutException:
-            raise PyMomoSDKError(f"Request timed out: {method} {path}") from None
-        except httpx.RequestError:
-            raise PyMomoSDKError(f"Connection error: {method} {path}") from None
+        response = await self._send_with_transient_retries(
+            method,
+            path,
+            headers=headers,
+            json=json,
+            data=data,
+            timeout_msg=f"Request timed out: {method} {path}",
+            conn_msg=f"Connection error: {method} {path}",
+        )
 
         if (
             response.status_code == 401
@@ -82,18 +151,15 @@ class AsyncHttpClient:
             retry_headers["Authorization"] = f"Bearer {new_token}"
 
             logger.debug("Retrying %s %s with new token", method, path)
-            try:
-                response = await self._client.request(
-                    method, path, headers=retry_headers, json=json, data=data
-                )
-            except httpx.TimeoutException:
-                raise PyMomoSDKError(
-                    f"Request timed out on retry: {method} {path}"
-                ) from None
-            except httpx.RequestError:
-                raise PyMomoSDKError(
-                    f"Connection error on retry: {method} {path}"
-                ) from None
+            response = await self._send_with_transient_retries(
+                method,
+                path,
+                headers=retry_headers,
+                json=json,
+                data=data,
+                timeout_msg=f"Request timed out on retry: {method} {path}",
+                conn_msg=f"Connection error on retry: {method} {path}",
+            )
 
         _raise_for_status(response)
         return response

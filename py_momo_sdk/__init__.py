@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # Async client exports
+from py_momo_sdk._async.airtel.client import AsyncAirtelClient
 from py_momo_sdk._async.client import AsyncPyMomoSDK
 from py_momo_sdk._async.sandbox import AsyncSandboxProvisioner
 from py_momo_sdk.airtel.client import AirtelClient
@@ -38,6 +39,27 @@ from py_momo_sdk.models import (
     TransactionStatus,
     TransferRequest,
 )
+from py_momo_sdk.providers import (
+    AirtelMoneyProvider,
+    AsyncAirtelMoneyProvider,
+    AsyncMtnMomoProvider,
+    AsyncPaymentProvider,
+    AsyncPaymentRouter,
+    AsyncWaveClient,
+    AsyncWaveProvider,
+    BalanceResult,
+    DisbursementRequest,
+    MtnMomoProvider,
+    NormalizedStatus,
+    PaymentProvider,
+    PaymentRequest,
+    PaymentResult,
+    PaymentRouter,
+    ProviderCapabilities,
+    WaveClient,
+    WaveConfig,
+    WaveProvider,
+)
 from py_momo_sdk.sandbox import SandboxProvisioner
 from py_momo_sdk.webhooks import WebhookHandler
 
@@ -45,22 +67,39 @@ __all__ = [
     "AccountHolderIdType",
     "AirtelClient",
     "AirtelConfig",
+    "AirtelMoneyProvider",
     "ApiKeyResult",
     "ApiUserInfo",
+    "AsyncAirtelClient",
+    "AsyncAirtelMoneyProvider",
+    "AsyncMtnMomoProvider",
+    "AsyncPaymentProvider",
+    "AsyncPaymentRouter",
     "AsyncPyMomoSDK",
     "AsyncSandboxProvisioner",
+    "AsyncWaveClient",
+    "AsyncWaveProvider",
     "AuthenticationError",
     "BadRequestError",
     "Balance",
+    "BalanceResult",
     "BasicUserInfo",
     "BcAuthorizeRequest",
     "BcAuthorizeResponse",
     "ConflictError",
     "DepositRequest",
+    "DisbursementRequest",
     "MissingCredentialsError",
+    "MtnMomoProvider",
+    "NormalizedStatus",
     "OAuth2TokenResponse",
     "Party",
+    "PaymentProvider",
+    "PaymentRequest",
+    "PaymentResult",
+    "PaymentRouter",
     "ProductConfig",
+    "ProviderCapabilities",
     "PyMomoSDK",
     "PyMomoSDKConfig",
     "PyMomoSDKError",
@@ -76,6 +115,9 @@ __all__ = [
     "TransactionResult",
     "TransactionStatus",
     "TransferRequest",
+    "WaveClient",
+    "WaveConfig",
+    "WaveProvider",
     "WebhookHandler",
     "WebhookVerificationError",
 ]

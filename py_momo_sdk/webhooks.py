@@ -74,6 +74,77 @@ class WebhookHandler:
             raise WebhookVerificationError("Webhook signature verification failed")
 
     @staticmethod
+    def verify_timestamped_hmac_signature(
+        payload: bytes,
+        signature_header: str,
+        secret: str,
+        *,
+        tolerance_seconds: int = 300,
+        algorithm: str = "sha256",
+        now: float | None = None,
+    ) -> None:
+        """Verify a timestamped HMAC signature header (``t=<unix_ts>,v1=<hex>``).
+
+        Used by gateways such as Wave (``Wave-Signature``) and Stripe to prevent
+        replay attacks by signing ``f"{timestamp}.{payload}"``.
+        """
+        import time
+
+        algo = algorithm.lower()
+        digest_fn = _SUPPORTED_HMAC_ALGORITHMS.get(algo)
+        if digest_fn is None:
+            raise WebhookVerificationError(
+                f"Unsupported webhook signature algorithm: {algorithm}"
+            )
+        if not isinstance(payload, (bytes, bytearray)):
+            raise WebhookVerificationError("Webhook payload must be bytes")
+        if not isinstance(secret, str) or not secret:
+            raise WebhookVerificationError(
+                "Webhook verification secret must not be empty"
+            )
+        if not isinstance(signature_header, str) or not signature_header.strip():
+            raise WebhookVerificationError("Webhook signature header must not be empty")
+        if tolerance_seconds <= 0:
+            raise WebhookVerificationError(
+                "Webhook timestamp tolerance must be positive"
+            )
+
+        timestamp_str: str | None = None
+        signatures: list[str] = []
+        for part in signature_header.split(","):
+            key, sep, val = part.strip().partition("=")
+            if not sep:
+                continue
+            if key == "t":
+                timestamp_str = val.strip()
+            elif key == "v1":
+                signatures.append(val.strip().lower())
+
+        if timestamp_str is None or not signatures:
+            raise WebhookVerificationError("Malformed timestamped webhook signature")
+
+        try:
+            ts = int(timestamp_str)
+        except ValueError as exc:
+            raise WebhookVerificationError(
+                "Invalid timestamp in webhook signature"
+            ) from exc
+
+        current_time = time.time() if now is None else now
+        if abs(current_time - ts) > tolerance_seconds:
+            raise WebhookVerificationError("Webhook signature timestamp expired")
+
+        signed_payload = f"{ts}.".encode() + bytes(payload)
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            signed_payload,
+            digest_fn,
+        ).hexdigest()
+
+        if not any(hmac.compare_digest(expected, sig) for sig in signatures):
+            raise WebhookVerificationError("Webhook signature verification failed")
+
+    @staticmethod
     def verify_source_ip(
         remote_ip: str,
         allowed_networks: Sequence[str],
