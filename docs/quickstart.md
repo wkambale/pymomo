@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # Quickstart
 
 This guide walks through installing `py-momo-sdk`, provisioning sandbox credentials, submitting a payment request, and polling for completion.
