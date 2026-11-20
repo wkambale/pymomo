@@ -44,9 +44,18 @@ class TokenCache:
                 expires_at=expires_at,
             )
 
-    def invalidate(self, product: str) -> None:
-        """Remove a cached token, forcing the next call to re-authenticate."""
+    def invalidate(self, product: str, *, expected_token: str | None = None) -> None:
+        """Remove a cached token, forcing the next call to re-authenticate.
+
+        When ``expected_token`` is supplied, the entry is only removed if the
+        currently cached token matches ``expected_token``, preventing a stale
+        401 response from evicting a concurrently refreshed token.
+        """
         with self._lock:
+            if expected_token is not None:
+                entry = self._cache.get(product)
+                if entry is None or entry.access_token != expected_token:
+                    return
             self._cache.pop(product, None)
 
     def __repr__(self) -> str:

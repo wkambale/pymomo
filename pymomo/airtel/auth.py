@@ -34,9 +34,15 @@ class AirtelTokenCache:
             self._access_token = access_token
             self._expires_at = expires_at
 
-    def invalidate(self) -> None:
-        """Remove the cached token, forcing the next call to re-authenticate."""
+    def invalidate(self, *, expected_token: str | None = None) -> None:
+        """Remove the cached token, forcing the next call to re-authenticate.
+
+        When ``expected_token`` is provided, only invalidates if the cached
+        token matches ``expected_token``.
+        """
         with self._lock:
+            if expected_token is not None and self._access_token != expected_token:
+                return
             self._access_token = None
             self._expires_at = 0.0
 
@@ -62,6 +68,7 @@ class AirtelAuth:
         self._client_secret = client_secret
         self._base_url = base_url
         self._cache = AirtelTokenCache()
+        self._refresh_lock = threading.Lock()
 
     def __repr__(self) -> str:
         return (
@@ -78,6 +85,13 @@ class AirtelAuth:
         if cached:
             return cached
 
+        with self._refresh_lock:
+            cached = self._cache.get()
+            if cached:
+                return cached
+            return self._fetch_token(client)
+
+    def _fetch_token(self, client: httpx.Client) -> str:
         logger.debug("Fetching new Airtel OAuth2 token")
         try:
             response = client.request(
@@ -137,6 +151,6 @@ class AirtelAuth:
         self._cache.set(token, expires_in_int)
         return token
 
-    def invalidate(self) -> None:
+    def invalidate(self, *, expected_token: str | None = None) -> None:
         """Invalidate the cached token, forcing a refresh on next call."""
-        self._cache.invalidate()
+        self._cache.invalidate(expected_token=expected_token)

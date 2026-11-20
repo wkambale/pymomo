@@ -74,7 +74,7 @@ class Collection(BaseProduct):
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return ref
 
@@ -94,7 +94,7 @@ class Collection(BaseProduct):
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, TransactionResult)
 
@@ -146,7 +146,7 @@ class Collection(BaseProduct):
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return ref
 
@@ -166,7 +166,7 @@ class Collection(BaseProduct):
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, TransactionResult)
 
@@ -189,7 +189,7 @@ class Collection(BaseProduct):
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, BasicUserInfo)
 
@@ -240,7 +240,7 @@ class Collection(BaseProduct):
             data=payload.model_dump(by_alias=True),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, BcAuthorizeResponse)
 

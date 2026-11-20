@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from pymomo._async.http import AsyncHttpClient
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
@@ -34,12 +36,22 @@ class AsyncBaseProduct:
         self._product_config = product_config
         self._http = http
         self._token_cache = token_cache
+        self._token_lock: asyncio.Lock | None = None
+
+    def _get_token_lock(self) -> asyncio.Lock:
+        if self._token_lock is None:
+            self._token_lock = asyncio.Lock()
+        return self._token_lock
 
     async def _get_token(self) -> str:
         cached = self._token_cache.get(self._product_name)
         if cached:
             return cached
-        return await self._fetch_token()
+        async with self._get_token_lock():
+            cached = self._token_cache.get(self._product_name)
+            if cached:
+                return cached
+            return await self._fetch_token()
 
     async def _fetch_token(self) -> str:
         auth_header = build_basic_auth_header(
@@ -101,7 +113,7 @@ class AsyncBaseProduct:
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, Balance)
 
@@ -121,7 +133,7 @@ class AsyncBaseProduct:
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, Balance)
 
@@ -152,7 +164,7 @@ class AsyncBaseProduct:
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         res = parse_json_dict(response)
         result = res.get("result")
@@ -187,6 +199,6 @@ class AsyncBaseProduct:
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, BasicUserInfo)

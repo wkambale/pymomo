@@ -65,8 +65,10 @@ class HttpClient:
             and token_cache
             and product_name
         ):
-            # Invalidate cache entry
-            token_cache.invalidate(product_name)
+            # Only invalidate if cache still holds the token that just failed
+            auth_val = headers.get("Authorization", "")
+            failed_token = auth_val[7:] if auth_val.startswith("Bearer ") else None
+            token_cache.invalidate(product_name, expected_token=failed_token)
 
             # Re-fetch a token
             try:

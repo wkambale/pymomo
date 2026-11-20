@@ -127,7 +127,7 @@ class AirtelClient:
         # 3. Handle 401 retry logic
         if response.status_code == 401:
             logger.debug("Airtel 401 detected, invalidating cache and retrying")
-            self._auth.invalidate()
+            self._auth.invalidate(expected_token=token)
 
             try:
                 new_token = self._auth.get_token(self._http)

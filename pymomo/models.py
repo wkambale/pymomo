@@ -13,6 +13,14 @@ def _validate_external_id(value: str) -> str:
     return validate_header_value(value, field_name="external_id")
 
 
+def _validate_positive_expires_in(value: object) -> object:
+    if type(value) is bool:
+        raise ValueError("expires_in must be a positive integer")
+    if isinstance(value, int) and value <= 0:
+        raise ValueError("expires_in must be a positive integer")
+    return value
+
+
 class TransactionStatus(str, Enum):
     pending = "PENDING"
     successful = "SUCCESSFUL"
@@ -183,6 +191,18 @@ class TokenResponse(BaseModel):
     token_type: str
     expires_in: int
 
+    @field_validator("access_token")
+    @classmethod
+    def _check_access_token(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("access_token must not be empty")
+        return validate_header_value(value, field_name="access_token")
+
+    @field_validator("expires_in", mode="before")
+    @classmethod
+    def _check_expires_in(cls, value: object) -> object:
+        return _validate_positive_expires_in(value)
+
     def __repr__(self) -> str:
         return (
             f"TokenResponse(access_token=<redacted>, "
@@ -202,6 +222,18 @@ class OAuth2TokenResponse(BaseModel):
     scope: str | None = None
     refresh_token: str | None = None
     refresh_token_expired_in: int | None = None
+
+    @field_validator("access_token")
+    @classmethod
+    def _check_access_token(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("access_token must not be empty")
+        return validate_header_value(value, field_name="access_token")
+
+    @field_validator("expires_in", mode="before")
+    @classmethod
+    def _check_expires_in(cls, value: object) -> object:
+        return _validate_positive_expires_in(value)
 
     def __repr__(self) -> str:
         refresh_repr = "<redacted>" if self.refresh_token is not None else "None"
