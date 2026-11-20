@@ -59,3 +59,24 @@ def test_token_cache_and_airtel_auth_redaction() -> None:
     assert "airtel-client-secret-value" not in repr(airtel_auth)
     assert "airtel-client-secret-value" not in str(airtel_auth)
     assert "client_secret=<redacted>" in repr(airtel_auth)
+
+
+def test_conditional_token_invalidation_prevents_stale_eviction() -> None:
+    """Verify expected_token prevents a stale 401 from evicting a fresh token."""
+    from pymomo.airtel.auth import AirtelTokenCache
+
+    cache = TokenCache()
+    cache.set("collection", "fresh-token", 3600)
+    # Stale 401 with old-token must NOT evict fresh-token
+    cache.invalidate("collection", expected_token="old-token")
+    assert cache.get("collection") == "fresh-token"
+    # Matching expected_token DOES evict it
+    cache.invalidate("collection", expected_token="fresh-token")
+    assert cache.get("collection") is None
+
+    airtel_cache = AirtelTokenCache()
+    airtel_cache.set("airtel-fresh", 3600)
+    airtel_cache.invalidate(expected_token="airtel-old")
+    assert airtel_cache.get() == "airtel-fresh"
+    airtel_cache.invalidate(expected_token="airtel-fresh")
+    assert airtel_cache.get() is None

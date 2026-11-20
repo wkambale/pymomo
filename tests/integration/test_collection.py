@@ -636,3 +636,43 @@ def test_collection_bc_authorize_validation_and_bad_schema_sync(
     )
     with pytest.raises(PyMoMoError, match="TransactionResult schema"):
         client.collection.get_payment_status(ref_id)
+
+
+@pytest.mark.asyncio
+async def test_collection_concurrent_async_calls_fetch_token_once(
+    async_client: AsyncMomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Verify concurrent async calls on a cold cache fetch only one OAuth token."""
+    import asyncio
+
+    mock_token_response(httpx_mock)
+    for _ in range(5):
+        httpx_mock.add_response(
+            method="GET",
+            url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/account/balance",
+            json={"availableBalance": "1000", "currency": "UGX"},
+            status_code=200,
+        )
+
+    results = await asyncio.gather(
+        *(async_client.collection.get_balance() for _ in range(5))
+    )
+    assert len(results) == 5
+    token_reqs = [
+        r for r in httpx_mock.get_requests() if r.url.path == "/collection/token/"
+    ]
+    assert len(token_reqs) == 1
+
+
+def test_collection_malformed_token_response_raises_auth_error(
+    client: MomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Verify empty access_token or non-positive expires_in raises AuthenticationError."""
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={"access_token": "", "token_type": "access_token", "expires_in": 3600},
+        status_code=200,
+    )
+    with pytest.raises(AuthenticationError, match="Invalid token response"):
+        client.collection.get_balance()

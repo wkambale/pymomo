@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
 from pymomo.exceptions import AuthenticationError, PyMoMoError
@@ -33,12 +35,17 @@ class BaseProduct:
         self._product_config = product_config
         self._http = http
         self._token_cache = token_cache
+        self._token_lock = threading.Lock()
 
     def _get_token(self) -> str:
         cached = self._token_cache.get(self._product_name)
         if cached:
             return cached
-        return self._fetch_token()
+        with self._token_lock:
+            cached = self._token_cache.get(self._product_name)
+            if cached:
+                return cached
+            return self._fetch_token()
 
     def _fetch_token(self) -> str:
         auth_header = build_basic_auth_header(
@@ -100,7 +107,7 @@ class BaseProduct:
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, Balance)
 
@@ -120,7 +127,7 @@ class BaseProduct:
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, Balance)
 
@@ -151,7 +158,7 @@ class BaseProduct:
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         res = parse_json_dict(response)
         result = res.get("result")
@@ -186,6 +193,6 @@ class BaseProduct:
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, BasicUserInfo)

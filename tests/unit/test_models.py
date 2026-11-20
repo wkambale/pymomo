@@ -86,6 +86,20 @@ def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     assert "access_token=<redacted>" in repr(oauth)
     assert "refresh_token=<redacted>" in repr(oauth)
 
+    import pytest
+    from pydantic import ValidationError
+
+    for bad_token in ("", "   ", "tok\r\n"):
+        with pytest.raises(ValidationError):
+            TokenResponse(access_token=bad_token, token_type="Bearer", expires_in=3600)
+    for bad_exp in (0, -10, True):
+        with pytest.raises(ValidationError):
+            TokenResponse(access_token="valid", token_type="Bearer", expires_in=bad_exp)
+        with pytest.raises(ValidationError):
+            OAuth2TokenResponse(
+                access_token="valid", token_type="Bearer", expires_in=bad_exp
+            )
+
 
 def test_request_models_validate_amount_and_currency() -> None:
     """Verify payment models reject zero, negative, non-finite, or non-numeric amounts."""

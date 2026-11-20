@@ -60,7 +60,7 @@ class Remittance(BaseProduct):
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return ref
 
@@ -80,6 +80,6 @@ class Remittance(BaseProduct):
             headers=self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
-            token_refresher=self._fetch_token,
+            token_refresher=self._get_token,
         )
         return parse_model(response, TransactionResult)
