@@ -34,20 +34,22 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Quickstart: quickstart.md
-  - Authentication: authentication.md
+  - Guides:
+      - Quickstart: quickstart.md
+      - Authentication: authentication.md
+      - Sandbox provisioning: sandbox.md
+      - Webhooks: webhooks.md
+      - Async support: async.md
+      - Error handling: error-handling.md
   - Products:
       - Collection: collection.md
       - Disbursement: disbursement.md
       - Remittance: remittance.md
-  - Airtel Money: airtel.md
-  - Sandbox: sandbox.md
-  - Webhooks: webhooks.md
-  - Async support: async.md
-  - Error handling: error-handling.md
-  - CLI: cli.md
-  - Changelog: changelog.md
-  - Contributing: contributing.md
+      - Airtel Money: airtel.md
+  - Reference:
+      - CLI: cli.md
+      - Changelog: changelog.md
+      - Contributing: contributing.md
 
 markdown_extensions:
   - attr_list
