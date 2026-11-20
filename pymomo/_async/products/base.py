@@ -3,8 +3,14 @@ from __future__ import annotations
 from pymomo._async.http import AsyncHttpClient
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
-from pymomo.models import Balance, BasicUserInfo, TokenResponse
-from pymomo.utils import build_basic_auth_header, normalise_msisdn
+from pymomo.models import AccountHolderIdType, Balance, BasicUserInfo, TokenResponse
+from pymomo.utils import (
+    build_basic_auth_header,
+    encode_path_segment,
+    normalise_msisdn,
+    validate_account_holder_id_type,
+    validate_currency,
+)
 
 
 class AsyncBaseProduct:
@@ -103,9 +109,10 @@ class AsyncBaseProduct:
         Returns:
             A Balance object containing the available balance and currency.
         """
+        validated_currency = validate_currency(currency)
         response = await self._http.request(
             "GET",
-            f"/{self._product_name}/v1_0/account/balance/{currency}",
+            f"/{self._product_name}/v1_0/account/balance/{validated_currency}",
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
@@ -116,7 +123,7 @@ class AsyncBaseProduct:
     async def is_account_holder_active(
         self,
         account_holder_id: str,
-        account_holder_id_type: str = "msisdn",
+        account_holder_id_type: str | AccountHolderIdType = "msisdn",
     ) -> bool:
         """Check if an account holder is active.
 
@@ -127,12 +134,16 @@ class AsyncBaseProduct:
         Returns:
             True if the account holder is active, False otherwise.
         """
-        if account_holder_id_type == "msisdn":
+        id_type = validate_account_holder_id_type(account_holder_id_type)
+        if id_type == "msisdn":
             account_holder_id = normalise_msisdn(account_holder_id)
+        encoded_id = encode_path_segment(
+            account_holder_id, field_name="account_holder_id"
+        )
         response = await self._http.request(
             "GET",
             f"/{self._product_name}/v1_0/accountholder"
-            f"/{account_holder_id_type}/{account_holder_id}/active",
+            f"/{id_type}/{encoded_id}/active",
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
@@ -147,7 +158,7 @@ class AsyncBaseProduct:
     async def get_basic_user_info(
         self,
         account_holder_id: str,
-        account_holder_id_type: str = "msisdn",
+        account_holder_id_type: str | AccountHolderIdType = "msisdn",
     ) -> BasicUserInfo:
         """Get basic user info of an account holder.
 
@@ -158,12 +169,16 @@ class AsyncBaseProduct:
         Returns:
             A BasicUserInfo object containing name, given_name, locale, etc.
         """
-        if account_holder_id_type == "msisdn":
+        id_type = validate_account_holder_id_type(account_holder_id_type)
+        if id_type == "msisdn":
             account_holder_id = normalise_msisdn(account_holder_id)
+        encoded_id = encode_path_segment(
+            account_holder_id, field_name="account_holder_id"
+        )
         response = await self._http.request(
             "GET",
             f"/{self._product_name}/v1_0/accountholder"
-            f"/{account_holder_id_type}/{account_holder_id}/basicuserinfo",
+            f"/{id_type}/{encoded_id}/basicuserinfo",
             headers=await self._build_headers(),
             product_name=self._product_name,
             token_cache=self._token_cache,
