@@ -17,6 +17,4 @@ jobs:
           python-version: "3.12"
       - run: pip install "mkdocs-material>=9.5,<10"
       - run: mkdocs build --strict
-        working-directory: docs/
       - run: mkdocs gh-deploy --force
-        working-directory: docs/
