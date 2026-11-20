@@ -2,6 +2,16 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## Unreleased
+
+### Added
+- Asynchronous Airtel Money client (`AsyncAirtelClient`, `AsyncAirtelAuth`, `AsyncAirtelCollection`, `AsyncAirtelDisbursement`).
+- Unified multi-provider orchestration (`PaymentProvider`, `AsyncPaymentProvider`, `PaymentRouter`, `AsyncPaymentRouter`, normalized DTOs, and `py_momo_sdk.providers` entry-point plugin discovery).
+- First-class provider clients and adapters for Wave, Safaricom M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money alongside MTN MoMo and Airtel Money.
+- Bounded idempotent retries with `Retry-After` and `secrets`-based jitter (`max_retries`, `retry_backoff`), injectable `httpx` clients, `wait_for_settlement()` and `async_wait_for_settlement()`, `detect_carrier_from_msisdn()`, and `TelemetryHook` observability events.
+- Timestamped HMAC webhook verification (`WebhookHandler.verify_timestamped_hmac_signature`), FastAPI/Starlette and Django raw-body webhook verifiers, local mock gateway server (`start_mock_server_thread` and `py-momo-sdk mock`), and `py-momo-sdk carrier`.
+- New documentation guides for multi-provider orchestration (`docs/providers.md`) and resilience and observability (`docs/resilience.md`).
+
 ## 1.0.6 - 2026-11-20
 
 ### Changed

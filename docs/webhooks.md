@@ -80,4 +80,19 @@ if WebhookHandler.is_successful(webhook_payload):
     print("Notification reports successful transaction; verify via status API.")
 ```
 
+## Timestamped HMAC signatures and framework helpers
+
+For gateways such as Wave and Stripe that include a replay-protection timestamp (`t=<unix_ts>,v1=<hex>`), use `WebhookHandler.verify_timestamped_hmac_signature()`, or mount `create_asgi_webhook_verifier` in FastAPI and `verify_django_webhook_request` in Django:
+
+```python
+from py_momo_sdk import create_asgi_webhook_verifier
+
+verify_wave_webhook = create_asgi_webhook_verifier(
+    secret="your-webhook-secret",
+    signature_header_name="Wave-Signature",
+    timestamped=True,
+    tolerance_seconds=300,
+)
+```
+
 Next step: [Review async client support](async.md).

@@ -12,6 +12,8 @@ import typer
 from py_momo_sdk.client import PyMomoSDK
 from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
 from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.mock_server import create_mock_server
+from py_momo_sdk.utils import detect_carrier_from_msisdn
 
 app = typer.Typer(help="Py MoMo SDK CLI tool.")
 sandbox_app = typer.Typer(help="Sandbox provisioning commands.")
@@ -448,6 +450,46 @@ def remittance_balance(
     with PyMomoSDK(config) as client:
         balance = client.remittance.get_balance()
         print(json.dumps(balance.model_dump(by_alias=True, mode="json"), indent=2))
+
+
+@app.command(name="carrier")
+@handle_cli_exceptions
+def detect_carrier(
+    msisdn: str = typer.Argument(..., help="Subscriber MSISDN to inspect."),
+) -> None:
+    """Detect country and mobile money provider from an MSISDN prefix."""
+    match = detect_carrier_from_msisdn(msisdn)
+    payload = (
+        {"country": match[0], "provider": match[1]}
+        if match is not None
+        else {"country": None, "provider": None}
+    )
+    print(json.dumps(payload, indent=2))
+
+
+@app.command(name="mock")
+@handle_cli_exceptions
+def run_mock_gateway(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+    port: int = typer.Option(8090, "--port", help="Bind port."),
+    status: str = typer.Option(
+        "SUCCESSFUL",
+        "--status",
+        help="Default transaction status returned by the mock server.",
+    ),
+) -> None:
+    """Start a local HTTP mock gateway server for CI and sandbox testing."""
+    server, _state = create_mock_server(host, port, default_status=status)
+    bound_host, bound_port = server.server_address[:2]
+    typer.echo(
+        f"Py MoMo SDK mock gateway listening on http://{bound_host!s}:{bound_port}"
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

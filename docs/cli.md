@@ -121,4 +121,18 @@ py-momo-sdk disbursement balance --subscription-key "your-key" --api-user "550e8
 py-momo-sdk remittance balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "your-api-key"
 ```
 
+## Developer utilities
+
+### Detect MSISDN carrier and country
+
+```bash
+py-momo-sdk carrier "256771234567"
+```
+
+### Start the local mock gateway server
+
+```bash
+py-momo-sdk mock --host 127.0.0.1 --port 8090 --status SUCCESSFUL
+```
+
 Next step: [Review the changelog](changelog.md).

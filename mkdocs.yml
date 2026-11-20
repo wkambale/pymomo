@@ -45,6 +45,8 @@ nav:
       - Airtel Money: airtel.md
   - Guides:
       - Sandbox provisioning: sandbox.md
+      - Multi-provider orchestration: providers.md
+      - Resilience and observability: resilience.md
       - Webhooks: webhooks.md
       - Async support: async.md
       - Error handling: error-handling.md
