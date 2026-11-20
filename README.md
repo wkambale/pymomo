@@ -1,13 +1,14 @@
-# PyMoMo
+# PyMoMo (`py-momo-api`)
 
 [![PyPI Version](https://img.shields.io/pypi/v/py-momo-api.svg)](https://pypi.org/project/py-momo-api/)
 [![Build Status](https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg)](https://github.com/wkambale/pymomo/actions)
 [![License](https://img.shields.io/github/license/wkambale/pymomo.svg)](https://github.com/wkambale/pymomo/blob/main/LICENSE)
 
-PyMoMo is a fully-typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API. It provides synchronous and asynchronous clients with complete feature parity, automatic token caching, strict validation, and comprehensive product coverage.
+PyMoMo (`py-momo-api` 1.0.3) is a fully-typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API and Airtel Money API. It provides synchronous and asynchronous clients with complete feature parity, automatic token caching, strict validation, and comprehensive product coverage.
 
-Developed for high reliability and clean developer experience, PyMoMo adheres to the strict security standards of modern payments systems.
+Developed for high reliability and clean developer experience, PyMoMo adheres to the strict security standards of modern payment systems.
 
+- **PyPI Package:** [py-momo-api](https://pypi.org/project/py-momo-api/) (`1.0.3`, imported as `pymomo`)
 - **Authoritative Docs:** [https://pymomo.aiforuganda.org](https://pymomo.aiforuganda.org)
 - **Repository:** [https://github.com/wkambale/pymomo](https://github.com/wkambale/pymomo)
 
@@ -22,7 +23,7 @@ Developed for high reliability and clean developer experience, PyMoMo adheres to
 
 ## Installation
 
-Install PyMoMo from PyPI using pip:
+Install `py-momo-api` (1.0.3) from PyPI using pip:
 
 ```bash
 pip install py-momo-api
@@ -64,17 +65,17 @@ config = MomoConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-collection-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
         callback_url="https://pymomo.aiforuganda.org/webhook",
-    )
+    ),
 )
 
 with MomoClient(config) as client:
     # Query account balance
     balance = client.collection.get_balance()
     print(f"Available Balance: {balance.available_balance} {balance.currency}")
-    
+
     # Initiate a Request to Pay
     reference_id = client.collection.request_to_pay(
         amount="1000.00",
@@ -85,7 +86,7 @@ with MomoClient(config) as client:
         payee_note="Thank you for shopping with us",
     )
     print(f"Transaction Reference: {reference_id}")
-    
+
     # Check status
     tx = client.collection.get_payment_status(reference_id)
     print(f"Transaction Status: {tx.status}")
@@ -103,9 +104,9 @@ config = MomoConfig(
     environment="sandbox",
     disbursement=ProductConfig(
         subscription_key="your-disbursement-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
-    )
+    ),
 )
 
 async def main():
@@ -113,7 +114,7 @@ async def main():
         # Check active status of a mobile money user
         is_active = await client.disbursement.is_account_holder_active("256771234567")
         print(f"Account holder active: {is_active}")
-        
+
         # Initiate a transfer
         reference_id = await client.disbursement.transfer(
             amount="5000.00",
@@ -123,7 +124,7 @@ async def main():
             payer_message="Staff salary payment",
             payee_note="Disbursement Successful",
         )
-        
+
         # Query transaction details
         status = await client.disbursement.get_transfer_status(reference_id)
         print(f"Transfer status: {status.status} (ID: {status.financial_transaction_id})")
@@ -173,4 +174,4 @@ pytest --cov=pymomo --cov-report=term-missing
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for more details.
+Apache License 2.0. See [LICENSE](LICENSE) for more details.

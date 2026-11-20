@@ -34,7 +34,7 @@ config = MomoConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-key",
-        api_user="your-user",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-apikey",
     ),
 )

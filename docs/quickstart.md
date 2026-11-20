@@ -40,7 +40,7 @@ config = MomoConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
     ),
 )
@@ -74,7 +74,7 @@ with MomoClient(config) as client:
         try:
             result = client.collection.get_payment_status(reference_id)
             print(f"Status: {result.status}")
-            
+
             if result.is_successful():
                 print(f"Transaction completed. Tx ID: {result.financial_transaction_id}")
                 break
@@ -83,7 +83,7 @@ with MomoClient(config) as client:
                 break
         except PyMoMoError as e:
             print(f"Status check failed: {e}")
-            
+
         time.sleep(3)
 ```
 

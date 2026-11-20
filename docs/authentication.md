@@ -14,7 +14,7 @@ config = MomoConfig(
     timeout=30.0,           # Timeout in seconds
     collection=ProductConfig(
         subscription_key="your-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
         callback_url="https://your-callback-endpoint.com/webhooks",
     )
@@ -53,7 +53,7 @@ from pymomo import MomoClient, MomoConfig
 # Set some environment variables (typically done outside of Python)
 os.environ["PYMOMO_ENVIRONMENT"] = "sandbox"
 os.environ["PYMOMO_COLLECTION_SUBSCRIPTION_KEY"] = "your-subscription-key"
-os.environ["PYMOMO_COLLECTION_API_USER"] = "your-api-user-uuid"
+os.environ["PYMOMO_COLLECTION_API_USER"] = "550e8400-e29b-41d4-a716-446655440000"
 os.environ["PYMOMO_COLLECTION_API_KEY"] = "your-api-key"
 
 config = MomoConfig.from_env()
