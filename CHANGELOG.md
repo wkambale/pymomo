@@ -1,11 +1,19 @@
 # Changelog
 
-All notable changes to the PyMoMo project will be documented in this file.
+All notable changes to the Py MoMo API (`py-momo-api`) project will be documented in this file.
+
+## 1.0.4 - 2026-11-20
+
+### Changed
+- Rebranded the project to **Py MoMo API** (`py-momo-api` on PyPI, importable package `py_momo_api`, CLI command `py-momo-api`, and `PY_MOMO_API_*` environment variables).
+- Renamed core client, config, and exception classes to `PyMomoAPI`, `AsyncPyMomoAPI`, `PyMomoAPIConfig`, `PyMomoAPIError`, and `PyMomoAPIServerError`.
+- Switched project license to MIT License (Copyright (c) 2026 Wesley Kambale) across `LICENSE`, `pyproject.toml`, and `README.md`.
+- Updated all documentation, CLI help text, tests, and CI workflows to match `py_momo_api`, `py-momo-api`, and `PyMomoAPI`.
 
 ## 1.0.3 - 2026-11-20
 
 ### Changed
-- Aligned package license metadata in `pyproject.toml` and `README.md` with Apache License 2.0 (`LICENSE`).
+- Aligned package license metadata in `pyproject.toml` and `README.md`.
 - Updated package metadata, README, and documentation for `py-momo-api` 1.0.3 and Airtel Money coverage.
 - Updated `SECURITY.md` supported versions to `1.0.x`.
 - Cleaned up trailing whitespace, missing EOF newlines, and non-UUID `api_user` example placeholders across documentation.
@@ -15,9 +23,9 @@ All notable changes to the PyMoMo project will be documented in this file.
 ### Added
 - Collection CIBA OAuth2 token exchange (`Collection.create_oauth2_token` in sync and async clients) with secret-redacting `OAuth2TokenResponse`.
 - Webhook authenticity verification helpers: constant-time `WebhookHandler.verify_hmac_signature` (SHA-256 and SHA-512) and fail-closed `WebhookHandler.verify_source_ip`.
-- Public sandbox provisioner factories `MomoClient.create_sandbox_provisioner(subscription_key)` and `AsyncMomoClient.create_sandbox_provisioner(subscription_key)`.
-- CLI `--version` / `-V` flag, `pymomo collection status <reference_id>` command, and `--base-url` (`PYMOMO_BASE_URL`) option across commands.
-- Dedicated Airtel Money documentation (`docs/airtel.md`) and `pymomo/py.typed` PEP 561 marker.
+- Public sandbox provisioner factories `create_sandbox_provisioner(subscription_key)` on sync and async clients.
+- CLI `--version` / `-V` flag, `collection status <reference_id>` command, and `--base-url` option across commands.
+- Dedicated Airtel Money documentation (`docs/airtel.md`) and PEP 561 `py.typed` marker.
 
 ### Changed
 - Enforced strict HTTPS base URL and relative request path validation, disabled automatic HTTP redirects (`follow_redirects=False`), and validated canonical UUID v4 reference IDs, ISO currency/country codes, positive finite amounts, timeouts, callback URLs, and header control characters.
@@ -34,11 +42,11 @@ All notable changes to the PyMoMo project will be documented in this file.
 ## 0.1.0 - 2026-06-15
 
 ### Added
-- First public release of PyMoMo client library.
+- First public release of the client library.
 - Complete Collection product client (request to pay, request to withdraw, balances, consent queries).
 - Complete Disbursement product client (transfers, deposits, refunds, balances).
 - Complete Remittance product client (transfers, balances).
-- Standard and asynchronous client implementations (`MomoClient` and `AsyncMomoClient`).
+- Standard and asynchronous client implementations.
 - Sandbox API user and API key provisioning helpers.
 - Typer-based command-line interface tool.
 - Webhook JSON payload parse utilities.

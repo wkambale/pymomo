@@ -35,7 +35,7 @@ isort --check .
 The library is strictly typed. Run mypy to ensure there are no errors:
 
 ```bash
-mypy pymomo/
+mypy py_momo_api/
 ```
 
 ## Writing and running tests
@@ -51,7 +51,7 @@ No tests should make live connection requests to MTN or Airtel servers. Use `pyt
 Run the test suite and verify test coverage using:
 
 ```bash
-pytest --cov=pymomo --cov-report=term-missing
+pytest --cov=py_momo_api --cov-report=term-missing
 ```
 
 The coverage threshold is **90%** minimum.

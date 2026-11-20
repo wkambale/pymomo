@@ -4,12 +4,12 @@ The Disbursement product enables you to transfer funds, deposits, and refunds to
 
 ## Initializing disbursement client
 
-Access disbursement methods via the `.disbursement` property of a `MomoClient` instance:
+Access disbursement methods via the `.disbursement` property of a `PyMomoAPI` instance:
 
 ```python
-from pymomo import MomoClient, MomoConfig, ProductConfig
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
 
-config = MomoConfig(
+config = PyMomoAPIConfig(
     environment="sandbox",
     disbursement=ProductConfig(
         subscription_key="your-subscription-key",
@@ -18,7 +18,7 @@ config = MomoConfig(
     ),
 )
 
-client = MomoClient(config)
+client = PyMomoAPI(config)
 disbursement_client = client.disbursement
 ```
 

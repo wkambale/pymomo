@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from pymomo.config import MomoConfig, ProductConfig
+from py_momo_api.config import ProductConfig, PyMomoAPIConfig
 
 
 def test_product_config_repr_redaction() -> None:
@@ -21,16 +21,16 @@ def test_product_config_repr_redaction() -> None:
 
 
 def test_momo_config_from_env() -> None:
-    """Verify that MomoConfig.from_env reads environment variables correctly."""
-    os.environ["PYMOMO_ENVIRONMENT"] = "mtnuganda"
-    os.environ["PYMOMO_BASE_URL"] = "https://custom.momo.com"
-    os.environ["PYMOMO_TIMEOUT"] = "45.0"
-    os.environ["PYMOMO_COLLECTION_SUBSCRIPTION_KEY"] = "coll-sub"
-    os.environ["PYMOMO_COLLECTION_API_USER"] = "coll-user"
-    os.environ["PYMOMO_COLLECTION_API_KEY"] = "coll-key"
+    """Verify that PyMomoAPIConfig.from_env reads environment variables correctly."""
+    os.environ["PY_MOMO_API_ENVIRONMENT"] = "mtnuganda"
+    os.environ["PY_MOMO_API_BASE_URL"] = "https://custom.momo.com"
+    os.environ["PY_MOMO_API_TIMEOUT"] = "45.0"
+    os.environ["PY_MOMO_API_COLLECTION_SUBSCRIPTION_KEY"] = "coll-sub"
+    os.environ["PY_MOMO_API_COLLECTION_API_USER"] = "coll-user"
+    os.environ["PY_MOMO_API_COLLECTION_API_KEY"] = "coll-key"
 
     try:
-        config = MomoConfig.from_env()
+        config = PyMomoAPIConfig.from_env()
         assert config.environment == "mtnuganda"
         assert config.base_url == "https://custom.momo.com"
         assert config.timeout == 45.0
@@ -43,12 +43,12 @@ def test_momo_config_from_env() -> None:
     finally:
         # Clean up environment variables
         for var in [
-            "PYMOMO_ENVIRONMENT",
-            "PYMOMO_BASE_URL",
-            "PYMOMO_TIMEOUT",
-            "PYMOMO_COLLECTION_SUBSCRIPTION_KEY",
-            "PYMOMO_COLLECTION_API_USER",
-            "PYMOMO_COLLECTION_API_KEY",
+            "PY_MOMO_API_ENVIRONMENT",
+            "PY_MOMO_API_BASE_URL",
+            "PY_MOMO_API_TIMEOUT",
+            "PY_MOMO_API_COLLECTION_SUBSCRIPTION_KEY",
+            "PY_MOMO_API_COLLECTION_API_USER",
+            "PY_MOMO_API_COLLECTION_API_KEY",
         ]:
             os.environ.pop(var, None)
 
@@ -57,15 +57,15 @@ def test_config_validation_rules() -> None:
     """Verify timeout, callback_url, environment, and AirtelConfig validations."""
     import pytest
 
-    from pymomo.airtel.config import AirtelConfig
-    from pymomo.exceptions import MissingCredentialsError
+    from py_momo_api.airtel.config import AirtelConfig
+    from py_momo_api.exceptions import MissingCredentialsError
 
     # Invalid timeouts
     for bad_timeout in (0, -5.0, float("inf"), float("nan"), True):
         with pytest.raises(
             (TypeError, ValueError), match="Timeout must be a positive finite"
         ):
-            MomoConfig(timeout=bad_timeout)
+            PyMomoAPIConfig(timeout=bad_timeout)
         with pytest.raises(
             (TypeError, ValueError), match="Timeout must be a positive finite"
         ):
@@ -94,7 +94,7 @@ def test_config_validation_rules() -> None:
 
     # Control chars rejected in headers/environment
     with pytest.raises(ValueError, match="Environment"):
-        MomoConfig(environment="sandbox\r\nX-Injected: 1")
+        PyMomoAPIConfig(environment="sandbox\r\nX-Injected: 1")
     with pytest.raises(ValueError, match="control characters"):
         ProductConfig(subscription_key="sub\r\n", api_user="user", api_key="key")
 
@@ -106,17 +106,17 @@ def test_config_validation_rules() -> None:
     with pytest.raises(ValueError, match="ISO 4217"):
         AirtelConfig(client_id="cid", client_secret="sec", country="UG", currency="U")
 
-    # Partial environment credentials and invalid PYMOMO_TIMEOUT rejected
-    os.environ["PYMOMO_COLLECTION_SUBSCRIPTION_KEY"] = "only-sub"
+    # Partial environment credentials and invalid PY_MOMO_API_TIMEOUT rejected
+    os.environ["PY_MOMO_API_COLLECTION_SUBSCRIPTION_KEY"] = "only-sub"
     try:
         with pytest.raises(MissingCredentialsError, match="Incomplete collection"):
-            MomoConfig.from_env()
+            PyMomoAPIConfig.from_env()
     finally:
-        os.environ.pop("PYMOMO_COLLECTION_SUBSCRIPTION_KEY", None)
+        os.environ.pop("PY_MOMO_API_COLLECTION_SUBSCRIPTION_KEY", None)
 
-    os.environ["PYMOMO_TIMEOUT"] = "-10"
+    os.environ["PY_MOMO_API_TIMEOUT"] = "-10"
     try:
-        with pytest.raises(ValueError, match="PYMOMO_TIMEOUT"):
-            MomoConfig.from_env()
+        with pytest.raises(ValueError, match="PY_MOMO_API_TIMEOUT"):
+            PyMomoAPIConfig.from_env()
     finally:
-        os.environ.pop("PYMOMO_TIMEOUT", None)
+        os.environ.pop("PY_MOMO_API_TIMEOUT", None)

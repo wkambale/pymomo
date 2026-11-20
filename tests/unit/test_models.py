@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pymomo.models import (
+from py_momo_api.models import (
     Party,
     RequestToPayRequest,
     TransactionResult,
@@ -54,7 +54,7 @@ def test_transaction_result_helpers() -> None:
 
 def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     """Verify TokenResponse and ApiKeyResult never expose secrets in repr or str."""
-    from pymomo.models import ApiKeyResult, TokenResponse
+    from py_momo_api.models import ApiKeyResult, TokenResponse
 
     tok = TokenResponse(
         access_token="very-secret-jwt-token",
@@ -70,7 +70,7 @@ def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     assert "very-secret-api-key" not in str(key)
     assert "api_key=<redacted>" in repr(key)
 
-    from pymomo import OAuth2TokenResponse
+    from py_momo_api import OAuth2TokenResponse
 
     oauth = OAuth2TokenResponse(
         access_token="oauth-secret-access",
@@ -106,7 +106,7 @@ def test_request_models_validate_amount_and_currency() -> None:
     import pytest
     from pydantic import ValidationError
 
-    from pymomo.airtel.models import AirtelDisbursementRequest
+    from py_momo_api.airtel.models import AirtelDisbursementRequest
 
     for bad_amount in ("", "0", "0.00", "-10", "+10", "NaN", "Infinity", "1e5", "abc"):
         with pytest.raises(ValidationError):

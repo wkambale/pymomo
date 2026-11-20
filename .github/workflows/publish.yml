@@ -21,9 +21,9 @@ jobs:
       - run: ruff check .
       - run: black --check .
       - run: isort --check .
-      - run: mypy pymomo/
-      - run: bandit -r pymomo/
-      - run: pytest --cov=pymomo --cov-report=term-missing
+      - run: mypy py_momo_api/
+      - run: bandit -r py_momo_api/
+      - run: pytest --cov=py_momo_api --cov-report=term-missing
 
   publish:
     needs: verify

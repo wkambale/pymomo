@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from pymomo.models import AccountHolderIdType
-from pymomo.utils import (
+from py_momo_api.models import AccountHolderIdType
+from py_momo_api.utils import (
     build_basic_auth_header,
     encode_path_segment,
     generate_reference_id,
@@ -83,7 +83,7 @@ def test_build_basic_auth_header() -> None:
 
 def test_validate_callback_host() -> None:
     """Verify validate_callback_host accepts HTTPS URLs and bare hostnames and rejects unsafe values."""
-    from pymomo.utils import validate_callback_host
+    from py_momo_api.utils import validate_callback_host
 
     assert validate_callback_host("pymomo.aiforuganda.org") == "pymomo.aiforuganda.org"
     assert (

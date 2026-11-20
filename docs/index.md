@@ -1,6 +1,6 @@
-# PyMoMo
+# Py MoMo API
 
-PyMoMo is a fully-typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API. It is designed to be highly secure, reliable, and developer-friendly.
+Py MoMo API is a fully-typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API. It is designed to be highly secure, reliable, and developer-friendly.
 
 ## Supported products and environments
 
@@ -15,7 +15,7 @@ It supports both the **sandbox** environment for developer integration testing a
 
 ## Installation
 
-Install PyMoMo using pip:
+Install Py MoMo API using pip:
 
 ```bash
 pip install py-momo-api
@@ -26,9 +26,9 @@ pip install py-momo-api
 A ten-line example showing how to initialize a client and get the collection balance:
 
 ```python
-from pymomo import MomoClient, MomoConfig, ProductConfig
+from py_momo_api import PyMomoAPI, PyMomoAPIConfig, ProductConfig
 
-config = MomoConfig(
+config = PyMomoAPIConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
@@ -37,7 +37,7 @@ config = MomoConfig(
     ),
 )
 
-with MomoClient(config) as client:
+with PyMomoAPI(config) as client:
     balance = client.collection.get_balance()
     print(f"Balance: {balance.available_balance} {balance.currency}")
 ```

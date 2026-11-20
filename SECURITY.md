@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The following versions of PyMoMo currently receive security updates:
+The following versions of Py MoMo API (`py-momo-api`) currently receive security updates:
 
 | Version | Supported |
 | --- | --- |

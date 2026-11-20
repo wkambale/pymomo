@@ -1,6 +1,6 @@
 # Async support
 
-PyMoMo provides complete asynchronous support through the `AsyncMomoClient` class, backed by the `httpx.AsyncClient` package. This allows you to integrate payment features into async web frameworks (such as FastAPI, Starlette, or Sanic) without blocking the main event loop.
+Py MoMo API provides complete asynchronous support through the `AsyncPyMomoAPI` class, backed by the `httpx.AsyncClient` package. This allows you to integrate payment features into async web frameworks (such as FastAPI, Starlette, or Sanic) without blocking the main event loop.
 
 ## Parity with synchronous client
 
@@ -9,13 +9,13 @@ The async client exposes the exact same properties, method signatures, request m
 
 ## Usage example
 
-Initialize the async client using the standard `AsyncMomoClient` context manager:
+Initialize the async client using the standard `AsyncPyMomoAPI` context manager:
 
 ```python
 import asyncio
-from pymomo import AsyncMomoClient, MomoConfig, ProductConfig
+from py_momo_api import AsyncPyMomoAPI, PyMomoAPIConfig, ProductConfig
 
-config = MomoConfig(
+config = PyMomoAPIConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
@@ -25,7 +25,7 @@ config = MomoConfig(
 )
 
 async def main():
-    async with AsyncMomoClient(config) as client:
+    async with AsyncPyMomoAPI(config) as client:
         # Check account balance asynchronously
         balance = await client.collection.get_balance()
         print(f"Balance: {balance.available_balance} {balance.currency}")
@@ -50,7 +50,7 @@ Because the client methods are non-blocking coroutines, you can run multiple MoM
 ```python
 async def check_multiple_balances(config_coll, config_disb):
     # Two clients sharing a single loop run
-    async with AsyncMomoClient(config_coll) as client_c, AsyncMomoClient(config_disb) as client_d:
+    async with AsyncPyMomoAPI(config_coll) as client_c, AsyncPyMomoAPI(config_disb) as client_d:
         balances = await asyncio.gather(
             client_c.collection.get_balance(),
             client_d.disbursement.get_balance()

@@ -8,7 +8,7 @@ Clone the repository and install the development dependencies:
 
 ```bash
 git clone https://github.com/wkambale/pymomo.git
-cd pymomo
+__PROTECTED_CD_PY_MOMO_API__
 pip install -e ".[dev]"
 ```
 
@@ -36,7 +36,7 @@ isort --check .
 The library is strictly typed. Run mypy to ensure there are no validation warnings:
 
 ```bash
-mypy pymomo/
+mypy py_momo_api/
 ```
 
 
@@ -53,7 +53,7 @@ No tests should make live connection requests to MTN servers. Use `pytest-httpx`
 Run the test suite and verify test coverage using:
 
 ```bash
-pytest --cov=pymomo --cov-report=term-missing
+pytest --cov=py_momo_api --cov-report=term-missing
 ```
 
 The coverage threshold is **90%** minimum.

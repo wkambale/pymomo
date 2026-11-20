@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pymomo.exceptions import (
+from py_momo_api.exceptions import (
     AuthenticationError,
     BadRequestError,
     ConflictError,
-    MomoServerError,
-    PyMoMoError,
+    PyMomoAPIError,
+    PyMomoAPIServerError,
     ResourceNotFoundError,
     TransactionFailedError,
     WebhookVerificationError,
@@ -13,14 +13,14 @@ from pymomo.exceptions import (
 
 
 def test_exception_inheritance() -> None:
-    """Verify that all exceptions inherit from PyMoMoError."""
-    assert issubclass(AuthenticationError, PyMoMoError)
-    assert issubclass(BadRequestError, PyMoMoError)
-    assert issubclass(ResourceNotFoundError, PyMoMoError)
-    assert issubclass(ConflictError, PyMoMoError)
-    assert issubclass(MomoServerError, PyMoMoError)
-    assert issubclass(TransactionFailedError, PyMoMoError)
-    assert issubclass(WebhookVerificationError, PyMoMoError)
+    """Verify that all exceptions inherit from PyMomoAPIError."""
+    assert issubclass(AuthenticationError, PyMomoAPIError)
+    assert issubclass(BadRequestError, PyMomoAPIError)
+    assert issubclass(ResourceNotFoundError, PyMomoAPIError)
+    assert issubclass(ConflictError, PyMomoAPIError)
+    assert issubclass(PyMomoAPIServerError, PyMomoAPIError)
+    assert issubclass(TransactionFailedError, PyMomoAPIError)
+    assert issubclass(WebhookVerificationError, PyMomoAPIError)
 
 
 def test_bad_request_error_properties() -> None:

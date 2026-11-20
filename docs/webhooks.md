@@ -14,7 +14,7 @@ The MTN Developer portal currently does not attach cryptographic request signatu
 ### Source IP verification
 
 ```python
-from pymomo import WebhookHandler, WebhookVerificationError
+from py_momo_api import WebhookHandler, WebhookVerificationError
 
 allowed_cidrs = ["196.201.214.0/24", "203.0.113.10/32"]
 
@@ -28,7 +28,7 @@ except WebhookVerificationError:
 ### HMAC signature verification
 
 ```python
-from pymomo import WebhookHandler, WebhookVerificationError
+from py_momo_api import WebhookHandler, WebhookVerificationError
 
 raw_body = b'{"status":"SUCCESSFUL","amount":"1500.00","currency":"UGX"}'
 signature_header = "sha256=<hex-digest-from-header>"
@@ -51,7 +51,7 @@ except WebhookVerificationError:
 Use `WebhookHandler.parse_transaction_notification` to parse and validate incoming webhook JSON payloads into typed `TransactionResult` objects. Invalid payloads raise `WebhookVerificationError`.
 
 ```python
-from pymomo import WebhookHandler
+from py_momo_api import WebhookHandler
 
 webhook_payload = {
     "financialTransactionId": "88771122",
