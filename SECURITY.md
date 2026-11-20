@@ -1,21 +1,21 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+The following versions of PyMoMo currently receive security updates:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| --- | --- |
+| 0.1.x | Yes |
+| < 0.1.0 | No |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Do not open public GitHub issues for suspected security vulnerabilities.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+To report a security issue privately, either:
+
+1. Use GitHub's private vulnerability reporting feature on `wkambale/pymomo` under the **Security** tab.
+2. Email the maintainers at `info@aiforuganda.org` with a clear description of the issue, affected versions, and minimal steps to reproduce.
+
+You can expect an acknowledgement within 72 hours and a status update on remediation and coordinated disclosure timelines once the report is triaged.

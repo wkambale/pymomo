@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pymomo._async.http import AsyncHttpClient
 from pymomo._async.products.collection import Collection
 from pymomo._async.products.disbursement import Disbursement
@@ -8,6 +10,9 @@ from pymomo._async.sandbox import AsyncSandboxProvisioner
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig
 from pymomo.exceptions import MissingCredentialsError
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 
 class AsyncMomoClient:
@@ -104,7 +109,7 @@ class AsyncMomoClient:
         """Close the underlying AsyncHttpClient session."""
         await self._http.close()
 
-    async def __aenter__(self) -> AsyncMomoClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:

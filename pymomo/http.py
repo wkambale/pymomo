@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -14,6 +15,9 @@ from pymomo.exceptions import (
     PyMoMoError,
     ResourceNotFoundError,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 logger = logging.getLogger("pymomo.http")
 
@@ -99,10 +103,10 @@ class HttpClient:
         """Close the underlying client session."""
         self._client.close()
 
-    def __enter__(self) -> HttpClient:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
 
@@ -112,9 +116,11 @@ def _raise_for_status(response: httpx.Response) -> None:
         return
     body: dict[str, Any] = {}
     try:
-        body = response.json()
-    except Exception:
-        pass
+        parsed = response.json()
+        if isinstance(parsed, dict):
+            body = parsed
+    except ValueError:
+        body = {}
 
     if response.status_code == 400:
         raise BadRequestError(body.get("message", "Bad request"), response_body=body)

@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pymomo._async.http import AsyncHttpClient
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig, ProductConfig
 from pymomo.models import Balance, BasicUserInfo, TokenResponse
 from pymomo.utils import build_basic_auth_header, normalise_msisdn
-
-if TYPE_CHECKING:
-    pass
 
 
 class AsyncBaseProduct:

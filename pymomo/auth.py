@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -19,7 +18,7 @@ class TokenCache:
         self._cache: dict[str, _CachedToken] = {}
         self._lock = threading.Lock()
 
-    def get(self, product: str) -> Optional[str]:
+    def get(self, product: str) -> str | None:
         """Return a valid cached token or None if absent or expired."""
         with self._lock:
             entry = self._cache.get(product)
