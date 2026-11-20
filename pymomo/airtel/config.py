@@ -6,6 +6,7 @@ from pymomo.utils import (
     validate_country_code,
     validate_currency,
     validate_environment_name,
+    validate_header_value,
     validate_timeout,
 )
 
@@ -27,6 +28,10 @@ class AirtelConfig:
     timeout: float = 30.0
 
     def __post_init__(self) -> None:
+        validate_header_value(self.client_id, field_name="client_id")
+        validate_header_value(self.client_secret, field_name="client_secret")
+        if self.pin is not None:
+            validate_header_value(self.pin, field_name="pin")
         self.country = validate_country_code(self.country)
         self.currency = validate_currency(self.currency)
         validate_environment_name(self.environment)

@@ -17,7 +17,11 @@ from pymomo.exceptions import (
     PyMoMoError,
     ResourceNotFoundError,
 )
-from pymomo.utils import validate_base_url, validate_request_path
+from pymomo.utils import (
+    validate_base_url,
+    validate_header_value,
+    validate_request_path,
+)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -74,6 +78,9 @@ class AirtelClient:
         json: Any = None,
     ) -> httpx.Response:
         """Execute HTTP request with automatic headers, authentication, and retry logic."""
+        if not isinstance(method, str) or not method.isascii() or not method.isalpha():
+            raise PyMoMoError("HTTP method must be a valid ASCII token")
+        method = method.upper()
         validate_request_path(path)
         # 1. Build standard headers
         req_headers = {
@@ -82,7 +89,21 @@ class AirtelClient:
             "Content-Type": "application/json",
         }
         if headers:
-            req_headers.update(headers)
+            for key, value in headers.items():
+                if (
+                    not isinstance(key, str)
+                    or not key
+                    or any(ch.isspace() or ch == ":" for ch in key)
+                ):
+                    raise PyMoMoError("HTTP header name is invalid")
+                try:
+                    validate_header_value(key, field_name="header name")
+                    validate_header_value(value, field_name=key)
+                except ValueError as exc:
+                    raise PyMoMoError(str(exc)) from None
+                if key.lower() == "authorization":
+                    continue
+                req_headers[key] = value
 
         # 2. Get and inject bearer token
         token = self._auth.get_token(self._http)

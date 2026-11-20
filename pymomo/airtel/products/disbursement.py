@@ -7,6 +7,7 @@ from pymomo.airtel.models import (
     AirtelDisbursementRequest,
     AirtelTransactionResponse,
 )
+from pymomo.http import parse_model
 from pymomo.utils import generate_reference_id, normalise_msisdn, validate_reference_id
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class Disbursement:
             "GET",
             f"/standard/v1/disbursements/{reference_id}",
         )
-        return AirtelTransactionResponse.model_validate(response.json())
+        return parse_model(response, AirtelTransactionResponse)
 
     def get_balance(self) -> AirtelBalanceResponse:
         """Query the merchant wallet balance.
@@ -81,4 +82,4 @@ class Disbursement:
             "GET",
             "/merchant/v2/wallets/balance/",
         )
-        return AirtelBalanceResponse.model_validate(response.json())
+        return parse_model(response, AirtelBalanceResponse)

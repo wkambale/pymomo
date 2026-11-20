@@ -603,3 +603,54 @@ def test_airtel_transaction_response_status_states() -> None:
     assert "secret-pin-4321" not in repr(req)
     assert "secret-pin-4321" not in str(req)
     assert "pin=<redacted>" in repr(req)
+
+
+def test_airtel_client_header_method_and_config_guards(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify AirtelClient validates method/headers, strips auth overrides, and validates config."""
+    with pytest.raises(ValueError, match="control characters"):
+        AirtelConfig(
+            client_id="id\r\n",
+            client_secret="sec",
+            country="UG",
+            currency="UGX",
+        )
+    with pytest.raises(ValueError, match="control characters"):
+        AirtelConfig(
+            client_id="id",
+            client_secret="sec",
+            country="UG",
+            currency="UGX",
+            pin="1234\n",
+        )
+
+    config = AirtelConfig(
+        client_id="my-id",
+        client_secret="my-secret",
+        country="UG",
+        currency="UGX",
+    )
+    with AirtelClient(config) as client:
+        with pytest.raises(PyMoMoError, match="HTTP method"):
+            client.request("GET\r\nEvil", "/test")
+        with pytest.raises(PyMoMoError, match="header name"):
+            client.request("GET", "/test", headers={"Bad Header": "v"})
+        with pytest.raises(PyMoMoError, match="control characters"):
+            client.request("GET", "/test", headers={"X-Custom": "ok\r\nInjected: 1"})
+
+        mock_airtel_token(httpx_mock)
+        httpx_mock.add_response(
+            method="GET",
+            url="https://openapiuat.airtel.africa/test",
+            json={"ok": True},
+            status_code=200,
+        )
+        client.request(
+            "get",
+            "/test",
+            headers={"authorization": "Bearer spoofed", "X-Custom": "safe"},
+        )
+        req = next(r for r in httpx_mock.get_requests() if r.url.path == "/test")
+        assert req.headers["Authorization"] == "Bearer mock-airtel-access-token"
+        assert req.headers["X-Custom"] == "safe"

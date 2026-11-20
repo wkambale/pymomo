@@ -611,3 +611,28 @@ async def test_collection_create_oauth2_token_async(
         await async_client.collection.create_oauth2_token(
             "auth-req-async-123", grant_type="   "
         )
+
+
+def test_collection_bc_authorize_validation_and_bad_schema_sync(
+    client: MomoClient, httpx_mock: HTTPXMock
+) -> None:
+    """Verify bc_authorize input checks and schema-mismatch wrapping to PyMoMoError."""
+    from pymomo.exceptions import PyMoMoError
+
+    with pytest.raises(ValueError, match="login_hint"):
+        client.collection.bc_authorize("   ")
+    with pytest.raises(ValueError, match="scope"):
+        client.collection.bc_authorize("256771234567", scope="")
+    with pytest.raises(ValueError, match="access_type"):
+        client.collection.bc_authorize("256771234567", access_type="bad\r\n")
+
+    mock_token_response(httpx_mock)
+    ref_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{ref_id}",
+        json={"unexpected": "missing-status"},
+        status_code=200,
+    )
+    with pytest.raises(PyMoMoError, match="TransactionResult schema"):
+        client.collection.get_payment_status(ref_id)
