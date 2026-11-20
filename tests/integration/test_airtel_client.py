@@ -58,7 +58,7 @@ def test_airtel_client_https_enforcement() -> None:
     )
 
     # Valid HTTPS
-    AirtelClient(
+    client = AirtelClient(
         AirtelConfig(
             client_id="id",
             client_secret="secret",
@@ -67,6 +67,35 @@ def test_airtel_client_https_enforcement() -> None:
             base_url="https://example.com",
         )
     )
+    assert client._http.follow_redirects is False
+
+    # URL parser differential bypasses must be rejected
+    for bad_url in (
+        "http://localhost:80@evil.example.com",
+        " http://evil.example.com",
+        "ftp://evil.example.com",
+        "https://user:pass@example.com",
+    ):
+        with pytest.raises(PyMoMoError):
+            AirtelClient(
+                AirtelConfig(
+                    client_id="id",
+                    client_secret="secret",
+                    country="UG",
+                    currency="UGX",
+                    base_url=bad_url,
+                )
+            )
+
+    # Absolute or protocol-relative request paths must be rejected before sending auth
+    for bad_path in (
+        "http://evil.example.com/steal",
+        "https://evil.example.com/steal",
+        "//evil.example.com/steal",
+        "no-leading-slash",
+    ):
+        with pytest.raises(PyMoMoError):
+            client.request("GET", bad_path)
 
 
 def test_airtel_config_repr_redaction() -> None:

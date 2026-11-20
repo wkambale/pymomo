@@ -9,7 +9,7 @@ from pymomo._async.products.remittance import Remittance
 from pymomo._async.sandbox import AsyncSandboxProvisioner
 from pymomo.auth import TokenCache
 from pymomo.config import MomoConfig
-from pymomo.exceptions import MissingCredentialsError
+from pymomo.exceptions import MissingCredentialsError, PyMoMoError
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -28,7 +28,8 @@ class AsyncMomoClient:
     def __init__(self, config: MomoConfig) -> None:
         self._config = config
         self._token_cache = TokenCache()
-        assert config.base_url is not None, "config.base_url must be set"
+        if not config.base_url:
+            raise PyMoMoError("Base URL must use HTTPS")
         self._http = AsyncHttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
