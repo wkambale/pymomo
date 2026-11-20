@@ -5,7 +5,11 @@ from pymomo.config import SANDBOX, MomoConfig
 from pymomo.exceptions import MissingCredentialsError, PyMoMoError
 from pymomo.http import parse_json_dict
 from pymomo.models import ApiKeyResult, ApiUserInfo
-from pymomo.utils import generate_reference_id, validate_reference_id
+from pymomo.utils import (
+    generate_reference_id,
+    validate_callback_host,
+    validate_reference_id,
+)
 
 
 class AsyncSandboxProvisioner:
@@ -78,6 +82,7 @@ class AsyncSandboxProvisioner:
         callback_host: str = "https://pymomo.aiforuganda.org",
     ) -> str:
         """Create a sandbox API user asynchronously. Returns the api_user UUID."""
+        validate_callback_host(callback_host)
         if api_user is not None:
             validate_reference_id(api_user)
         ref = api_user or generate_reference_id()

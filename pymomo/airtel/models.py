@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from pymomo.utils import validate_amount, validate_country_code, validate_currency
 
 # --- Request models ---
 
@@ -12,6 +14,16 @@ class AirtelSubscriber(BaseModel):
     currency: str
     msisdn: str
 
+    @field_validator("country")
+    @classmethod
+    def _check_country(cls, value: str) -> str:
+        return validate_country_code(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
 
 class AirtelTransactionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -20,6 +32,21 @@ class AirtelTransactionRequest(BaseModel):
     country: str
     currency: str
     id: str
+
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("country")
+    @classmethod
+    def _check_country(cls, value: str) -> str:
+        return validate_country_code(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
 
 
 class AirtelCollectionRequest(BaseModel):
@@ -43,6 +70,11 @@ class AirtelDisbursementRequest(BaseModel):
     number: str
     reference: str
     pin: str
+
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
 
     def __repr__(self) -> str:
         return (

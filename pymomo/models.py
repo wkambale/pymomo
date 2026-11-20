@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from pymomo.utils import validate_amount, validate_currency
 
 
 class TransactionStatus(str, Enum):
@@ -37,6 +39,16 @@ class RequestToPayRequest(BaseModel):
     payer_message: str = Field(default="", alias="payerMessage")
     payee_note: str = Field(default="", alias="payeeNote")
 
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
 
 class TransferRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -47,6 +59,16 @@ class TransferRequest(BaseModel):
     payee: Party
     payer_message: str = Field(default="", alias="payerMessage")
     payee_note: str = Field(default="", alias="payeeNote")
+
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
 
 
 class DepositRequest(BaseModel):
@@ -59,6 +81,16 @@ class DepositRequest(BaseModel):
     payer_message: str = Field(default="", alias="payerMessage")
     payee_note: str = Field(default="", alias="payeeNote")
 
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
 
 class RefundRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -70,6 +102,16 @@ class RefundRequest(BaseModel):
     payer_message: str = Field(default="", alias="payerMessage")
     payee_note: str = Field(default="", alias="payeeNote")
 
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
 
 class RequestToWithdrawRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -80,6 +122,16 @@ class RequestToWithdrawRequest(BaseModel):
     payer: Party
     payer_message: str = Field(default="", alias="payerMessage")
     payee_note: str = Field(default="", alias="payeeNote")
+
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
 
 
 class BcAuthorizeRequest(BaseModel):
