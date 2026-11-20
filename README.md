@@ -1,4 +1,4 @@
-# Py MoMo SDK (`py-momo-sdk`)
+# Py MoMo SDK
 
 [![PyPI version](https://img.shields.io/pypi/v/py-momo-sdk.svg)](https://pypi.org/project/py-momo-sdk/)
 [![Build status](https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg)](https://github.com/wkambale/pymomo/actions)
