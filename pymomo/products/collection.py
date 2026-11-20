@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from pymomo.http import parse_json_dict
 from pymomo.models import (
     BasicUserInfo,
     BcAuthorizeResponse,
+    OAuth2TokenResponse,
     Party,
     RequestToPayRequest,
     RequestToWithdrawRequest,
     TransactionResult,
 )
 from pymomo.products.base import BaseProduct
-from pymomo.utils import generate_reference_id, normalise_msisdn, validate_reference_id
+from pymomo.utils import (
+    build_basic_auth_header,
+    generate_reference_id,
+    normalise_msisdn,
+    validate_header_value,
+    validate_reference_id,
+)
 
 
 class Collection(BaseProduct):
@@ -224,4 +232,52 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._fetch_token,
         )
-        return BcAuthorizeResponse.model_validate(response.json())
+        return BcAuthorizeResponse.model_validate(parse_json_dict(response))
+
+    def create_oauth2_token(
+        self,
+        auth_req_id: str,
+        *,
+        grant_type: str = "urn:openid:params:grant-type:ciba",
+    ) -> OAuth2TokenResponse:
+        """Exchange a CIBA authorization request ID for an OAuth2 user token.
+
+        Args:
+            auth_req_id: The ``auth_req_id`` returned by ``bc_authorize()``.
+            grant_type: OAuth2 grant type (defaults to CIBA grant type).
+
+        Returns:
+            An ``OAuth2TokenResponse`` containing the user access token and
+            metadata.
+
+        Raises:
+            ValueError: If ``auth_req_id`` or ``grant_type`` is empty or invalid.
+            AuthenticationError: If client credentials are rejected.
+        """
+        if not isinstance(auth_req_id, str) or not auth_req_id.strip():
+            raise ValueError("auth_req_id must be a non-empty string")
+        validate_header_value(auth_req_id, field_name="auth_req_id")
+        if not isinstance(grant_type, str) or not grant_type.strip():
+            raise ValueError("grant_type must be a non-empty string")
+        validate_header_value(grant_type, field_name="grant_type")
+
+        auth_header = build_basic_auth_header(
+            self._product_config.api_user,
+            self._product_config.api_key,
+        )
+        headers = {
+            "Authorization": auth_header,
+            "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,
+            "X-Target-Environment": self._config.environment,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        response = self._http.request(
+            "POST",
+            "/collection/v1_0/oauth2/token/",
+            headers=headers,
+            data={
+                "grant_type": grant_type,
+                "auth_req_id": auth_req_id,
+            },
+        )
+        return OAuth2TokenResponse.model_validate(parse_json_dict(response))

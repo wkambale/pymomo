@@ -162,6 +162,28 @@ class TokenResponse(BaseModel):
         return self.__repr__()
 
 
+class OAuth2TokenResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    access_token: str
+    token_type: str
+    expires_in: int
+    scope: str | None = None
+    refresh_token: str | None = None
+    refresh_token_expired_in: int | None = None
+
+    def __repr__(self) -> str:
+        refresh_repr = "<redacted>" if self.refresh_token is not None else "None"
+        return (
+            f"OAuth2TokenResponse(access_token=<redacted>, "
+            f"token_type={self.token_type!r}, expires_in={self.expires_in!r}, "
+            f"scope={self.scope!r}, refresh_token={refresh_repr})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
 class BcAuthorizeResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

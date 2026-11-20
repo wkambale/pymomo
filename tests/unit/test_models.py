@@ -70,6 +70,22 @@ def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     assert "very-secret-api-key" not in str(key)
     assert "api_key=<redacted>" in repr(key)
 
+    from pymomo import OAuth2TokenResponse
+
+    oauth = OAuth2TokenResponse(
+        access_token="oauth-secret-access",
+        token_type="Bearer",
+        expires_in=3600,
+        scope="profile",
+        refresh_token="oauth-secret-refresh",
+    )
+    assert "oauth-secret-access" not in repr(oauth)
+    assert "oauth-secret-access" not in str(oauth)
+    assert "oauth-secret-refresh" not in repr(oauth)
+    assert "oauth-secret-refresh" not in str(oauth)
+    assert "access_token=<redacted>" in repr(oauth)
+    assert "refresh_token=<redacted>" in repr(oauth)
+
 
 def test_request_models_validate_amount_and_currency() -> None:
     """Verify payment models reject zero, negative, non-finite, or non-numeric amounts."""
