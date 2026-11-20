@@ -19,7 +19,7 @@ config = MomoConfig(
     environment="sandbox",
     collection=ProductConfig(
         subscription_key="your-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
     ),
 )
@@ -29,7 +29,7 @@ async def main():
         # Check account balance asynchronously
         balance = await client.collection.get_balance()
         print(f"Balance: {balance.available_balance} {balance.currency}")
-        
+
         # Initiate a payment request asynchronously
         reference_id = await client.collection.request_to_pay(
             amount="10.00",

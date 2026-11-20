@@ -2,6 +2,14 @@
 
 All notable changes to the PyMoMo project will be documented in this file.
 
+## 1.0.3 - 2026-11-20
+
+### Changed
+- Aligned package license metadata in `pyproject.toml` and `README.md` with Apache License 2.0 (`LICENSE`).
+- Updated package metadata, README, and documentation for `py-momo-api` 1.0.3 and Airtel Money coverage.
+- Updated `SECURITY.md` supported versions to `1.0.x`.
+- Cleaned up trailing whitespace, missing EOF newlines, and non-UUID `api_user` example placeholders across documentation.
+
 ## 1.0.2 - 2026-11-20
 
 ### Added

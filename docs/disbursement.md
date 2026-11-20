@@ -13,7 +13,7 @@ config = MomoConfig(
     environment="sandbox",
     disbursement=ProductConfig(
         subscription_key="your-subscription-key",
-        api_user="your-api-user-uuid",
+        api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
     ),
 )

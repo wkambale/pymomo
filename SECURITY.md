@@ -6,8 +6,8 @@ The following versions of PyMoMo currently receive security updates:
 
 | Version | Supported |
 | --- | --- |
-| 0.1.x | Yes |
-| < 0.1.0 | No |
+| 1.0.x | Yes |
+| < 1.0.0 | No |
 
 ## Reporting a vulnerability
 
