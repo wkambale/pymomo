@@ -18,7 +18,7 @@ It supports both the **sandbox** environment for developer integration testing a
 Install PyMoMo using pip:
 
 ```bash
-pip install pymomo
+pip install py-momo-api
 ```
 
 ## Quickstart

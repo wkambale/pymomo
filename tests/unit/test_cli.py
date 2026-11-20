@@ -298,6 +298,7 @@ def test_cli_version() -> None:
         result = runner.invoke(app, [flag])
         assert result.exit_code == 0
         assert result.stdout.startswith("pymomo ")
+        assert result.stdout.strip() != "pymomo 0.0.0"
 
 
 def test_cli_collection_status(httpx_mock: HTTPXMock) -> None:
