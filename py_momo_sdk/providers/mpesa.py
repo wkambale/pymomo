@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
@@ -20,6 +22,7 @@ from py_momo_sdk.providers.models import (
     ProviderCapabilities,
 )
 from py_momo_sdk.utils import (
+    build_basic_auth_header,
     normalise_msisdn,
     validate_callback_url,
     validate_header_value,
@@ -87,7 +90,31 @@ class MpesaTokenResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     access_token: str
-    expires_in: str | int
+    expires_in: int = Field(gt=0)
+
+    @field_validator("access_token")
+    @classmethod
+    def _check_access_token(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("access_token must not be empty")
+        return validate_header_value(value, field_name="access_token")
+
+    @field_validator("expires_in", mode="before")
+    @classmethod
+    def _check_expires_in(cls, value: object) -> object:
+        if type(value) in (bool, float):
+            raise ValueError("expires_in must be a positive integer")
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped.isascii() or not stripped.isdigit():
+                raise ValueError("expires_in must be a positive integer")
+        return value
+
+    def __repr__(self) -> str:
+        return f"MpesaTokenResponse(access_token=<redacted>, expires_in={self.expires_in!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 class MpesaStkPushResponse(BaseModel):
@@ -124,11 +151,6 @@ def _build_stk_password(short_code: str, passkey: str) -> tuple[str, str]:
     return base64.b64encode(raw).decode("ascii"), timestamp
 
 
-def _build_basic_token_header(key: str, secret: str) -> str:
-    raw = f"{key}:{secret}".encode()
-    return f"Basic {base64.b64encode(raw).decode('ascii')}"
-
-
 class MpesaClient:
     """Synchronous Safaricom M-Pesa Daraja API client."""
 
@@ -137,6 +159,7 @@ class MpesaClient:
     ) -> None:
         self._config = config
         self._cache = TokenCache()
+        self._token_lock = threading.Lock()
         self._http = HttpClient(
             base_url=config.base_url or MPESA_SANDBOX_BASE_URL,
             timeout=config.timeout,
@@ -148,18 +171,22 @@ class MpesaClient:
         cached = self._cache.get("mpesa")
         if cached:
             return cached
-        response = self._http.request(
-            "GET",
-            "/oauth/v1/generate?grant_type=client_credentials",
-            headers={
-                "Authorization": _build_basic_token_header(
-                    self._config.consumer_key, self._config.consumer_secret
-                )
-            },
-        )
-        token_resp = parse_model(response, MpesaTokenResponse)
-        self._cache.set("mpesa", token_resp.access_token, int(token_resp.expires_in))
-        return token_resp.access_token
+        with self._token_lock:
+            cached = self._cache.get("mpesa")
+            if cached:
+                return cached
+            response = self._http.request(
+                "GET",
+                "/oauth/v1/generate?grant_type=client_credentials",
+                headers={
+                    "Authorization": build_basic_auth_header(
+                        self._config.consumer_key, self._config.consumer_secret
+                    )
+                },
+            )
+            token_resp = parse_model(response, MpesaTokenResponse)
+            self._cache.set("mpesa", token_resp.access_token, token_resp.expires_in)
+            return token_resp.access_token
 
     def _auth_headers(self) -> dict[str, str]:
         return {
@@ -279,6 +306,7 @@ class AsyncMpesaClient:
     ) -> None:
         self._config = config
         self._cache = TokenCache()
+        self._token_lock = asyncio.Lock()
         self._http = AsyncHttpClient(
             base_url=config.base_url or MPESA_SANDBOX_BASE_URL,
             timeout=config.timeout,
@@ -290,18 +318,22 @@ class AsyncMpesaClient:
         cached = self._cache.get("mpesa")
         if cached:
             return cached
-        response = await self._http.request(
-            "GET",
-            "/oauth/v1/generate?grant_type=client_credentials",
-            headers={
-                "Authorization": _build_basic_token_header(
-                    self._config.consumer_key, self._config.consumer_secret
-                )
-            },
-        )
-        token_resp = parse_model(response, MpesaTokenResponse)
-        self._cache.set("mpesa", token_resp.access_token, int(token_resp.expires_in))
-        return token_resp.access_token
+        async with self._token_lock:
+            cached = self._cache.get("mpesa")
+            if cached:
+                return cached
+            response = await self._http.request(
+                "GET",
+                "/oauth/v1/generate?grant_type=client_credentials",
+                headers={
+                    "Authorization": build_basic_auth_header(
+                        self._config.consumer_key, self._config.consumer_secret
+                    )
+                },
+            )
+            token_resp = parse_model(response, MpesaTokenResponse)
+            self._cache.set("mpesa", token_resp.access_token, token_resp.expires_in)
+            return token_resp.access_token
 
     async def _auth_headers(self) -> dict[str, str]:
         token = await self._get_token()

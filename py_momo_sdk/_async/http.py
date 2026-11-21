@@ -17,8 +17,10 @@ from py_momo_sdk.http import (
     _RETRYABLE_STATUS_CODES,
     DEFAULT_MAX_RESPONSE_BYTES,
     _compute_retry_delay,
+    _get_header_ci,
     _is_retryable_request,
     _raise_for_status,
+    _sanitize_telemetry_path,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
 from py_momo_sdk.utils import (
@@ -87,17 +89,22 @@ class AsyncHttpClient:
     ) -> None:
         if self._telemetry is None:
             return
-        self._telemetry.on_request(
-            RequestTelemetryEvent(
-                method=method,
-                path=path,
-                status_code=status_code,
-                latency_ms=(time.monotonic() - started) * 1000.0,
-                attempt=attempt,
-                correlation_id=correlation_id,
-                error_type=error_type,
+        try:
+            self._telemetry.on_request(
+                RequestTelemetryEvent(
+                    method=method,
+                    path=_sanitize_telemetry_path(path),
+                    status_code=status_code,
+                    latency_ms=(time.monotonic() - started) * 1000.0,
+                    attempt=attempt,
+                    correlation_id=correlation_id,
+                    error_type=error_type,
+                )
             )
-        )
+        except Exception:
+            logger.warning(
+                "Telemetry hook on_request raised an exception", exc_info=True
+            )
 
     async def _execute_bounded_request(
         self,
@@ -165,7 +172,7 @@ class AsyncHttpClient:
     ) -> httpx.Response:
         can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
         attempts = (self._max_retries + 1) if can_retry else 1
-        correlation_id = headers.get("X-Reference-Id")
+        correlation_id = _get_header_ci(headers, "X-Reference-Id")
 
         for attempt in range(attempts):
             started = time.monotonic()
@@ -223,7 +230,7 @@ class AsyncHttpClient:
                     "Transient HTTP %s on %s %s; retrying in %.2fs",
                     response.status_code,
                     method,
-                    path,
+                    _sanitize_telemetry_path(path),
                     delay,
                 )
                 await asyncio.sleep(delay)
@@ -246,15 +253,16 @@ class AsyncHttpClient:
     ) -> httpx.Response:
         """Execute async HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
-        logger.debug("%s %s", method, path)
+        safe_path = _sanitize_telemetry_path(path)
+        logger.debug("%s %s", method, safe_path)
         response = await self._send_with_transient_retries(
             method,
             path,
             headers=headers,
             json=json,
             data=data,
-            timeout_msg=f"Request timed out: {method} {path}",
-            conn_msg=f"Connection error: {method} {path}",
+            timeout_msg=f"Request timed out: {method} {safe_path}",
+            conn_msg=f"Connection error: {method} {safe_path}",
         )
 
         if (
@@ -264,7 +272,7 @@ class AsyncHttpClient:
             and product_name
         ):
             # Only invalidate if cache still holds the token that just failed
-            auth_val = headers.get("Authorization", "")
+            auth_val = _get_header_ci(headers, "Authorization") or ""
             failed_token = auth_val[7:] if auth_val.startswith("Bearer ") else None
             token_cache.invalidate(product_name, expected_token=failed_token)
 
@@ -277,18 +285,20 @@ class AsyncHttpClient:
                 ) from None
 
             # Retry original request exactly once
-            retry_headers = headers.copy()
+            retry_headers = {
+                k: v for k, v in headers.items() if k.lower() != "authorization"
+            }
             retry_headers["Authorization"] = f"Bearer {new_token}"
 
-            logger.debug("Retrying %s %s with new token", method, path)
+            logger.debug("Retrying %s %s with new token", method, safe_path)
             response = await self._send_with_transient_retries(
                 method,
                 path,
                 headers=retry_headers,
                 json=json,
                 data=data,
-                timeout_msg=f"Request timed out on retry: {method} {path}",
-                conn_msg=f"Connection error on retry: {method} {path}",
+                timeout_msg=f"Request timed out on retry: {method} {safe_path}",
+                conn_msg=f"Connection error on retry: {method} {safe_path}",
             )
 
         _raise_for_status(response)

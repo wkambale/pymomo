@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import base64
+import asyncio
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
@@ -19,6 +20,7 @@ from py_momo_sdk.providers.models import (
     ProviderCapabilities,
 )
 from py_momo_sdk.utils import (
+    build_basic_auth_header,
     generate_reference_id,
     validate_callback_url,
     validate_header_value,
@@ -77,12 +79,31 @@ class OrangeTokenResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     access_token: str
-    expires_in: int = 3600
+    expires_in: int = Field(default=3600, gt=0)
 
+    @field_validator("access_token")
+    @classmethod
+    def _check_access_token(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("access_token must not be empty")
+        return validate_header_value(value, field_name="access_token")
 
-def _orange_basic(client_id: str, client_secret: str) -> str:
-    raw = f"{client_id}:{client_secret}".encode()
-    return f"Basic {base64.b64encode(raw).decode('ascii')}"
+    @field_validator("expires_in", mode="before")
+    @classmethod
+    def _check_expires_in(cls, value: object) -> object:
+        if type(value) in (bool, float):
+            raise ValueError("expires_in must be a positive integer")
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped.isascii() or not stripped.isdigit():
+                raise ValueError("expires_in must be a positive integer")
+        return value
+
+    def __repr__(self) -> str:
+        return f"OrangeTokenResponse(access_token=<redacted>, expires_in={self.expires_in!r})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 def _map_orange_status(raw_status: str) -> NormalizedStatus:
@@ -102,6 +123,7 @@ class OrangeMoneyClient:
     ) -> None:
         self._config = config
         self._cache = TokenCache()
+        self._token_lock = threading.Lock()
         self._http = HttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -113,20 +135,24 @@ class OrangeMoneyClient:
         cached = self._cache.get("orange_money")
         if cached:
             return cached
-        response = self._http.request(
-            "POST",
-            "/oauth/v3/token",
-            headers={
-                "Authorization": _orange_basic(
-                    self._config.client_id, self._config.client_secret
-                ),
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={"grant_type": "client_credentials"},
-        )
-        tok = parse_model(response, OrangeTokenResponse)
-        self._cache.set("orange_money", tok.access_token, tok.expires_in)
-        return tok.access_token
+        with self._token_lock:
+            cached = self._cache.get("orange_money")
+            if cached:
+                return cached
+            response = self._http.request(
+                "POST",
+                "/oauth/v3/token",
+                headers={
+                    "Authorization": build_basic_auth_header(
+                        self._config.client_id, self._config.client_secret
+                    ),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+            )
+            tok = parse_model(response, OrangeTokenResponse)
+            self._cache.set("orange_money", tok.access_token, tok.expires_in)
+            return tok.access_token
 
     def create_web_payment(
         self,
@@ -201,6 +227,7 @@ class AsyncOrangeMoneyClient:
     ) -> None:
         self._config = config
         self._cache = TokenCache()
+        self._token_lock = asyncio.Lock()
         self._http = AsyncHttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -212,20 +239,24 @@ class AsyncOrangeMoneyClient:
         cached = self._cache.get("orange_money")
         if cached:
             return cached
-        response = await self._http.request(
-            "POST",
-            "/oauth/v3/token",
-            headers={
-                "Authorization": _orange_basic(
-                    self._config.client_id, self._config.client_secret
-                ),
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={"grant_type": "client_credentials"},
-        )
-        tok = parse_model(response, OrangeTokenResponse)
-        self._cache.set("orange_money", tok.access_token, tok.expires_in)
-        return tok.access_token
+        async with self._token_lock:
+            cached = self._cache.get("orange_money")
+            if cached:
+                return cached
+            response = await self._http.request(
+                "POST",
+                "/oauth/v3/token",
+                headers={
+                    "Authorization": build_basic_auth_header(
+                        self._config.client_id, self._config.client_secret
+                    ),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+            )
+            tok = parse_model(response, OrangeTokenResponse)
+            self._cache.set("orange_money", tok.access_token, tok.expires_in)
+            return tok.access_token
 
     async def create_web_payment(
         self,
