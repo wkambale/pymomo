@@ -10,6 +10,7 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_operation_kind,
 )
 
 _MTN_STATUS_MAP = {
@@ -97,6 +98,7 @@ class MtnMomoProvider:
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             result = self._client.disbursement.get_transfer_status(reference_id)
         else:
@@ -104,6 +106,7 @@ class MtnMomoProvider:
         return _map_mtn_result(reference_id, result)
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+        validate_operation_kind(kind)
         balance = (
             self._client.disbursement.get_balance()
             if kind == "disbursement"
@@ -172,6 +175,7 @@ class AsyncMtnMomoProvider:
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             result = await self._client.disbursement.get_transfer_status(reference_id)
         else:
@@ -179,6 +183,7 @@ class AsyncMtnMomoProvider:
         return _map_mtn_result(reference_id, result)
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+        validate_operation_kind(kind)
         balance = (
             await self._client.disbursement.get_balance()
             if kind == "disbursement"

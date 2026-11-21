@@ -63,23 +63,37 @@ _AIRTEL_PENDING_STATUSES = frozenset(
 )
 
 
-class AirtelDisbursementRequest(BaseModel):
+class AirtelDisbursementPayee(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    msisdn: str
+
+
+class AirtelDisbursementTransaction(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     amount: str
-    number: str
-    reference: str
-    pin: str
+    id: str
 
     @field_validator("amount")
     @classmethod
     def _check_amount(cls, value: str) -> str:
         return validate_amount(value)
 
+
+class AirtelDisbursementRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    payee: AirtelDisbursementPayee
+    reference: str
+    pin: str
+    transaction: AirtelDisbursementTransaction
+
     def __repr__(self) -> str:
         return (
-            f"AirtelDisbursementRequest(amount={self.amount!r}, "
-            f"number={self.number!r}, reference={self.reference!r}, pin=<redacted>)"
+            f"AirtelDisbursementRequest(payee={self.payee!r}, "
+            f"reference={self.reference!r}, transaction={self.transaction!r}, "
+            f"pin=<redacted>)"
         )
 
     def __str__(self) -> str:

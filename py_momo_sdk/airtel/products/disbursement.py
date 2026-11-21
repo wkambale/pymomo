@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING
 
 from py_momo_sdk.airtel.models import (
     AirtelBalanceResponse,
+    AirtelDisbursementPayee,
     AirtelDisbursementRequest,
+    AirtelDisbursementTransaction,
     AirtelTransactionResponse,
 )
 from py_momo_sdk.http import parse_model
@@ -47,10 +49,10 @@ class Disbursement:
         validate_reference_id(ref)
 
         payload = AirtelDisbursementRequest(
-            amount=amount,
-            number=normalise_msisdn(payee_msisdn),
+            payee=AirtelDisbursementPayee(msisdn=normalise_msisdn(payee_msisdn)),
             reference=ref,
             pin=self._client._config.pin,
+            transaction=AirtelDisbursementTransaction(amount=amount, id=ref),
         )
 
         self._client.request(

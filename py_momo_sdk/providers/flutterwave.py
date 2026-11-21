@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from py_momo_sdk._async.http import AsyncHttpClient
+from py_momo_sdk.exceptions import PyMomoSDKError
 from py_momo_sdk.frameworks import verify_constant_time_token
 from py_momo_sdk.http import HttpClient, parse_json_dict
 from py_momo_sdk.providers.models import (
@@ -15,6 +16,8 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_email_address,
+    validate_operation_kind,
 )
 from py_momo_sdk.utils import (
     encode_path_segment,
@@ -52,6 +55,8 @@ class FlutterwaveConfig:
     secret_key: str
     webhook_hash: str | None = None
     redirect_url: str | None = None
+    default_customer_email: str | None = None
+    default_account_bank: str | None = None
     base_url: str = FLUTTERWAVE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
@@ -65,6 +70,16 @@ class FlutterwaveConfig:
             validate_header_value(self.webhook_hash, field_name="webhook_hash")
         if self.redirect_url is not None:
             validate_callback_url(self.redirect_url)
+        if self.default_customer_email is not None:
+            self.default_customer_email = validate_email_address(
+                self.default_customer_email
+            )
+        if self.default_account_bank is not None:
+            if not self.default_account_bank.strip():
+                raise ValueError("default_account_bank must not be blank")
+            self.default_account_bank = validate_header_value(
+                self.default_account_bank.strip(), field_name="default_account_bank"
+            )
         validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
@@ -87,6 +102,34 @@ def _map_flw_status(raw_status: str) -> NormalizedStatus:
     if norm in ("failed", "cancelled", "canceled"):
         return NormalizedStatus.FAILED
     return NormalizedStatus.PENDING
+
+
+def _unwrap_flw_data(res: dict[str, Any]) -> dict[str, Any]:
+    if str(res.get("status", "")).strip().lower() == "error":
+        msg = res.get("message")
+        raise PyMomoSDKError(
+            str(msg) if isinstance(msg, str) and msg else "Flutterwave request failed"
+        )
+    data = res.get("data")
+    if not isinstance(data, dict):
+        raise PyMomoSDKError(
+            "Malformed Flutterwave response: expected object in 'data'"
+        )
+    return data
+
+
+def _unwrap_flw_balance(res: dict[str, Any]) -> tuple[str, str]:
+    data = _unwrap_flw_data(res)
+    avail = data.get("available_balance")
+    currency = data.get("currency")
+    if (
+        avail is None
+        or type(avail) is bool
+        or not isinstance(currency, str)
+        or not currency
+    ):
+        raise PyMomoSDKError("Malformed Flutterwave balance response")
+    return str(avail), currency
 
 
 class FlutterwaveClient:
@@ -116,12 +159,19 @@ class FlutterwaveClient:
         currency: str,
         phone_number: str,
         *,
+        email: str | None = None,
         tx_ref: str | None = None,
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
         """Create a Flutterwave standard payment link."""
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        resolved_email = email or self._config.default_customer_email
+        if not resolved_email:
+            raise ValueError(
+                "email or FlutterwaveConfig.default_customer_email is required for Flutterwave payments"
+            )
+        validated_email = validate_email_address(resolved_email)
         if redirect_url is not None:
             validate_callback_url(redirect_url)
         resolved_redirect = redirect_url or self._config.redirect_url
@@ -132,7 +182,7 @@ class FlutterwaveClient:
             "amount": validated_amount,
             "currency": validated_currency,
             "customer": {
-                "email": f"{clean_msisdn}@mobilemoney.example.com",
+                "email": validated_email,
                 "phonenumber": clean_msisdn,
             },
         }
@@ -162,25 +212,44 @@ class FlutterwaveClient:
         currency: str,
         account_number: str,
         *,
+        account_bank: str | None = None,
         reference: str | None = None,
         narration: str = "Payout",
     ) -> dict[str, Any]:
         """Initiate a Flutterwave transfer."""
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        resolved_bank = account_bank or self._config.default_account_bank
+        if not resolved_bank or not resolved_bank.strip():
+            raise ValueError(
+                "account_bank or FlutterwaveConfig.default_account_bank is required for Flutterwave transfers"
+            )
+        validated_bank = validate_header_value(
+            resolved_bank.strip(), field_name="account_bank"
+        )
         ref = reference or generate_reference_id()
         response = self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
             json={
-                "account_bank": "MPS",
+                "account_bank": validated_bank,
                 "account_number": normalise_msisdn(account_number),
                 "amount": validated_amount,
                 "currency": validated_currency,
                 "narration": narration,
                 "reference": ref,
             },
+        )
+        return parse_json_dict(response)
+
+    def get_transfer(self, transfer_id: str) -> dict[str, Any]:
+        """Retrieve a Flutterwave transfer by ID."""
+        encoded = encode_path_segment(transfer_id, field_name="transfer_id")
+        response = self._http.request(
+            "GET",
+            f"/v3/transfers/{encoded}",
+            headers=self._headers(),
         )
         return parse_json_dict(response)
 
@@ -233,11 +302,18 @@ class AsyncFlutterwaveClient:
         currency: str,
         phone_number: str,
         *,
+        email: str | None = None,
         tx_ref: str | None = None,
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        resolved_email = email or self._config.default_customer_email
+        if not resolved_email:
+            raise ValueError(
+                "email or FlutterwaveConfig.default_customer_email is required for Flutterwave payments"
+            )
+        validated_email = validate_email_address(resolved_email)
         if redirect_url is not None:
             validate_callback_url(redirect_url)
         resolved_redirect = redirect_url or self._config.redirect_url
@@ -248,7 +324,7 @@ class AsyncFlutterwaveClient:
             "amount": validated_amount,
             "currency": validated_currency,
             "customer": {
-                "email": f"{clean_msisdn}@mobilemoney.example.com",
+                "email": validated_email,
                 "phonenumber": clean_msisdn,
             },
         }
@@ -277,24 +353,42 @@ class AsyncFlutterwaveClient:
         currency: str,
         account_number: str,
         *,
+        account_bank: str | None = None,
         reference: str | None = None,
         narration: str = "Payout",
     ) -> dict[str, Any]:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        resolved_bank = account_bank or self._config.default_account_bank
+        if not resolved_bank or not resolved_bank.strip():
+            raise ValueError(
+                "account_bank or FlutterwaveConfig.default_account_bank is required for Flutterwave transfers"
+            )
+        validated_bank = validate_header_value(
+            resolved_bank.strip(), field_name="account_bank"
+        )
         ref = reference or generate_reference_id()
         response = await self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
             json={
-                "account_bank": "MPS",
+                "account_bank": validated_bank,
                 "account_number": normalise_msisdn(account_number),
                 "amount": validated_amount,
                 "currency": validated_currency,
                 "narration": narration,
                 "reference": ref,
             },
+        )
+        return parse_json_dict(response)
+
+    async def get_transfer(self, transfer_id: str) -> dict[str, Any]:
+        encoded = encode_path_segment(transfer_id, field_name="transfer_id")
+        response = await self._http.request(
+            "GET",
+            f"/v3/transfers/{encoded}",
+            headers=self._headers(),
         )
         return parse_json_dict(response)
 
@@ -313,6 +407,26 @@ class AsyncFlutterwaveClient:
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
+
+
+def _map_flw_status_response(
+    provider: str, reference_id: str, res: dict[str, Any]
+) -> PaymentResult:
+    data = _unwrap_flw_data(res)
+    amount = str(data["amount"]) if data.get("amount") is not None else None
+    tx_id = str(data["id"]) if data.get("id") is not None else None
+    reason_val = data.get("complete_message") or data.get("processor_response")
+    reason = str(reason_val) if isinstance(reason_val, str) and reason_val else None
+    return PaymentResult(
+        provider=provider,
+        reference_id=reference_id,
+        status=_map_flw_status(str(data.get("status", "pending"))),
+        amount=amount,
+        currency=data.get("currency"),
+        provider_transaction_id=tx_id,
+        reason=reason,
+        raw=res,
+    )
 
 
 class FlutterwaveProvider:
@@ -335,16 +449,18 @@ class FlutterwaveProvider:
             amount=request.amount,
             currency=request.currency,
             phone_number=request.payer_msisdn,
+            email=request.payer_email,
             tx_ref=ref,
             redirect_url=request.callback_url,
         )
-        data = res.get("data", {})
+        data = _unwrap_flw_data(res)
         return PaymentResult(
             provider=self.name,
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or ref,
             checkout_url=data.get("link"),
             raw=res,
         )
@@ -355,41 +471,40 @@ class FlutterwaveProvider:
             amount=request.amount,
             currency=request.currency,
             account_number=request.payee_msisdn,
+            account_bank=request.payee_bank_code,
             reference=ref,
             narration=request.payer_message or "Payout",
         )
-        data = res.get("data", {})
+        data = _unwrap_flw_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", ref)),
+            reference_id=str(data.get("id") or data.get("reference") or ref),
             status=_map_flw_status(str(data.get("status", "pending"))),
             amount=request.amount,
             currency=request.currency,
+            external_id=str(data.get("reference") or ref),
             raw=res,
         )
 
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
-        res = self._client.verify_by_reference(reference_id)
-        data = res.get("data", {})
-        return PaymentResult(
-            provider=self.name,
-            reference_id=reference_id,
-            status=_map_flw_status(str(data.get("status", "pending"))),
-            currency=data.get("currency"),
-            raw=res,
+        validate_operation_kind(kind)
+        res = (
+            self._client.get_transfer(reference_id)
+            if kind == "disbursement"
+            else self._client.verify_by_reference(reference_id)
         )
+        return _map_flw_status_response(self.name, reference_id, res)
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         res = self._client.get_balance()
-        data = res.get("data", {})
+        avail, currency = _unwrap_flw_balance(res)
         return BalanceResult(
             provider=self.name,
-            available_balance=str(data.get("available_balance", "0.00")),
-            currency=str(data.get("currency", "NGN")),
+            available_balance=avail,
+            currency=currency,
             raw=res,
         )
 
@@ -414,16 +529,18 @@ class AsyncFlutterwaveProvider:
             amount=request.amount,
             currency=request.currency,
             phone_number=request.payer_msisdn,
+            email=request.payer_email,
             tx_ref=ref,
             redirect_url=request.callback_url,
         )
-        data = res.get("data", {})
+        data = _unwrap_flw_data(res)
         return PaymentResult(
             provider=self.name,
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or ref,
             checkout_url=data.get("link"),
             raw=res,
         )
@@ -434,40 +551,39 @@ class AsyncFlutterwaveProvider:
             amount=request.amount,
             currency=request.currency,
             account_number=request.payee_msisdn,
+            account_bank=request.payee_bank_code,
             reference=ref,
             narration=request.payer_message or "Payout",
         )
-        data = res.get("data", {})
+        data = _unwrap_flw_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", ref)),
+            reference_id=str(data.get("id") or data.get("reference") or ref),
             status=_map_flw_status(str(data.get("status", "pending"))),
             amount=request.amount,
             currency=request.currency,
+            external_id=str(data.get("reference") or ref),
             raw=res,
         )
 
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
-        res = await self._client.verify_by_reference(reference_id)
-        data = res.get("data", {})
-        return PaymentResult(
-            provider=self.name,
-            reference_id=reference_id,
-            status=_map_flw_status(str(data.get("status", "pending"))),
-            currency=data.get("currency"),
-            raw=res,
+        validate_operation_kind(kind)
+        res = (
+            await self._client.get_transfer(reference_id)
+            if kind == "disbursement"
+            else await self._client.verify_by_reference(reference_id)
         )
+        return _map_flw_status_response(self.name, reference_id, res)
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         res = await self._client.get_balance()
-        data = res.get("data", {})
+        avail, currency = _unwrap_flw_balance(res)
         return BalanceResult(
             provider=self.name,
-            available_balance=str(data.get("available_balance", "0.00")),
-            currency=str(data.get("currency", "NGN")),
+            available_balance=avail,
+            currency=currency,
             raw=res,
         )
