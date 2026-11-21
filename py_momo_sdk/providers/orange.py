@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
+from py_momo_sdk.exceptions import PyMomoSDKError
 from py_momo_sdk.http import HttpClient, parse_json_dict, parse_model
 from py_momo_sdk.providers.models import (
     BalanceResult,
@@ -18,6 +19,7 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_operation_kind,
 )
 from py_momo_sdk.utils import (
     build_basic_auth_header,
@@ -28,6 +30,7 @@ from py_momo_sdk.utils import (
     validate_currency,
     validate_header_value,
     validate_max_retries,
+    validate_request_path,
     validate_retry_backoff,
     validate_timeout,
 )
@@ -36,6 +39,8 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 ORANGE_BASE_URL = "https://api.orange.com"
+ORANGE_DEFAULT_API_PATH_PREFIX = "/orange-money-webpay/dev/v1"
+_MAX_PAYMENT_CONTEXT = 4096
 
 _ORANGE_CAPABILITIES = ProviderCapabilities(
     provider_id="orange_money",
@@ -57,6 +62,7 @@ class OrangeMoneyConfig:
     return_url: str | None = None
     cancel_url: str | None = None
     notif_url: str | None = None
+    api_path_prefix: str = ORANGE_DEFAULT_API_PATH_PREFIX
     base_url: str = ORANGE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
@@ -77,6 +83,17 @@ class OrangeMoneyConfig:
             validate_callback_url(self.cancel_url)
         if self.notif_url is not None:
             validate_callback_url(self.notif_url)
+        if (
+            not isinstance(self.api_path_prefix, str)
+            or not self.api_path_prefix.strip()
+            or "?" in self.api_path_prefix
+        ):
+            raise ValueError("api_path_prefix must be a valid URL path prefix")
+        cleaned_prefix = self.api_path_prefix.rstrip("/")
+        if not cleaned_prefix:
+            raise ValueError("api_path_prefix must not be root '/'")
+        validate_request_path(cleaned_prefix)
+        self.api_path_prefix = cleaned_prefix
         validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
@@ -127,7 +144,9 @@ def _map_orange_status(raw_status: str) -> NormalizedStatus:
     norm = raw_status.strip().upper()
     if norm in ("SUCCESS", "SUCCESSFUL"):
         return NormalizedStatus.SUCCEEDED
-    if norm in ("FAILED", "EXPIRED"):
+    if norm == "EXPIRED":
+        return NormalizedStatus.EXPIRED
+    if norm in ("FAILED", "CANCELLED", "CANCELED"):
         return NormalizedStatus.FAILED
     return NormalizedStatus.PENDING
 
@@ -141,6 +160,8 @@ class OrangeMoneyClient:
         self._config = config
         self._cache = TokenCache()
         self._token_lock = threading.Lock()
+        self._context_lock = threading.Lock()
+        self._payment_context: dict[str, tuple[str, str]] = {}
         self._http = HttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -148,6 +169,22 @@ class OrangeMoneyClient:
             retry_backoff=config.retry_backoff,
             client=client,
         )
+
+    def _record_payment_context(
+        self, pay_token: str, order_id: str, amount: str
+    ) -> None:
+        with self._context_lock:
+            if (
+                pay_token not in self._payment_context
+                and len(self._payment_context) >= _MAX_PAYMENT_CONTEXT
+            ):
+                oldest = next(iter(self._payment_context))
+                del self._payment_context[oldest]
+            self._payment_context[pay_token] = (order_id, amount)
+
+    def _lookup_payment_context(self, pay_token: str) -> tuple[str, str] | None:
+        with self._context_lock:
+            return self._payment_context.get(pay_token)
 
     def _get_token(self) -> str:
         cached = self._cache.get("orange_money")
@@ -196,9 +233,10 @@ class OrangeMoneyClient:
                 "return_url, cancel_url, and notif_url are required for Orange Money"
             )
         ref = order_id or generate_reference_id()
+        validate_header_value(ref, field_name="order_id")
         response = self._http.request(
             "POST",
-            "/orange-money-webpay/dev/v1/webpayment",
+            f"{self._config.api_path_prefix}/webpayment",
             headers={
                 "Authorization": f"Bearer {self._get_token()}",
                 "Content-Type": "application/json",
@@ -217,22 +255,33 @@ class OrangeMoneyClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
         )
-        return parse_json_dict(response)
+        res = parse_json_dict(response)
+        pay_token = res.get("pay_token")
+        if isinstance(pay_token, str) and pay_token:
+            self._record_payment_context(pay_token, ref, validated_amount)
+        return res
 
     def get_transaction_status(
         self, order_id: str, amount: str, pay_token: str
     ) -> dict[str, Any]:
         """Check Orange Money transaction status."""
+        if not isinstance(order_id, str) or not order_id.strip():
+            raise ValueError("order_id must be a non-empty string")
+        if not isinstance(pay_token, str) or not pay_token.strip():
+            raise ValueError("pay_token must be a non-empty string")
+        validate_header_value(order_id, field_name="order_id")
+        validate_header_value(pay_token, field_name="pay_token")
+        validated_amount = validate_amount(amount)
         response = self._http.request(
             "POST",
-            "/orange-money-webpay/dev/v1/transactionstatus",
+            f"{self._config.api_path_prefix}/transactionstatus",
             headers={
                 "Authorization": f"Bearer {self._get_token()}",
                 "Content-Type": "application/json",
             },
             json={
                 "order_id": order_id,
-                "amount": amount,
+                "amount": validated_amount,
                 "pay_token": pay_token,
             },
             product_name="orange_money",
@@ -260,6 +309,8 @@ class AsyncOrangeMoneyClient:
         self._config = config
         self._cache = TokenCache()
         self._token_lock = asyncio.Lock()
+        self._context_lock = threading.Lock()
+        self._payment_context: dict[str, tuple[str, str]] = {}
         self._http = AsyncHttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -267,6 +318,22 @@ class AsyncOrangeMoneyClient:
             retry_backoff=config.retry_backoff,
             client=client,
         )
+
+    def _record_payment_context(
+        self, pay_token: str, order_id: str, amount: str
+    ) -> None:
+        with self._context_lock:
+            if (
+                pay_token not in self._payment_context
+                and len(self._payment_context) >= _MAX_PAYMENT_CONTEXT
+            ):
+                oldest = next(iter(self._payment_context))
+                del self._payment_context[oldest]
+            self._payment_context[pay_token] = (order_id, amount)
+
+    def _lookup_payment_context(self, pay_token: str) -> tuple[str, str] | None:
+        with self._context_lock:
+            return self._payment_context.get(pay_token)
 
     async def _get_token(self) -> str:
         cached = self._cache.get("orange_money")
@@ -314,9 +381,10 @@ class AsyncOrangeMoneyClient:
                 "return_url, cancel_url, and notif_url are required for Orange Money"
             )
         ref = order_id or generate_reference_id()
+        validate_header_value(ref, field_name="order_id")
         response = await self._http.request(
             "POST",
-            "/orange-money-webpay/dev/v1/webpayment",
+            f"{self._config.api_path_prefix}/webpayment",
             headers={
                 "Authorization": f"Bearer {await self._get_token()}",
                 "Content-Type": "application/json",
@@ -335,21 +403,32 @@ class AsyncOrangeMoneyClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
         )
-        return parse_json_dict(response)
+        res = parse_json_dict(response)
+        pay_token = res.get("pay_token")
+        if isinstance(pay_token, str) and pay_token:
+            self._record_payment_context(pay_token, ref, validated_amount)
+        return res
 
     async def get_transaction_status(
         self, order_id: str, amount: str, pay_token: str
     ) -> dict[str, Any]:
+        if not isinstance(order_id, str) or not order_id.strip():
+            raise ValueError("order_id must be a non-empty string")
+        if not isinstance(pay_token, str) or not pay_token.strip():
+            raise ValueError("pay_token must be a non-empty string")
+        validate_header_value(order_id, field_name="order_id")
+        validate_header_value(pay_token, field_name="pay_token")
+        validated_amount = validate_amount(amount)
         response = await self._http.request(
             "POST",
-            "/orange-money-webpay/dev/v1/transactionstatus",
+            f"{self._config.api_path_prefix}/transactionstatus",
             headers={
                 "Authorization": f"Bearer {await self._get_token()}",
                 "Content-Type": "application/json",
             },
             json={
                 "order_id": order_id,
-                "amount": amount,
+                "amount": validated_amount,
                 "pay_token": pay_token,
             },
             product_name="orange_money",
@@ -410,17 +489,28 @@ class OrangeMoneyProvider:
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
-        res = self._client.get_transaction_status(reference_id, "0", reference_id)
+        validate_operation_kind(kind)
+        if kind == "disbursement":
+            raise NotImplementedError("Orange Money adapter supports collections only")
+        ctx = self._client._lookup_payment_context(reference_id)
+        if ctx is None:
+            raise PyMomoSDKError(
+                "Orange Money status queries require order_id and amount; "
+                "call client.get_transaction_status(order_id, amount, pay_token) directly"
+            )
+        order_id, amount = ctx
+        res = self._client.get_transaction_status(order_id, amount, reference_id)
         return PaymentResult(
             provider=self.name,
             reference_id=reference_id,
             status=_map_orange_status(str(res.get("status", "PENDING"))),
+            amount=amount,
+            external_id=order_id,
             raw=res,
         )
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         raise NotImplementedError("Orange Money Web Payment does not expose balances")
 
 
@@ -466,15 +556,26 @@ class AsyncOrangeMoneyProvider:
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
-        res = await self._client.get_transaction_status(reference_id, "0", reference_id)
+        validate_operation_kind(kind)
+        if kind == "disbursement":
+            raise NotImplementedError("Orange Money adapter supports collections only")
+        ctx = self._client._lookup_payment_context(reference_id)
+        if ctx is None:
+            raise PyMomoSDKError(
+                "Orange Money status queries require order_id and amount; "
+                "call client.get_transaction_status(order_id, amount, pay_token) directly"
+            )
+        order_id, amount = ctx
+        res = await self._client.get_transaction_status(order_id, amount, reference_id)
         return PaymentResult(
             provider=self.name,
             reference_id=reference_id,
             status=_map_orange_status(str(res.get("status", "PENDING"))),
+            amount=amount,
+            external_id=order_id,
             raw=res,
         )
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         raise NotImplementedError("Orange Money Web Payment does not expose balances")

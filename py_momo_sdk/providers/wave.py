@@ -15,6 +15,7 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_operation_kind,
 )
 from py_momo_sdk.utils import (
     encode_path_segment,
@@ -119,9 +120,20 @@ def _map_wave_status(raw_status: str) -> NormalizedStatus:
         return NormalizedStatus.SUCCEEDED
     if normalized in ("expired",):
         return NormalizedStatus.EXPIRED
-    if normalized in ("cancelled", "canceled", "failed", "reversed"):
+    if normalized in ("reversed",):
+        return NormalizedStatus.REVERSED
+    if normalized in ("cancelled", "canceled", "failed"):
         return NormalizedStatus.FAILED
     return NormalizedStatus.PENDING
+
+
+def _map_wave_session_status(session: WaveCheckoutSession) -> NormalizedStatus:
+    mapped = _map_wave_status(session.payment_status)
+    if mapped in (NormalizedStatus.SUCCEEDED, NormalizedStatus.REVERSED):
+        return mapped
+    if session.checkout_status.strip().lower() == "expired":
+        return NormalizedStatus.EXPIRED
+    return mapped
 
 
 class WaveClient:
@@ -410,7 +422,7 @@ class WaveProvider:
         return PaymentResult(
             provider=self.name,
             reference_id=session.id,
-            status=_map_wave_status(session.payment_status),
+            status=_map_wave_session_status(session),
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
@@ -438,6 +450,7 @@ class WaveProvider:
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             payout = self._client.get_payout(reference_id)
             return PaymentResult(
@@ -453,7 +466,7 @@ class WaveProvider:
         return PaymentResult(
             provider=self.name,
             reference_id=session.id,
-            status=_map_wave_status(session.payment_status),
+            status=_map_wave_session_status(session),
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
@@ -462,7 +475,7 @@ class WaveProvider:
         )
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         balance = self._client.get_balance()
         return BalanceResult(
             provider=self.name,
@@ -497,7 +510,7 @@ class AsyncWaveProvider:
         return PaymentResult(
             provider=self.name,
             reference_id=session.id,
-            status=_map_wave_status(session.payment_status),
+            status=_map_wave_session_status(session),
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
@@ -525,6 +538,7 @@ class AsyncWaveProvider:
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             payout = await self._client.get_payout(reference_id)
             return PaymentResult(
@@ -540,7 +554,7 @@ class AsyncWaveProvider:
         return PaymentResult(
             provider=self.name,
             reference_id=session.id,
-            status=_map_wave_status(session.payment_status),
+            status=_map_wave_session_status(session),
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
@@ -549,7 +563,7 @@ class AsyncWaveProvider:
         )
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         balance = await self._client.get_balance()
         return BalanceResult(
             provider=self.name,

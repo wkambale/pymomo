@@ -20,6 +20,7 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_operation_kind,
 )
 from py_momo_sdk.utils import (
     build_basic_auth_header,
@@ -162,7 +163,7 @@ class MpesaStkQueryResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     checkout_request_id: str = Field(default="", alias="CheckoutRequestID")
-    result_code: str | int = Field(default="", alias="ResultCode")
+    result_code: str | int | None = Field(default=None, alias="ResultCode")
     result_desc: str = Field(default="", alias="ResultDesc")
 
 
@@ -504,12 +505,13 @@ class AsyncMpesaClient:
 
 
 def _map_mpesa_query(reference_id: str, result: MpesaStkQueryResponse) -> PaymentResult:
-    code = str(result.result_code)
-    status = (
-        NormalizedStatus.SUCCEEDED
-        if code == "0"
-        else NormalizedStatus.FAILED if code else NormalizedStatus.PENDING
-    )
+    code = "" if result.result_code is None else str(result.result_code).strip()
+    if not code:
+        status = NormalizedStatus.PENDING
+    elif code == "0":
+        status = NormalizedStatus.SUCCEEDED
+    else:
+        status = NormalizedStatus.FAILED
     return PaymentResult(
         provider="mpesa",
         reference_id=reference_id,
@@ -552,6 +554,7 @@ class MpesaProvider:
             status=status,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or None,
             reason=res.response_description or None,
             raw=res.model_dump(mode="json"),
         )
@@ -575,6 +578,7 @@ class MpesaProvider:
             status=status,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or None,
             reason=res.response_description or None,
             raw=res.model_dump(mode="json"),
         )
@@ -582,11 +586,15 @@ class MpesaProvider:
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
+        validate_operation_kind(kind)
+        if kind == "disbursement":
+            raise NotImplementedError(
+                "M-Pesa B2C disbursement status uses asynchronous ResultURL callbacks"
+            )
         return _map_mpesa_query(reference_id, self._client.stk_query(reference_id))
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         raise NotImplementedError("M-Pesa balance queries use asynchronous callbacks")
 
 
@@ -623,6 +631,7 @@ class AsyncMpesaProvider:
             status=status,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or None,
             reason=res.response_description or None,
             raw=res.model_dump(mode="json"),
         )
@@ -646,6 +655,7 @@ class AsyncMpesaProvider:
             status=status,
             amount=request.amount,
             currency=request.currency,
+            external_id=request.external_id or None,
             reason=res.response_description or None,
             raw=res.model_dump(mode="json"),
         )
@@ -653,10 +663,14 @@ class AsyncMpesaProvider:
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
-        del kind
+        validate_operation_kind(kind)
+        if kind == "disbursement":
+            raise NotImplementedError(
+                "M-Pesa B2C disbursement status uses asynchronous ResultURL callbacks"
+            )
         res = await self._client.stk_query(reference_id)
         return _map_mpesa_query(reference_id, res)
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         raise NotImplementedError("M-Pesa balance queries use asynchronous callbacks")

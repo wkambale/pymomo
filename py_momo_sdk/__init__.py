@@ -5,7 +5,7 @@ from py_momo_sdk._async.airtel.client import AsyncAirtelClient
 from py_momo_sdk._async.client import AsyncPyMomoSDK
 from py_momo_sdk._async.sandbox import AsyncSandboxProvisioner
 from py_momo_sdk.airtel.client import AirtelClient
-from py_momo_sdk.airtel.config import AirtelConfig
+from py_momo_sdk.airtel.config import AirtelConfig, encrypt_airtel_pin
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.client import PyMomoSDK
 from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
@@ -177,6 +177,7 @@ __all__ = [
     "WebhookVerificationError",
     "create_asgi_webhook_verifier",
     "create_mock_server",
+    "encrypt_airtel_pin",
     "start_mock_server_thread",
     "verify_constant_time_token",
     "verify_django_webhook_request",

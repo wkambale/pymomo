@@ -204,7 +204,10 @@ def test_airtel_disbursement_flow(httpx_mock: HTTPXMock) -> None:
         reqs = httpx_mock.get_requests()
         disb_req = next(r for r in reqs if r.url.path == "/standard/v1/disbursements/")
         sent_body = json.loads(disb_req.read().decode("utf-8"))
-        assert sent_body["number"] == "256701987654"
+        assert sent_body["payee"]["msisdn"] == "256701987654"
+        assert sent_body["transaction"]["amount"] == "10000"
+        assert sent_body["transaction"]["id"] == ref
+        assert sent_body["reference"] == ref
         assert sent_body["pin"] == "9999"
 
         # Mock status query response
@@ -539,7 +542,9 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
 def test_airtel_transaction_response_status_states() -> None:
     """Verify transaction status takes precedence over API envelope result_code."""
     from py_momo_sdk.airtel.models import (
+        AirtelDisbursementPayee,
         AirtelDisbursementRequest,
+        AirtelDisbursementTransaction,
         AirtelTransactionResponse,
     )
 
@@ -595,10 +600,10 @@ def test_airtel_transaction_response_status_states() -> None:
 
     # AirtelDisbursementRequest must redact PIN in repr and str
     req = AirtelDisbursementRequest(
-        amount="5000",
-        number="256701987654",
+        payee=AirtelDisbursementPayee(msisdn="256701987654"),
         reference="ref-1",
         pin="secret-pin-4321",
+        transaction=AirtelDisbursementTransaction(amount="5000", id="ref-1"),
     )
     assert "secret-pin-4321" not in repr(req)
     assert "secret-pin-4321" not in str(req)

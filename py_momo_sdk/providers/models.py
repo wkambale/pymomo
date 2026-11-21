@@ -5,7 +5,38 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from py_momo_sdk.utils import validate_amount, validate_callback_url, validate_currency
+from py_momo_sdk.utils import (
+    validate_amount,
+    validate_callback_url,
+    validate_currency,
+    validate_header_value,
+)
+
+
+def validate_email_address(email: str) -> str:
+    """Validate that an email address is non-empty, header-safe, and well-formed."""
+    if not isinstance(email, str) or not email.strip():
+        raise ValueError("email must be a non-empty string")
+    cleaned = email.strip()
+    validate_header_value(cleaned, field_name="email")
+    if (
+        any(ch.isspace() for ch in cleaned)
+        or cleaned.count("@") != 1
+        or cleaned.startswith("@")
+        or cleaned.endswith("@")
+    ):
+        raise ValueError("email must be a valid email address")
+    domain = cleaned.split("@", 1)[1]
+    if "." not in domain or domain.startswith(".") or domain.endswith("."):
+        raise ValueError("email must be a valid email address")
+    return cleaned
+
+
+def validate_operation_kind(kind: str) -> str:
+    """Validate that a status or balance operation kind is supported."""
+    if kind not in ("collection", "disbursement"):
+        raise ValueError("kind must be 'collection' or 'disbursement'")
+    return kind
 
 
 class NormalizedStatus(str, Enum):
@@ -40,6 +71,7 @@ class PaymentRequest(BaseModel):
     amount: str
     currency: str
     payer_msisdn: str
+    payer_email: str | None = None
     external_id: str = ""
     payer_message: str = ""
     payee_note: str = ""
@@ -55,6 +87,13 @@ class PaymentRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("payer_email")
+    @classmethod
+    def _check_payer_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_email_address(value)
 
     @field_validator("callback_url")
     @classmethod
@@ -72,6 +111,7 @@ class DisbursementRequest(BaseModel):
     amount: str
     currency: str
     payee_msisdn: str
+    payee_bank_code: str | None = None
     external_id: str = ""
     payer_message: str = ""
     payee_note: str = ""
@@ -87,6 +127,15 @@ class DisbursementRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("payee_bank_code")
+    @classmethod
+    def _check_payee_bank_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("payee_bank_code must not be blank")
+        return validate_header_value(value.strip(), field_name="payee_bank_code")
 
     @field_validator("callback_url")
     @classmethod

@@ -10,6 +10,7 @@ from py_momo_sdk.providers.models import (
     PaymentRequest,
     PaymentResult,
     ProviderCapabilities,
+    validate_operation_kind,
 )
 
 _AIRTEL_CAPABILITIES = ProviderCapabilities(
@@ -22,15 +23,25 @@ _AIRTEL_CAPABILITIES = ProviderCapabilities(
 )
 
 
+def _check_airtel_currency(request_currency: str, configured_currency: str) -> str:
+    expected = configured_currency.upper()
+    actual = request_currency.upper()
+    if actual != expected:
+        raise ValueError(
+            f"Request currency {actual!r} does not match configured Airtel currency {expected!r}"
+        )
+    return expected
+
+
 def _map_airtel_result(
     reference_id: str, result: AirtelTransactionResponse
 ) -> PaymentResult:
     if result.is_successful():
         status = NormalizedStatus.SUCCEEDED
-    elif result.is_pending():
-        status = NormalizedStatus.PENDING
-    else:
+    elif result.is_failed():
         status = NormalizedStatus.FAILED
+    else:
+        status = NormalizedStatus.PENDING
 
     tx = result.data.transaction
     return PaymentResult(
@@ -61,6 +72,9 @@ class AirtelMoneyProvider:
         return _AIRTEL_CAPABILITIES
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
+        currency = _check_airtel_currency(
+            request.currency, self._client._config.currency
+        )
         ref = self._client.collection.request_to_pay(
             amount=request.amount,
             payer_msisdn=request.payer_msisdn,
@@ -71,10 +85,14 @@ class AirtelMoneyProvider:
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
-            currency=request.currency,
+            currency=currency,
+            external_id=request.external_id or None,
         )
 
     def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        currency = _check_airtel_currency(
+            request.currency, self._client._config.currency
+        )
         ref = self._client.disbursement.transfer(
             amount=request.amount,
             payee_msisdn=request.payee_msisdn,
@@ -85,12 +103,14 @@ class AirtelMoneyProvider:
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
-            currency=request.currency,
+            currency=currency,
+            external_id=request.external_id or None,
         )
 
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             result = self._client.disbursement.get_transfer_status(reference_id)
         else:
@@ -98,7 +118,7 @@ class AirtelMoneyProvider:
         return _map_airtel_result(reference_id, result)
 
     def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         balance = self._client.disbursement.get_balance()
         wallet = balance.data.wallet
         return BalanceResult(
@@ -124,6 +144,9 @@ class AsyncAirtelMoneyProvider:
         return _AIRTEL_CAPABILITIES
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
+        currency = _check_airtel_currency(
+            request.currency, self._client._config.currency
+        )
         ref = await self._client.collection.request_to_pay(
             amount=request.amount,
             payer_msisdn=request.payer_msisdn,
@@ -134,10 +157,14 @@ class AsyncAirtelMoneyProvider:
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
-            currency=request.currency,
+            currency=currency,
+            external_id=request.external_id or None,
         )
 
     async def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        currency = _check_airtel_currency(
+            request.currency, self._client._config.currency
+        )
         ref = await self._client.disbursement.transfer(
             amount=request.amount,
             payee_msisdn=request.payee_msisdn,
@@ -148,12 +175,14 @@ class AsyncAirtelMoneyProvider:
             reference_id=ref,
             status=NormalizedStatus.PENDING,
             amount=request.amount,
-            currency=request.currency,
+            currency=currency,
+            external_id=request.external_id or None,
         )
 
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
+        validate_operation_kind(kind)
         if kind == "disbursement":
             result = await self._client.disbursement.get_transfer_status(reference_id)
         else:
@@ -161,7 +190,7 @@ class AsyncAirtelMoneyProvider:
         return _map_airtel_result(reference_id, result)
 
     async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
-        del kind
+        validate_operation_kind(kind)
         balance = await self._client.disbursement.get_balance()
         wallet = balance.data.wallet
         return BalanceResult(
