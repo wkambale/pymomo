@@ -120,3 +120,23 @@ def test_config_validation_rules() -> None:
             PyMomoSDKConfig.from_env()
     finally:
         os.environ.pop("PY_MOMO_SDK_TIMEOUT", None)
+
+    # Empty/blank ProductConfig fields, non-int max_retries, inf retry_backoff, bad base_url rejected
+    for kwargs in (
+        {"subscription_key": "", "api_user": "user", "api_key": "key"},
+        {"subscription_key": "   ", "api_user": "user", "api_key": "key"},
+        {"subscription_key": "sub", "api_user": "", "api_key": "key"},
+        {"subscription_key": "sub", "api_user": "user", "api_key": ""},
+    ):
+        with pytest.raises(ValueError, match="non-empty string"):
+            ProductConfig(**kwargs)
+
+    with pytest.raises((TypeError, ValueError), match="max_retries"):
+        PyMomoSDKConfig(max_retries=1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="retry_backoff"):
+        PyMomoSDKConfig(retry_backoff=float("inf"))
+
+    from py_momo_sdk.exceptions import PyMomoSDKError
+
+    with pytest.raises(PyMomoSDKError, match="HTTPS"):
+        PyMomoSDKConfig(base_url="http://insecure.example.com")

@@ -14,8 +14,12 @@ def _validate_external_id(value: str) -> str:
 
 
 def _validate_positive_expires_in(value: object) -> object:
-    if type(value) is bool:
+    if type(value) in (bool, float):
         raise ValueError("expires_in must be a positive integer")
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped.isascii() or not stripped.isdigit():
+            raise ValueError("expires_in must be a positive integer")
     if isinstance(value, int) and value <= 0:
         raise ValueError("expires_in must be a positive integer")
     return value
@@ -189,7 +193,7 @@ class TokenResponse(BaseModel):
 
     access_token: str
     token_type: str
-    expires_in: int
+    expires_in: int = Field(gt=0)
 
     @field_validator("access_token")
     @classmethod
@@ -218,7 +222,7 @@ class OAuth2TokenResponse(BaseModel):
 
     access_token: str
     token_type: str
-    expires_in: int
+    expires_in: int = Field(gt=0)
     scope: str | None = None
     refresh_token: str | None = None
     refresh_token_expired_in: int | None = None
@@ -229,6 +233,15 @@ class OAuth2TokenResponse(BaseModel):
         if not value or not value.strip():
             raise ValueError("access_token must not be empty")
         return validate_header_value(value, field_name="access_token")
+
+    @field_validator("refresh_token")
+    @classmethod
+    def _check_refresh_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("refresh_token must not be empty")
+        return validate_header_value(value, field_name="refresh_token")
 
     @field_validator("expires_in", mode="before")
     @classmethod
@@ -251,8 +264,13 @@ class BcAuthorizeResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     auth_req_id: str = Field(alias="auth_req_id")
-    expires_in: int = Field(alias="expires_in")
+    expires_in: int = Field(gt=0, alias="expires_in")
     interval: int | None = Field(default=None, alias="interval")
+
+    @field_validator("expires_in", mode="before")
+    @classmethod
+    def _check_expires_in(cls, value: object) -> object:
+        return _validate_positive_expires_in(value)
 
 
 class Balance(BaseModel):
@@ -314,6 +332,13 @@ class ApiKeyResult(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     api_key: str = Field(alias="apiKey")
+
+    @field_validator("api_key")
+    @classmethod
+    def _check_api_key(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("api_key must not be empty")
+        return validate_header_value(value, field_name="api_key")
 
     def __repr__(self) -> str:
         return "ApiKeyResult(api_key=<redacted>)"

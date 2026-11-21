@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.config import SANDBOX, PyMomoSDKConfig
+from py_momo_sdk.config import PRODUCTION_BASE_URL, SANDBOX, PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.models import ApiKeyResult, ApiUserInfo
 from py_momo_sdk.utils import (
     generate_reference_id,
     validate_callback_host,
+    validate_header_value,
     validate_reference_id,
 )
 
@@ -42,22 +43,41 @@ class AsyncSandboxProvisioner:
             self._config = config
             self._http = cast(AsyncHttpClient, http)
             self._subscription_key = self._extract_sub_key(self._config)
+        elif (
+            isinstance(subscription_key, str)
+            and isinstance(config, AsyncHttpClient)
+            and http is None
+        ):
+            # Positional invocation: AsyncSandboxProvisioner(subscription_key, http)
+            self._subscription_key = subscription_key
+            self._config = None
+            self._http = config
         else:
             # Standard instantiation: SandboxProvisioner(subscription_key, config, http)
-            self._subscription_key = subscription_key or ""
+            self._subscription_key = (
+                subscription_key if isinstance(subscription_key, str) else ""
+            )
             self._config = cast("PyMomoSDKConfig | None", config)
             self._http = cast(AsyncHttpClient, http)
 
-        if self._http is None:
+        if not isinstance(self._http, AsyncHttpClient):
             raise PyMomoSDKError("HTTP client is required for sandbox provisioning")
-        if self._config is not None and self._config.environment != SANDBOX:
+        if self._config is not None:
+            if not isinstance(self._config, PyMomoSDKConfig):
+                raise PyMomoSDKError("Invalid configuration for sandbox provisioning")
+            if self._config.environment != SANDBOX:
+                raise PyMomoSDKError(
+                    "AsyncSandboxProvisioner can only be used with the sandbox environment"
+                )
+        elif str(self._http._client.base_url).rstrip("/") == PRODUCTION_BASE_URL:
             raise PyMomoSDKError(
                 "AsyncSandboxProvisioner can only be used with the sandbox environment"
             )
-        if not self._subscription_key:
+        if not self._subscription_key or not self._subscription_key.strip():
             raise MissingCredentialsError(
                 "Subscription key is required for sandbox provisioning"
             )
+        validate_header_value(self._subscription_key, field_name="subscription_key")
 
     def __repr__(self) -> str:
         env = self._config.environment if self._config else None

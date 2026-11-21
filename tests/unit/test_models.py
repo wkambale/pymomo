@@ -92,12 +92,31 @@ def test_secret_models_redact_credentials_in_repr_and_str() -> None:
     for bad_token in ("", "   ", "tok\r\n"):
         with pytest.raises(ValidationError):
             TokenResponse(access_token=bad_token, token_type="Bearer", expires_in=3600)
-    for bad_exp in (0, -10, True):
+    for bad_exp in (0, -10, True, False, "-5", "0", -5.0, 0.0, 1.5, "\u0665"):
         with pytest.raises(ValidationError):
-            TokenResponse(access_token="valid", token_type="Bearer", expires_in=bad_exp)
+            TokenResponse(
+                access_token="valid", token_type="Bearer", expires_in=bad_exp  # type: ignore[arg-type]
+            )
         with pytest.raises(ValidationError):
             OAuth2TokenResponse(
-                access_token="valid", token_type="Bearer", expires_in=bad_exp
+                access_token="valid", token_type="Bearer", expires_in=bad_exp  # type: ignore[arg-type]
+            )
+
+    from py_momo_sdk.models import BcAuthorizeResponse
+
+    for bad_exp in (0, -5, True, "-5", 1.5):
+        with pytest.raises(ValidationError):
+            BcAuthorizeResponse(auth_req_id="req-1", expires_in=bad_exp)  # type: ignore[arg-type]
+
+    for bad_secret in ("", "   ", "bad\r\nkey"):
+        with pytest.raises(ValidationError):
+            ApiKeyResult(apiKey=bad_secret)
+        with pytest.raises(ValidationError):
+            OAuth2TokenResponse(
+                access_token="valid",
+                token_type="Bearer",
+                expires_in=3600,
+                refresh_token=bad_secret,
             )
 
 

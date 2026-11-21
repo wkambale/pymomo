@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from py_momo_sdk.exceptions import MissingCredentialsError
 from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
+    validate_base_url,
     validate_callback_url,
     validate_environment_name,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 
@@ -40,9 +43,14 @@ class ProductConfig:
     callback_url: str | None = None
 
     def __post_init__(self) -> None:
-        validate_header_value(self.subscription_key, field_name="subscription_key")
-        validate_header_value(self.api_user, field_name="api_user")
-        validate_header_value(self.api_key, field_name="api_key")
+        for field_name, val in (
+            ("subscription_key", self.subscription_key),
+            ("api_user", self.api_user),
+            ("api_key", self.api_key),
+        ):
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f"{field_name} must be a non-empty string")
+            validate_header_value(val, field_name=field_name)
         if self.callback_url is not None:
             validate_callback_url(self.callback_url)
 
@@ -70,18 +78,14 @@ class PyMomoSDKConfig:
     def __post_init__(self) -> None:
         validate_environment_name(self.environment)
         self.timeout = validate_timeout(self.timeout)
-        if isinstance(self.max_retries, bool) or self.max_retries < 0:
-            raise ValueError("max_retries must be a non-negative integer")
-        if (
-            isinstance(self.retry_backoff, bool)
-            or self.retry_backoff <= 0
-            or self.retry_backoff != self.retry_backoff
-        ):
-            raise ValueError("retry_backoff must be a positive finite number")
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
         if self.base_url is None:
             self.base_url = (
                 SANDBOX_BASE_URL if self.environment == SANDBOX else PRODUCTION_BASE_URL
             )
+        else:
+            validate_base_url(self.base_url)
 
     @staticmethod
     def _product_from_env(prefix: str, product_label: str) -> ProductConfig | None:

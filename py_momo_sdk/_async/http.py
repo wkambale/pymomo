@@ -23,7 +23,13 @@ from py_momo_sdk.http import (
     _is_retryable_request,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
-from py_momo_sdk.utils import validate_base_url, validate_request_path
+from py_momo_sdk.utils import (
+    validate_base_url,
+    validate_max_retries,
+    validate_request_path,
+    validate_retry_backoff,
+    validate_timeout,
+)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -45,12 +51,13 @@ class AsyncHttpClient:
         telemetry: TelemetryHook | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
-        self._max_retries = max_retries
-        self._retry_backoff = retry_backoff
+        validated_timeout = validate_timeout(timeout)
+        self._max_retries = validate_max_retries(max_retries)
+        self._retry_backoff = validate_retry_backoff(retry_backoff)
         self._telemetry = telemetry
         self._client = client or httpx.AsyncClient(
             base_url=validated_url,
-            timeout=timeout,
+            timeout=validated_timeout,
             follow_redirects=False,
         )
 
