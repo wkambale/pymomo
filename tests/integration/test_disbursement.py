@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -32,10 +34,30 @@ def test_disbursement_transfer_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) ->
     ref_id = client.disbursement.transfer(
         amount="150.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256 771-234-567",
         external_id="ext-trans-1",
+        payer_message="Disb msg",
+        payee_note="Disb note",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v1_0/transfer"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-disbursement-sub-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-disbursement-token"
+    assert json.loads(req.read().decode("utf-8")) == {
+        "amount": "150.00",
+        "currency": "UGX",
+        "externalId": "ext-trans-1",
+        "payee": {"partyIdType": "MSISDN", "partyId": "256771234567"},
+        "payerMessage": "Disb msg",
+        "payeeNote": "Disb note",
+    }
 
 
 @pytest.mark.asyncio
@@ -53,10 +75,19 @@ async def test_disbursement_transfer_async(
     ref_id = await async_client.disbursement.transfer(
         amount="300.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256-771-234-567",
         external_id="ext-trans-2",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v1_0/transfer"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-disbursement-sub-key"
+    assert json.loads(req.read().decode("utf-8"))["payee"]["partyId"] == "256771234567"
 
 
 def test_disbursement_get_transfer_status_sync(
@@ -94,10 +125,20 @@ def test_disbursement_deposit_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> 
     ref_id = client.disbursement.deposit(
         amount="250.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256 771-234-567",
         external_id="ext-dep-1",
     )
     assert len(ref_id) == 36
+    dep_req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v2_0/deposit"
+    )
+    assert dep_req.headers["X-Reference-Id"] == ref_id
+    assert dep_req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert (
+        json.loads(dep_req.read().decode("utf-8"))["payee"]["partyId"] == "256771234567"
+    )
 
 
 def test_disbursement_refund_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
@@ -117,6 +158,15 @@ def test_disbursement_refund_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> N
         external_id="ext-ref-1",
     )
     assert len(ref_id) == 36
+    ref_req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v2_0/refund"
+    )
+    assert ref_req.headers["X-Reference-Id"] == ref_id
+    sent_ref = json.loads(ref_req.read().decode("utf-8"))
+    assert sent_ref["referenceIdToRefund"] == ref_to_refund
+    assert sent_ref["externalId"] == "ext-ref-1"
 
 
 def test_disbursement_get_balance_sync(
@@ -191,10 +241,19 @@ async def test_disbursement_deposit_async(
     ref_id = await async_client.disbursement.deposit(
         amount="250.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256 771-234-567",
         external_id="ext-dep-async",
     )
     assert len(ref_id) == 36
+    dep_req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v2_0/deposit"
+    )
+    assert dep_req.headers["X-Reference-Id"] == ref_id
+    assert (
+        json.loads(dep_req.read().decode("utf-8"))["payee"]["partyId"] == "256771234567"
+    )
 
 
 @pytest.mark.asyncio
@@ -241,6 +300,16 @@ async def test_disbursement_refund_async(
         external_id="ext-ref-async",
     )
     assert len(ref_id) == 36
+    ref_req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/disbursement/v2_0/refund"
+    )
+    assert ref_req.headers["X-Reference-Id"] == ref_id
+    assert (
+        json.loads(ref_req.read().decode("utf-8"))["referenceIdToRefund"]
+        == ref_to_refund
+    )
 
 
 @pytest.mark.asyncio

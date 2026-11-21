@@ -204,3 +204,33 @@ def test_verify_timestamped_hmac_signature() -> None:
         WebhookHandler.verify_timestamped_hmac_signature(
             payload, "bad-header", secret, tolerance_seconds=300, now=ts
         )
+
+    # Multi-v1 key rotation succeeds when any v1 signature matches
+    rotated_header = f"t={ts},v1={'0' * 64},v1={sig}"
+    WebhookHandler.verify_timestamped_hmac_signature(
+        payload, rotated_header, secret, tolerance_seconds=300, now=ts + 5
+    )
+
+    # Unsupported algorithms, empty secrets, non-bytes payloads, bad tolerances, and future skew rejected
+    for bad_alg in ("sha1", "md5"):
+        with pytest.raises((ValueError, WebhookVerificationError)):
+            WebhookHandler.verify_timestamped_hmac_signature(
+                payload, header, secret, algorithm=bad_alg, now=ts
+            )
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, header, "", tolerance_seconds=300, now=ts
+        )
+    with pytest.raises((TypeError, WebhookVerificationError)):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            "not-bytes", header, secret, tolerance_seconds=300, now=ts  # type: ignore[arg-type]
+        )
+    for bad_tol in (0, -10, float("inf")):
+        with pytest.raises((TypeError, ValueError, WebhookVerificationError)):
+            WebhookHandler.verify_timestamped_hmac_signature(
+                payload, header, secret, tolerance_seconds=bad_tol, now=ts  # type: ignore[arg-type]
+            )
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t={ts + 10000},v1={sig}", secret, tolerance_seconds=300, now=ts
+        )

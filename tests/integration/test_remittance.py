@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -32,10 +34,31 @@ def test_remittance_transfer_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> N
     ref_id = client.remittance.transfer(
         amount="180.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256 771-234-567",
         external_id="ext-rem-1",
+        payer_message="Remit msg",
+        payee_note="Remit note",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/remittance/v1_0/transfer"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-remittance-sub-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-remittance-token"
+    sent = json.loads(req.read().decode("utf-8"))
+    assert sent == {
+        "amount": "180.00",
+        "currency": "UGX",
+        "externalId": "ext-rem-1",
+        "payee": {"partyIdType": "MSISDN", "partyId": "256771234567"},
+        "payerMessage": "Remit msg",
+        "payeeNote": "Remit note",
+    }
 
 
 @pytest.mark.asyncio
@@ -53,10 +76,23 @@ async def test_remittance_transfer_async(
     ref_id = await async_client.remittance.transfer(
         amount="360.00",
         currency="UGX",
-        payee_msisdn="256771234567",
+        payee_msisdn="+256-771-234-567",
         external_id="ext-rem-2",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/remittance/v1_0/transfer"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-remittance-sub-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-remittance-token"
+    sent = json.loads(req.read().decode("utf-8"))
+    assert sent["externalId"] == "ext-rem-2"
+    assert sent["payee"] == {"partyIdType": "MSISDN", "partyId": "256771234567"}
 
 
 def test_remittance_get_transfer_status_sync(

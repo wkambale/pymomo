@@ -385,3 +385,96 @@ def test_cli_base_url_override(httpx_mock: HTTPXMock) -> None:
     data = json.loads(result.stdout)
     assert data["availableBalance"] == "99.50"
     assert data["currency"] == "UGX"
+
+
+def test_cli_env_vars_security_rejections_carrier_and_mock(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Test CLI PY_MOMO_SDK_* env vars, non-HTTPS/UUID rejections, carrier, and mock (#65)."""
+    from unittest.mock import MagicMock
+
+    # 1. Load credentials strictly via PY_MOMO_SDK_* environment variables (zero secret flags)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={
+            "access_token": "env-tok",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/account/balance",
+        json={"availableBalance": "777.00", "currency": "EUR"},
+        status_code=200,
+    )
+    env_res = runner.invoke(
+        app,
+        ["collection", "balance"],
+        env={
+            "PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY": "env-sub",
+            "PY_MOMO_SDK_COLLECTION_API_USER": "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "PY_MOMO_SDK_COLLECTION_API_KEY": "env-key",
+        },
+    )
+    assert env_res.exit_code == 0
+    assert json.loads(env_res.stdout)["availableBalance"] == "777.00"
+
+    # 2. Non-HTTPS --base-url and invalid UUID reference_id rejected cleanly with exit code 1
+    bad_url_res = runner.invoke(
+        app,
+        [
+            "collection",
+            "balance",
+            "--base-url",
+            "http://insecure.example.com",
+        ],
+        env={
+            "PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY": "env-sub",
+            "PY_MOMO_SDK_COLLECTION_API_USER": "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "PY_MOMO_SDK_COLLECTION_API_KEY": "env-key",
+        },
+    )
+    assert bad_url_res.exit_code == 1
+
+    bad_uuid_res = runner.invoke(
+        app,
+        ["collection", "status", "not-a-valid-uuid"],
+        env={
+            "PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY": "env-sub",
+            "PY_MOMO_SDK_COLLECTION_API_USER": "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "PY_MOMO_SDK_COLLECTION_API_KEY": "env-key",
+        },
+    )
+    assert bad_uuid_res.exit_code == 1
+
+    # 3. Carrier detection subcommand
+    carrier_res = runner.invoke(app, ["carrier", "+256771234567"])
+    assert carrier_res.exit_code == 0
+    assert json.loads(carrier_res.stdout) == {
+        "country": "UG",
+        "provider": "mtn_momo",
+    }
+    unknown_res = runner.invoke(app, ["carrier", "12345"])
+    assert unknown_res.exit_code == 0
+    assert json.loads(unknown_res.stdout) == {"country": None, "provider": None}
+
+    # 4. Mock gateway subcommand: clean KeyboardInterrupt shutdown & security rejections
+    fake_server = MagicMock()
+    fake_server.server_address = ("127.0.0.1", 18090)
+    fake_server.serve_forever.side_effect = KeyboardInterrupt()
+    with patch(
+        "py_momo_sdk._cli.create_mock_server",
+        return_value=(fake_server, object()),
+    ):
+        mock_ok = runner.invoke(app, ["mock", "--host", "127.0.0.1", "--port", "18090"])
+    assert mock_ok.exit_code == 0
+    assert "127.0.0.1:18090" in mock_ok.stdout
+    fake_server.server_close.assert_called_once()
+
+    bad_mock_host = runner.invoke(app, ["mock", "--host", "0.0.0.0"])
+    assert bad_mock_host.exit_code == 1
+    bad_mock_status = runner.invoke(app, ["mock", "--status", "INVALID"])
+    assert bad_mock_status.exit_code == 1

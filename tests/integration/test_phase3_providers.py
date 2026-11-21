@@ -1189,3 +1189,182 @@ async def test_async_webhook_parity_mtn_callback_and_active_guard(
         )
         with pytest.raises(PyMomoSDKError, match="boolean 'result'"):
             mtn_client.collection.is_account_holder_active("256771234567")
+
+
+@pytest.mark.asyncio
+async def test_phase3_negative_webhooks_path_traversal_payloads_and_not_implemented(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Test negative webhook verification, path traversal, outbound payloads, and NotImplementedError (#65)."""
+    import json
+    import time
+
+    from py_momo_sdk import WaveClient, WaveConfig, WebhookVerificationError
+
+    raw = b'{"event":"charge.success","amount":5000}'
+    ts = int(time.time())
+
+    # 1. Negative webhook tests across Wave, Paystack, and Flutterwave
+    with WaveClient(WaveConfig(api_key="wk", webhook_secret="wave-sec")) as wc:
+        valid_sig = hmac.new(
+            b"wave-sec", f"{ts}.".encode() + raw, hashlib.sha256
+        ).hexdigest()
+        with pytest.raises(WebhookVerificationError):
+            wc.verify_webhook(b"tampered", f"t={ts},v1={valid_sig}")
+        with pytest.raises(WebhookVerificationError):
+            wc.verify_webhook(raw, f"t={ts - 1000},v1={valid_sig}")
+        for bad_seg in ("../admin", "a/b", "id?x=1", "id#frag"):
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                wc.get_checkout_session(bad_seg)
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                wc.get_payout(bad_seg)
+
+    with (
+        WaveClient(WaveConfig(api_key="wk")) as wc_no_sec,
+        pytest.raises(WebhookVerificationError),
+    ):
+        wc_no_sec.verify_webhook(raw, f"t={ts},v1={'a' * 64}")
+
+    with PaystackClient(PaystackConfig(secret_key="ps-sec")) as psc:
+        sha256_downgrade = hmac.new(b"ps-sec", raw, hashlib.sha256).hexdigest()
+        with pytest.raises(WebhookVerificationError):
+            psc.verify_webhook(raw, sha256_downgrade)
+        with pytest.raises(WebhookVerificationError):
+            psc.verify_webhook(
+                b"tampered", hmac.new(b"ps-sec", raw, hashlib.sha512).hexdigest()
+            )
+        for bad_seg in ("../verify", "a/b", "   "):
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                psc.verify_transaction(bad_seg)
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                psc.verify_transfer(bad_seg)
+
+    with FlutterwaveClient(FlutterwaveConfig(secret_key="flw-sec")) as flw_no_hash:
+        with pytest.raises(WebhookVerificationError):
+            flw_no_hash.verify_webhook_hash("any-hash")
+        for bad_seg in ("../tx", "a/b", "tx?inject=1"):
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                flw_no_hash.verify_by_reference(bad_seg)
+            with pytest.raises(ValueError, match="Invalid path segment"):
+                flw_no_hash.get_transfer(bad_seg)
+
+    # 2. Outbound payload & header assertions (Paystack minor units, Wave Idempotency-Key, M-Pesa Password)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transaction/initialize",
+        json={"status": True, "data": {"reference": "ps-out-1"}},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        json={
+            "id": "pt-out-1",
+            "amount": "250",
+            "currency": "XOF",
+            "status": "succeeded",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "mp-tok", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        json={"CheckoutRequestID": "ws_out_1", "ResponseCode": "0"},
+        status_code=200,
+    )
+
+    with PaystackClient(PaystackConfig(secret_key="ps-sec")) as psc2:
+        psc2.initialize_transaction(
+            email="user@example.test",
+            amount="12.34",
+            currency="NGN",
+            reference="ps-out-1",
+        )
+    with WaveClient(WaveConfig(api_key="wk")) as wc2:
+        wc2.create_payout(
+            amount="250",
+            currency="XOF",
+            mobile="221 76 123 4567",
+            client_reference="wave-ref-99",
+        )
+    with MpesaClient(
+        MpesaConfig(
+            consumer_key="ck",
+            consumer_secret="cs",
+            short_code="174379",
+            passkey="pk",
+            callback_url="https://callback.example.test/mpesa",
+        )
+    ) as mpc:
+        mpc.stk_push(
+            amount="100", phone_number="+254 712 345 678", account_reference="INV-9"
+        )
+        with pytest.raises(ValueError, match="security_credential"):
+            mpc.b2c_transfer(amount="100", phone_number="254712345678")
+
+        mp_prov = MpesaProvider(mpc)
+        with pytest.raises(NotImplementedError):
+            mp_prov.get_balance()
+
+    reqs = httpx_mock.get_requests()
+    ps_req = next(r for r in reqs if r.url.path == "/transaction/initialize")
+    assert json.loads(ps_req.read().decode("utf-8"))["amount"] == 1234
+    wave_req = next(r for r in reqs if r.url.path == "/v1/payout")
+    assert wave_req.headers["Idempotency-Key"] == "wave-ref-99"
+    assert wave_req.headers["X-Reference-Id"] == "wave-ref-99"
+    assert json.loads(wave_req.read().decode("utf-8"))["mobile"] == "+221761234567"
+    stk_req = next(r for r in reqs if r.url.path == "/mpesa/stkpush/v1/processrequest")
+    stk_body = json.loads(stk_req.read().decode("utf-8"))
+    assert stk_body["BusinessShortCode"] == "174379"
+    assert stk_body["PhoneNumber"] == "254712345678"
+    assert len(stk_body["Timestamp"]) == 14
+    assert stk_body["Password"]
+
+    # 3. NotImplementedError paths on sync/async Orange & async M-Pesa
+    with OrangeMoneyClient(
+        OrangeMoneyConfig(client_id="id", client_secret="sec", merchant_key="mk")
+    ) as omc:
+        omp = OrangeMoneyProvider(omc)
+        with pytest.raises(NotImplementedError):
+            omp.disburse(
+                DisbursementRequest(
+                    amount="10", currency="XOF", payee_msisdn="221771234567"
+                )
+            )
+        with pytest.raises(NotImplementedError):
+            omp.get_balance()
+
+    async with (
+        AsyncMpesaClient(
+            MpesaConfig(
+                consumer_key="ck",
+                consumer_secret="cs",
+                short_code="174379",
+                passkey="pk",
+            )
+        ) as ampc,
+        AsyncOrangeMoneyClient(
+            OrangeMoneyConfig(client_id="id", client_secret="sec", merchant_key="mk")
+        ) as aomc,
+    ):
+        with pytest.raises(NotImplementedError):
+            await AsyncMpesaProvider(ampc).get_balance()
+        with pytest.raises(NotImplementedError):
+            await AsyncMpesaProvider(ampc).get_status("AG_1", kind="disbursement")
+        aomp = AsyncOrangeMoneyProvider(aomc)
+        with pytest.raises(NotImplementedError):
+            await aomp.disburse(
+                DisbursementRequest(
+                    amount="10", currency="XOF", payee_msisdn="221771234567"
+                )
+            )
+        with pytest.raises(NotImplementedError):
+            await aomp.get_balance()
+        with pytest.raises(NotImplementedError):
+            await aomp.get_status("pay-1", kind="disbursement")

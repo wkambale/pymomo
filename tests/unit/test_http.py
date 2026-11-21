@@ -419,3 +419,39 @@ async def test_redirects_injected_client_and_max_response_bytes_async(
                 await small_cap.request("GET", "/huge", headers={})
     finally:
         await shared.aclose()
+
+
+@pytest.mark.asyncio
+async def test_async_http_no_cause_chain_and_non_idempotent_post_no_retry(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify AsyncHttpClient strips __cause__ and never retries POST without X-Reference-Id (#65)."""
+    async with AsyncHttpClient(
+        "https://example.com", 10.0, max_retries=2, retry_backoff=0.01
+    ) as client:
+        req = httpx.Request(
+            "GET",
+            "https://example.com/secret",
+            headers={
+                "Authorization": "Bearer async-live-secret",
+                "Ocp-Apim-Subscription-Key": "async-sub-secret",
+            },
+        )
+        with patch.object(
+            client._client,
+            "request",
+            side_effect=httpx.ReadTimeout("timed out", request=req),
+        ):
+            with pytest.raises(PyMomoSDKError) as excinfo:
+                await client.request("GET", "/secret", headers=dict(req.headers))
+            assert excinfo.value.__cause__ is None
+            assert "async-live-secret" not in str(excinfo.value)
+            assert "async-sub-secret" not in str(excinfo.value)
+
+        # POST without X-Reference-Id (or blank X-Reference-Id) must NOT retry on 503
+        httpx_mock.add_response(
+            method="POST", url="https://example.com/write", status_code=503
+        )
+        with pytest.raises(PyMomoSDKServerError):
+            await client.request("POST", "/write", headers={"X-Reference-Id": "   "})
+        assert len(httpx_mock.get_requests()) == 1
