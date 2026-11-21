@@ -11,10 +11,10 @@ hide:
   </svg>
   <div class="pm-hero__eyebrow">
     <span class="pm-hero__eyebrow-line" aria-hidden="true"></span>
-    <span>Python SDK version 1.0.6</span>
+    <span>Python SDK version 1.1.0</span>
   </div>
   <h1 class="pm-hero__title">Py MoMo SDK for MTN Mobile Money and Airtel Money</h1>
-  <p class="pm-hero__lead">A strictly typed, production-grade Python client for MTN MoMo and Airtel Money. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
+  <p class="pm-hero__lead">A strictly typed Python client for MTN MoMo and Airtel Money. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
   <div class="pm-hero__actions">
     <a class="pm-btn-primary" href="quickstart/">Get started</a>
     <a class="pm-btn-secondary" href="authentication/">Configure authentication</a>

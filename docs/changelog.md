@@ -2,7 +2,7 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
-## Unreleased
+## 1.1.0 - 2026-11-21
 
 ### Added
 - Asynchronous Airtel Money client (`AsyncAirtelClient`, `AsyncAirtelAuth`, `AsyncAirtelCollection`, `AsyncAirtelDisbursement`).
