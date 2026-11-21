@@ -46,10 +46,14 @@ htmlcov/
 poetry.lock
 pdm.lock
 .env
+.env.*
 .venv
 venv/
 ENV/
 env/
+*.pem
+*.key
+*.p12
 .coverage
 .coverage.*
 coverage.xml
@@ -58,12 +62,7 @@ coverage.xml
 .pyre/
 .pytype/
 
-# Environments
-.env
-.venv
-venv/
-ENV/
-env/
+# Docs build output
 /site
 
 # IDEs

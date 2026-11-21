@@ -14,6 +14,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -25,3 +27,15 @@ jobs:
       - run: bandit -r py_momo_sdk/
       - run: pytest --cov=py_momo_sdk --cov-report=term-missing
       - run: python -m build
+      - name: Check distribution metadata with twine
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install ".[release]"
+          twine check --strict dist/*
+      - name: Smoke-test built wheel in isolated environment
+        run: |
+          python -m venv /tmp/wheel-smoke
+          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/wheel-smoke/bin/python -c "import py_momo_sdk; assert py_momo_sdk.__version__ != '0.0.0'"
+          /tmp/wheel-smoke/bin/py-momo-sdk --version

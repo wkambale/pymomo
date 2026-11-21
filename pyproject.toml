@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.25,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -47,6 +47,13 @@ dev = [
     "build>=1.2,<2",
     "pre-commit>=4.6.2",
 ]
+docs = [
+    "mkdocs-material>=9.5,<10",
+]
+release = [
+    "build>=1.2,<2",
+    "twine>=5,<7",
+]
 
 [project.scripts]
 py-momo-sdk = "py_momo_sdk._cli:app"
@@ -78,6 +85,15 @@ fail_under = 90
 
 [tool.isort]
 profile = "black"
+
+[tool.hatch.build]
+exclude = [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
