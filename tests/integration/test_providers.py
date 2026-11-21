@@ -329,9 +329,69 @@ async def test_async_providers_and_router(httpx_mock: HTTPXMock) -> None:
             router.get("unknown")
 
 
-def test_discover_provider_plugins_returns_dict() -> None:
-    """Verify plugin discovery returns a dict cleanly."""
+def test_discover_provider_plugins_returns_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify plugin discovery enforces allowlists, collision detection, and validation."""
     assert isinstance(discover_provider_plugins(), dict)
+    with pytest.raises(TypeError, match="allowed_plugins"):
+        discover_provider_plugins(allowed_plugins="not-a-set")
+
+    loaded_calls: list[str] = []
+
+    class _FakeEP:
+        def __init__(self, name: str, fn: object) -> None:
+            self.name = name
+            self._fn = fn
+
+        def load(self) -> object:
+            loaded_calls.append(self.name)
+            if isinstance(self._fn, Exception):
+                raise self._fn
+            return self._fn
+
+    import py_momo_sdk.providers.router as router_mod
+
+    # 1. Allowlist skips untrusted entry points BEFORE calling .load()
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [
+            _FakeEP("trusted", lambda: None),
+            _FakeEP("untrusted", RuntimeError("must not run")),
+        ],
+    )
+    res = discover_provider_plugins(allowed_plugins={"trusted"})
+    assert list(res.keys()) == ["trusted"]
+    assert loaded_calls == ["trusted"]
+
+    # 2. Duplicate entry-point collision rejected
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [_FakeEP("dup", lambda: None), _FakeEP("dup", lambda: None)],
+    )
+    with pytest.raises(PyMomoSDKError, match="Duplicate provider plugin"):
+        discover_provider_plugins()
+
+    # 3. Invalid object & load error rejected when strict=True, skipped when strict=False
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [_FakeEP("bad_obj", 12345)],
+    )
+    with pytest.raises(PyMomoSDKError, match="not a valid PaymentProvider"):
+        discover_provider_plugins(strict=True)
+    assert discover_provider_plugins(strict=False) == {}
+
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [_FakeEP("boom", RuntimeError("broken import"))],
+    )
+    with pytest.raises(PyMomoSDKError, match="Failed to load"):
+        discover_provider_plugins(strict=True)
+    assert discover_provider_plugins(strict=False) == {}
 
 
 def test_mtn_and_airtel_providers_full_sync_methods(httpx_mock: HTTPXMock) -> None:
