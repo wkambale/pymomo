@@ -14,9 +14,25 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+      - name: Verify tag matches pyproject.toml version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python -c '
+          import os, sys, tomllib
+          with open("pyproject.toml", "rb") as f:
+              version = tomllib.load(f)["project"]["version"]
+          expected = f"v{version}"
+          actual = os.environ["TAG_NAME"]
+          if actual != expected:
+              sys.exit(f"Tag {actual!r} does not match pyproject.toml version {expected!r}")
+          '
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: black --check .
@@ -25,18 +41,45 @@ jobs:
       - run: bandit -r py_momo_sdk/
       - run: pytest --cov=py_momo_sdk --cov-report=term-missing
 
-  publish:
+  build:
     needs: verify
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - run: pip install "build>=1.2,<2"
+      - run: pip install ".[release]"
       - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Smoke-test built wheel in isolated environment
+        run: |
+          python -m venv /tmp/wheel-smoke
+          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/wheel-smoke/bin/python -c "import py_momo_sdk; assert py_momo_sdk.__version__ != '0.0.0'"
+          /tmp/wheel-smoke/bin/py-momo-sdk --version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-package-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-package-distributions
+          path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
