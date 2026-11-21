@@ -18,7 +18,7 @@ We enforce strict formatting rules to maintain codebase quality:
 - Formatting: Black with a line limit of 88.
 - Import ordering: Isort configured with the Black profile.
 - Linters: Ruff default ruleset.
-- Security: Bandit scans must report zero high-severity findings.
+- Security: Bandit scans must report zero findings.
 
 ### Formatting commands
 
@@ -44,7 +44,7 @@ All new methods and error handlers must be verified by unit tests under `tests/`
 
 ### Intercepting external requests
 
-No tests should make live connection requests to MTN or Airtel servers. Use `pytest-httpx` to register mock responses.
+No tests should make live connection requests to MTN, Airtel, or third-party payment gateway servers. Use `pytest-httpx` to register mock responses.
 
 ### Running the test suite
 

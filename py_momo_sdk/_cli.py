@@ -90,7 +90,7 @@ def sandbox_provision(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-        help="Ocp-Apim-Subscription-Key.",
+        help="Ocp-Apim-Subscription-Key (prefer setting PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY).",
     ),
     callback_host: str = typer.Option(
         "https://example.com",
@@ -129,7 +129,7 @@ def sandbox_get_user(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-        help="Ocp-Apim-Subscription-Key.",
+        help="Ocp-Apim-Subscription-Key (prefer setting PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY).",
     ),
     environment: str = typer.Option(
         "sandbox",
@@ -161,7 +161,7 @@ def collection_balance(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-        help="Collection subscription key.",
+        help="Collection subscription key (prefer PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY).",
     ),
     api_user: str = typer.Option(
         ...,
@@ -175,7 +175,7 @@ def collection_balance(
         "--api-key",
         "-p",
         envvar="PY_MOMO_SDK_COLLECTION_API_KEY",
-        help="Collection API key.",
+        help="Collection API key (prefer PY_MOMO_SDK_COLLECTION_API_KEY).",
     ),
     environment: str = typer.Option(
         "sandbox",
@@ -218,7 +218,7 @@ def collection_request_to_pay(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-        help="Collection subscription key.",
+        help="Collection subscription key (prefer PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY).",
     ),
     api_user: str = typer.Option(
         ...,
@@ -232,7 +232,7 @@ def collection_request_to_pay(
         "--api-key",
         "-p",
         envvar="PY_MOMO_SDK_COLLECTION_API_KEY",
-        help="Collection API key.",
+        help="Collection API key (prefer PY_MOMO_SDK_COLLECTION_API_KEY).",
     ),
     payer_message: str = typer.Option(
         "",
@@ -297,7 +297,7 @@ def collection_status(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-        help="Collection subscription key.",
+        help="Collection subscription key (prefer PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY).",
     ),
     api_user: str = typer.Option(
         ...,
@@ -311,7 +311,7 @@ def collection_status(
         "--api-key",
         "-p",
         envvar="PY_MOMO_SDK_COLLECTION_API_KEY",
-        help="Collection API key.",
+        help="Collection API key (prefer PY_MOMO_SDK_COLLECTION_API_KEY).",
     ),
     environment: str = typer.Option(
         "sandbox",
@@ -350,7 +350,7 @@ def disbursement_balance(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_DISBURSEMENT_SUBSCRIPTION_KEY",
-        help="Disbursement subscription key.",
+        help="Disbursement subscription key (prefer PY_MOMO_SDK_DISBURSEMENT_SUBSCRIPTION_KEY).",
     ),
     api_user: str = typer.Option(
         ...,
@@ -364,7 +364,7 @@ def disbursement_balance(
         "--api-key",
         "-p",
         envvar="PY_MOMO_SDK_DISBURSEMENT_API_KEY",
-        help="Disbursement API key.",
+        help="Disbursement API key (prefer PY_MOMO_SDK_DISBURSEMENT_API_KEY).",
     ),
     environment: str = typer.Option(
         "sandbox",
@@ -403,7 +403,7 @@ def remittance_balance(
         "--subscription-key",
         "-k",
         envvar="PY_MOMO_SDK_REMITTANCE_SUBSCRIPTION_KEY",
-        help="Remittance subscription key.",
+        help="Remittance subscription key (prefer PY_MOMO_SDK_REMITTANCE_SUBSCRIPTION_KEY).",
     ),
     api_user: str = typer.Option(
         ...,
@@ -417,7 +417,7 @@ def remittance_balance(
         "--api-key",
         "-p",
         envvar="PY_MOMO_SDK_REMITTANCE_API_KEY",
-        help="Remittance API key.",
+        help="Remittance API key (prefer PY_MOMO_SDK_REMITTANCE_API_KEY).",
     ),
     environment: str = typer.Option(
         "sandbox",

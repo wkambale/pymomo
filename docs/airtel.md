@@ -1,10 +1,10 @@
 # Airtel Money
 
-Py MoMo SDK includes a synchronous client for the Airtel Money Open API covering collections, disbursements, and merchant wallet balances.
+Py MoMo SDK includes synchronous and asynchronous clients for the Airtel Money Open API covering collections, disbursements, and merchant wallet balances.
 
 ## Initializing the Airtel client
 
-Configure `AirtelConfig` with your Airtel developer credentials, ISO 3166-1 alpha-2 country code, and ISO 4217 currency code. Supply `pin` when executing disbursement payouts.
+Configure `AirtelConfig` with your Airtel developer credentials, ISO 3166-1 alpha-2 country code, and ISO 4217 currency code. Supply `pin` when executing disbursement payouts. In `"production"`, Airtel requires an RSA-encrypted Base64 PIN ciphertext (you can encrypt a raw PIN locally with `encrypt_airtel_pin(pin, public_key_pem)` when `cryptography` is installed, or pass a pre-encrypted Base64 string).
 
 ```python
 from py_momo_sdk import AirtelClient, AirtelConfig

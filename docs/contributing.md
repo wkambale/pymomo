@@ -8,17 +8,17 @@ Clone the repository and install the development dependencies:
 
 ```bash
 git clone https://github.com/wkambale/pymomo.git
-__PROTECTED_CD_PY_MOMO_SDK__
+cd pymomo
 pip install -e ".[dev]"
 ```
 
 ## Styling rules
 
 We enforce strict formatting rules to maintain codebase quality:
-- Formatting: Black format tool with a line limit of 88.
-- Import ordering: Isort tool configured to Black profile.
-- Linters: Ruff check defaults.
-- Security: Bandit scans must raise zero findings.
+- Formatting: Black with a line limit of 88.
+- Import ordering: Isort configured with the Black profile.
+- Linters: Ruff default ruleset.
+- Security: Bandit scans must report zero findings.
 
 ### Formatting commands
 
@@ -30,15 +30,13 @@ black --check .
 isort --check .
 ```
 
-
 ## Type safety
 
-The library is strictly typed. Run mypy to ensure there are no validation warnings:
+The library is strictly typed. Run mypy to ensure there are no errors:
 
 ```bash
 mypy py_momo_sdk/
 ```
-
 
 ## Writing and running tests
 
@@ -46,7 +44,7 @@ All new methods and error handlers must be verified by unit tests under `tests/`
 
 ### Intercepting external requests
 
-No tests should make live connection requests to MTN servers. Use `pytest-httpx` to register mock responses.
+No tests should make live connection requests to MTN, Airtel, or third-party payment gateway servers. Use `pytest-httpx` to register mock responses.
 
 ### Running the test suite
 

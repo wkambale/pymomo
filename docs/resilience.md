@@ -39,13 +39,17 @@ print(settled.status)
 
 ## Structured telemetry hooks
 
-Implement `TelemetryHook` and pass it to `PyMomoSDKConfig(telemetry=...)` to forward request latencies, attempt counts, and HTTP status codes to OpenTelemetry, Prometheus, or structured logs without exposing credentials or PII:
+Implement `TelemetryHook` and pass it to `PyMomoSDKConfig(telemetry=...)` or `AirtelConfig(telemetry=...)` to forward request latencies, attempt counts, and HTTP status codes to OpenTelemetry, Prometheus, or structured logs without exposing credentials or subscriber PII:
 
 ```python
-from py_momo_sdk import RequestTelemetryEvent, WebhookTelemetryEvent
+from py_momo_sdk import (
+    RequestTelemetryEvent,
+    TelemetryHook,
+    WebhookTelemetryEvent,
+)
 
 
-class MetricsHook:
+class MetricsHook(TelemetryHook):
     def on_request(self, event: RequestTelemetryEvent) -> None:
         print(event.method, event.path, event.status_code, round(event.latency_ms, 2))
 
