@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -69,10 +71,30 @@ def test_collection_request_to_pay_sync(
     ref_id = client.collection.request_to_pay(
         amount="100.00",
         currency="UGX",
-        payer_msisdn="256771234567",
+        payer_msisdn="+256 771-234-567",
         external_id="ext-pay-1",
+        payer_message="Pay msg",
+        payee_note="Pay note",
     )
     assert len(ref_id) == 36  # UUID length
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v1_0/requesttopay"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-subscription-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-access-token-123"
+    assert json.loads(req.read().decode("utf-8")) == {
+        "amount": "100.00",
+        "currency": "UGX",
+        "externalId": "ext-pay-1",
+        "payer": {"partyIdType": "MSISDN", "partyId": "256771234567"},
+        "payerMessage": "Pay msg",
+        "payeeNote": "Pay note",
+    }
 
 
 @pytest.mark.asyncio
@@ -90,10 +112,23 @@ async def test_collection_request_to_pay_async(
     ref_id = await async_client.collection.request_to_pay(
         amount="200.00",
         currency="UGX",
-        payer_msisdn="256771234567",
+        payer_msisdn="+256-771-234-567",
         external_id="ext-pay-2",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v1_0/requesttopay"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-subscription-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-access-token-123"
+    sent = json.loads(req.read().decode("utf-8"))
+    assert sent["externalId"] == "ext-pay-2"
+    assert sent["payer"] == {"partyIdType": "MSISDN", "partyId": "256771234567"}
 
 
 def test_collection_get_payment_status_sync(
@@ -153,6 +188,15 @@ def test_collection_401_retry_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> 
 
     balance = client.collection.get_balance()
     assert balance.available_balance == "3000"
+    bal_reqs = [
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v1_0/account/balance"
+    ]
+    assert [r.headers["Authorization"] for r in bal_reqs] == [
+        "Bearer mock-access-token-123",
+        "Bearer new-access-token-456",
+    ]
 
 
 def test_collection_401_fails_twice_sync(
@@ -213,6 +257,15 @@ async def test_collection_401_retry_async(
 
     balance = await async_client.collection.get_balance()
     assert balance.available_balance == "3000"
+    bal_reqs = [
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v1_0/account/balance"
+    ]
+    assert [r.headers["Authorization"] for r in bal_reqs] == [
+        "Bearer mock-access-token-123",
+        "Bearer new-access-token-async-456",
+    ]
 
 
 @pytest.mark.asyncio
@@ -251,10 +304,23 @@ def test_collection_request_to_withdraw_sync(
     ref_id = client.collection.request_to_withdraw(
         amount="50.00",
         currency="UGX",
-        payer_msisdn="256771234567",
+        payer_msisdn="+256 771-234-567",
         external_id="ext-with-1",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v2_0/requesttowithdraw"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-subscription-key"
+    assert req.headers["X-Target-Environment"] == "sandbox"
+    assert req.headers["Authorization"] == "Bearer mock-access-token-123"
+    sent = json.loads(req.read().decode("utf-8"))
+    assert sent["externalId"] == "ext-with-1"
+    assert sent["payer"] == {"partyIdType": "MSISDN", "partyId": "256771234567"}
 
 
 def test_collection_bc_authorize_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> None:
@@ -342,10 +408,19 @@ async def test_collection_request_to_withdraw_async(
     ref_id = await async_client.collection.request_to_withdraw(
         amount="75.00",
         currency="UGX",
-        payer_msisdn="256771234567",
+        payer_msisdn="+256 771-234-567",
         external_id="ext-with-2",
     )
     assert len(ref_id) == 36
+    req = next(
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v2_0/requesttowithdraw"
+    )
+    assert req.headers["X-Reference-Id"] == ref_id
+    assert req.headers["X-Callback-Url"] == "https://example.com/callback"
+    assert req.headers["Ocp-Apim-Subscription-Key"] == "test-subscription-key"
+    assert json.loads(req.read().decode("utf-8"))["payer"]["partyId"] == "256771234567"
 
 
 @pytest.mark.asyncio

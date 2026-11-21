@@ -242,3 +242,87 @@ async def test_async_airtel_http_error_mappings_and_header_guards(
                 "/merchant/v2/wallets/balance/",
                 headers={"Bad Header": "val"},
             )
+
+
+@pytest.mark.asyncio
+async def test_async_airtel_https_path_auth_stripping_and_injected_client(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Mirror sync Airtel security tests onto AsyncAirtelClient (#65)."""
+    import httpx
+
+    # HTTPS enforcement & parser-differential URL rejections
+    for bad_url in (
+        "http://example.com",
+        "http://localhost:80@evil.example.com",
+        "ftp://evil.example.com",
+        "https://user:pass@example.com",
+    ):
+        with pytest.raises(PyMomoSDKError):
+            AsyncAirtelClient(
+                AirtelConfig(
+                    client_id="id",
+                    client_secret="sec",
+                    country="UG",
+                    currency="UGX",
+                    base_url=bad_url,
+                )
+            )
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "async-air-tok", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/safe",
+        json={"ok": True},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/redir",
+        status_code=302,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/oversized",
+        content=b"z" * 256,
+        status_code=200,
+    )
+
+    shared = httpx.AsyncClient(
+        base_url="https://openapiuat.airtel.africa", follow_redirects=False
+    )
+    try:
+        async with AsyncAirtelClient(
+            _airtel_config(), client=shared, max_response_bytes=64
+        ) as client:
+            for bad_path in (
+                "http://evil.example.com/steal",
+                "//evil.example.com/steal",
+                "no-leading-slash",
+                "/standard/v1/../steal",
+            ):
+                with pytest.raises(PyMomoSDKError):
+                    await client.request("GET", bad_path)
+
+            await client.request(
+                "get",
+                "/safe",
+                headers={"authorization": "Bearer spoofed", "x-country": "KE"},
+            )
+            sent = next(r for r in httpx_mock.get_requests() if r.url.path == "/safe")
+            assert sent.headers["Authorization"] == "Bearer async-air-tok"
+            assert sent.headers["x-country"] == "KE"
+
+            with pytest.raises(PyMomoSDKError, match="redirect"):
+                await client.request("GET", "/redir")
+            with pytest.raises(PyMomoSDKError, match="maximum allowed size"):
+                await client.request("GET", "/oversized")
+
+        assert shared.is_closed is False
+    finally:
+        await shared.aclose()

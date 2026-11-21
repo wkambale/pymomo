@@ -442,3 +442,69 @@ def test_local_mock_server_and_cli_carrier() -> None:
     finally:
         fail_srv.shutdown()
         fail_srv.server_close()
+
+
+@pytest.mark.asyncio
+async def test_framework_timestamped_asgi_and_missing_django_remote_addr() -> None:
+    """Test ASGI timestamped verifier and Django REMOTE_ADDR missing rejection (#65)."""
+    import time
+
+    secret = "whsec_ts_asgi"
+    body = b'{"event":"checkout.completed"}'
+    now_ts = int(time.time())
+    good_sig = hmac.new(
+        secret.encode("utf-8"), f"{now_ts}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+
+    ts_verifier = create_asgi_webhook_verifier(
+        secret=secret,
+        signature_header_name="Wave-Signature",
+        timestamped=True,
+        tolerance_seconds=300,
+        allowed_networks=["10.0.0.0/8"],
+    )
+
+    class _AsgiReq:
+        def __init__(self, payload: bytes, headers: dict[str, str], host: str) -> None:
+            self._payload = payload
+            self.headers = headers
+            self.client = SimpleNamespace(host=host)
+
+        async def body(self) -> bytes:
+            return self._payload
+
+    assert (
+        await ts_verifier(
+            _AsgiReq(body, {"wave-signature": f"t={now_ts},v1={good_sig}"}, "10.0.0.9")
+        )
+        == body
+    )
+    with pytest.raises(WebhookVerificationError):
+        await ts_verifier(
+            _AsgiReq(
+                b"tampered", {"wave-signature": f"t={now_ts},v1={good_sig}"}, "10.0.0.9"
+            )
+        )
+    with pytest.raises(WebhookVerificationError):
+        await ts_verifier(
+            _AsgiReq(
+                body,
+                {"wave-signature": f"t={now_ts - 9999},v1={good_sig}"},
+                "10.0.0.9",
+            )
+        )
+
+    # Django verifier rejects missing REMOTE_ADDR when allowed_networks is set
+    raw_sig = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    django_missing_ip = SimpleNamespace(
+        body=body,
+        headers={"X-Sig": raw_sig},
+        META={},
+    )
+    with pytest.raises(WebhookVerificationError):
+        verify_django_webhook_request(
+            django_missing_ip,
+            secret=secret,
+            signature_header_name="X-Sig",
+            allowed_networks=["10.0.0.0/8"],
+        )

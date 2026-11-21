@@ -224,3 +224,42 @@ async def test_create_sandbox_provisioner_async(httpx_mock: HTTPXMock) -> None:
     requests = httpx_mock.get_requests()
     assert len(requests) == 1
     assert requests[0].headers["Ocp-Apim-Subscription-Key"] == "explicit-async-key"
+
+
+@pytest.mark.asyncio
+async def test_async_sandbox_provisioner_security_guards() -> None:
+    """Test AsyncSandboxProvisioner redaction, credential guards, and production rejection (#65)."""
+    from py_momo_sdk._async.http import AsyncHttpClient
+    from py_momo_sdk._async.sandbox import AsyncSandboxProvisioner
+    from py_momo_sdk.config import MTN_UGANDA, ProductConfig, PyMomoSDKConfig
+    from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
+
+    async with AsyncHttpClient("https://sandbox.momodeveloper.mtn.com", 30.0) as ahttp:
+        prov = AsyncSandboxProvisioner(
+            subscription_key="async-secret-sub-key",
+            config=PyMomoSDKConfig(),
+            http=ahttp,
+        )
+        assert "async-secret-sub-key" not in repr(prov)
+        assert "async-secret-sub-key" not in str(prov)
+        assert "subscription_key=<redacted>" in repr(prov)
+
+        with pytest.raises(MissingCredentialsError):
+            AsyncSandboxProvisioner("   ", ahttp)
+        with pytest.raises(ValueError, match="control characters"):
+            AsyncSandboxProvisioner("sub\r\nkey", ahttp)
+
+        prod_cfg = PyMomoSDKConfig(
+            environment=MTN_UGANDA,
+            collection=ProductConfig(
+                subscription_key="prod-sub",
+                api_user="e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+                api_key="prod-key",
+            ),
+        )
+        with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+            AsyncSandboxProvisioner(config=prod_cfg, http=ahttp)
+
+    async with AsyncHttpClient("https://proxy.momoapi.mtn.com", 30.0) as prod_ahttp:
+        with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+            AsyncSandboxProvisioner("sub-key", prod_ahttp)
