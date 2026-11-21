@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Collection, Sequence
 from importlib.metadata import entry_points
 from typing import Any
 
@@ -19,12 +20,69 @@ from py_momo_sdk.providers.models import (
 )
 from py_momo_sdk.utils import detect_carrier_from_msisdn
 
+logger = logging.getLogger("py_momo_sdk.providers")
 
-def discover_provider_plugins() -> dict[str, Any]:
-    """Discover third-party provider adapters via ``py_momo_sdk.providers`` entry points."""
+
+def discover_provider_plugins(
+    *,
+    allowed_plugins: Collection[str] | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Discover third-party provider adapters via ``py_momo_sdk.providers`` entry points.
+
+    Args:
+        allowed_plugins: Optional allowlist of entry-point names permitted to load.
+            Unlisted entry points are skipped before ``load()`` executes.
+        strict: When ``True`` (default), raise ``PyMomoSDKError`` if a plugin fails
+            to load or does not conform to ``PaymentProvider`` /
+            ``AsyncPaymentProvider`` / callable factory. When ``False``, log a
+            warning and skip broken plugins.
+
+    Raises:
+        TypeError: If ``allowed_plugins`` is a bare string or bytes.
+        PyMomoSDKError: On duplicate entry-point collisions or (when ``strict=True``)
+            load/validation errors.
+    """
+    allow_set: set[str] | None = None
+    if allowed_plugins is not None:
+        if isinstance(allowed_plugins, (str, bytes)):
+            raise TypeError("allowed_plugins must be a collection of plugin names")
+        allow_set = set(allowed_plugins)
+
     discovered: dict[str, Any] = {}
+    seen_names: set[str] = set()
     for ep in entry_points(group="py_momo_sdk.providers"):
-        discovered[ep.name] = ep.load()
+        if allow_set is not None and ep.name not in allow_set:
+            continue
+        if ep.name in seen_names:
+            raise PyMomoSDKError(
+                f"Duplicate provider plugin entry point detected: {ep.name}"
+            )
+        seen_names.add(ep.name)
+        try:
+            loaded = ep.load()
+        except Exception as exc:
+            if strict:
+                raise PyMomoSDKError(
+                    f"Failed to load provider plugin '{ep.name}'"
+                ) from exc
+            logger.warning(
+                "Skipping broken provider plugin '%s'", ep.name, exc_info=True
+            )
+            continue
+
+        if not (
+            isinstance(loaded, (PaymentProvider, AsyncPaymentProvider))
+            or callable(loaded)
+        ):
+            if strict:
+                raise PyMomoSDKError(
+                    f"Plugin '{ep.name}' is not a valid PaymentProvider or factory"
+                )
+            logger.warning("Skipping invalid provider plugin '%s'", ep.name)
+            continue
+
+        discovered[ep.name] = loaded
     return discovered
 
 
