@@ -5,6 +5,7 @@ import binascii
 import importlib
 from dataclasses import dataclass
 
+from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     validate_base_url,
     validate_country_code,
@@ -92,6 +93,7 @@ class AirtelConfig:
     timeout: float = 30.0
     max_retries: int = 0
     retry_backoff: float = 0.5
+    telemetry: TelemetryHook | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.client_id, str) or not self.client_id.strip():

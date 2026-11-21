@@ -10,9 +10,10 @@ from py_momo_sdk.airtel.models import (
 )
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.utils import (
+    encode_path_segment,
     generate_reference_id,
     normalise_msisdn,
-    validate_reference_id,
+    validate_airtel_reference_id,
 )
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ class Collection:
             The reference ID associated with the transaction.
         """
         ref = reference_id or generate_reference_id()
-        validate_reference_id(ref)
+        validate_airtel_reference_id(ref)
 
         payload = AirtelCollectionRequest(
             reference=ref,
@@ -75,9 +76,10 @@ class Collection:
         Returns:
             An AirtelTransactionResponse object.
         """
-        validate_reference_id(reference_id)
+        validate_airtel_reference_id(reference_id)
+        encoded = encode_path_segment(reference_id, field_name="reference_id")
         response = self._client.request(
             "GET",
-            f"/standard/v1/payments/{reference_id}",
+            f"/standard/v1/payments/{encoded}",
         )
         return parse_model(response, AirtelTransactionResponse)

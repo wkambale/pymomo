@@ -3,12 +3,11 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Callable
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as package_version
 from typing import Any, TypeVar, cast
 
 import typer
 
+from py_momo_sdk import __version__
 from py_momo_sdk.client import PyMomoSDK
 from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
 from py_momo_sdk.exceptions import PyMomoSDKError
@@ -32,10 +31,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 def _get_version() -> str:
     """Return the installed py-momo-sdk package version."""
-    try:
-        return package_version("py-momo-sdk")
-    except PackageNotFoundError:
-        return "0.0.0"
+    return __version__
 
 
 def _version_callback(value: bool) -> None:

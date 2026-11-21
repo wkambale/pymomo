@@ -399,6 +399,10 @@ class AsyncFlutterwaveClient:
         )
         return parse_json_dict(response)
 
+    def verify_webhook_hash(self, verif_hash: str) -> None:
+        """Verify Flutterwave's ``verif-hash`` header in constant time."""
+        verify_constant_time_token(verif_hash, self._config.webhook_hash or "")
+
     async def close(self) -> None:
         await self._http.close()
 

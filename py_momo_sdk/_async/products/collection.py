@@ -36,6 +36,7 @@ class Collection(AsyncBaseProduct):
         payer_message: str = "",
         payee_note: str = "",
         reference_id: str | None = None,
+        callback_url: str | None = None,
     ) -> str:
         """Initiate a Request to Pay.
 
@@ -70,7 +71,9 @@ class Collection(AsyncBaseProduct):
         await self._http.request(
             "POST",
             "/collection/v1_0/requesttopay",
-            headers=await self._build_headers(reference_id=ref, include_callback=True),
+            headers=await self._build_headers(
+                reference_id=ref, include_callback=True, callback_url=callback_url
+            ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
@@ -108,6 +111,7 @@ class Collection(AsyncBaseProduct):
         payer_message: str = "",
         payee_note: str = "",
         reference_id: str | None = None,
+        callback_url: str | None = None,
     ) -> str:
         """Initiate a Request to Withdraw (v2).
 
@@ -142,7 +146,9 @@ class Collection(AsyncBaseProduct):
         await self._http.request(
             "POST",
             "/collection/v2_0/requesttowithdraw",
-            headers=await self._build_headers(reference_id=ref, include_callback=True),
+            headers=await self._build_headers(
+                reference_id=ref, include_callback=True, callback_url=callback_url
+            ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,

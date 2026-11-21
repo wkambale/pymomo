@@ -381,7 +381,7 @@ def encode_path_segment(value: str, *, field_name: str = "value") -> str:
     """
     if (
         not isinstance(value, str)
-        or not value
+        or not value.strip()
         or value in (".", "..")
         or _CONTROL_CHAR_RE.search(value)
         or any(ch in value for ch in _FORBIDDEN_SEGMENT_CHARS)
@@ -429,6 +429,23 @@ def validate_reference_id(reference_id: str) -> None:
         ) from exc
     if val.version != 4:
         raise ValueError(f"The reference ID must be a version 4 UUID: {reference_id}")
+
+
+def validate_airtel_reference_id(reference_id: str) -> str:
+    """Validate an Airtel transaction reference identifier.
+
+    Accepts canonical UUIDs as well as safe alphanumeric merchant order IDs
+    (1 to 64 characters of ``A-Za-z0-9._-``), rejecting dot-segments,
+    whitespace, path separators, and control characters.
+    """
+    if (
+        not isinstance(reference_id, str)
+        or not (1 <= len(reference_id) <= 64)
+        or reference_id in (".", "..")
+        or not _HEADER_TOKEN_RE.fullmatch(reference_id)
+    ):
+        raise ValueError(f"Invalid Airtel reference ID: {reference_id!r}")
+    return reference_id
 
 
 _CARRIER_PREFIX_MAP: tuple[tuple[str, str, str], ...] = (
@@ -483,7 +500,9 @@ def detect_carrier_from_msisdn(msisdn: str) -> tuple[str, str] | None:
     """
     if not isinstance(msisdn, str):
         raise TypeError("MSISDN must be a string")
-    digits = re.sub(r"[^0-9]", "", msisdn)
+    digits = re.sub(r"[^0-9]", "", msisdn).removeprefix("00")
+    if not (10 <= len(digits) <= 15):
+        return None
     for prefix, country, provider in _CARRIER_PREFIX_MAP:
         if digits.startswith(prefix):
             return (country, provider)
