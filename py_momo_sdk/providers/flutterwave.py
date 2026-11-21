@@ -20,9 +20,13 @@ from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
     normalise_msisdn,
+    validate_amount,
+    validate_base_url,
     validate_callback_url,
     validate_currency,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 
@@ -47,17 +51,24 @@ class FlutterwaveConfig:
 
     secret_key: str
     webhook_hash: str | None = None
-    redirect_url: str = "https://example.com/flutterwave/callback"
+    redirect_url: str | None = None
     base_url: str = FLUTTERWAVE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
+    retry_backoff: float = 0.5
 
     def __post_init__(self) -> None:
+        if not isinstance(self.secret_key, str) or not self.secret_key.strip():
+            raise ValueError("secret_key must be a non-empty string")
         validate_header_value(self.secret_key, field_name="secret_key")
         if self.webhook_hash is not None:
             validate_header_value(self.webhook_hash, field_name="webhook_hash")
-        validate_callback_url(self.redirect_url)
+        if self.redirect_url is not None:
+            validate_callback_url(self.redirect_url)
+        validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
 
     def __repr__(self) -> str:
         return (
@@ -89,6 +100,7 @@ class FlutterwaveClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -108,21 +120,29 @@ class FlutterwaveClient:
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
         """Create a Flutterwave standard payment link."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if redirect_url is not None:
+            validate_callback_url(redirect_url)
+        resolved_redirect = redirect_url or self._config.redirect_url
         ref = tx_ref or generate_reference_id()
+        clean_msisdn = normalise_msisdn(phone_number)
+        payload: dict[str, Any] = {
+            "tx_ref": ref,
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "customer": {
+                "email": f"{clean_msisdn}@mobilemoney.example.com",
+                "phonenumber": clean_msisdn,
+            },
+        }
+        if resolved_redirect is not None:
+            payload["redirect_url"] = resolved_redirect
         response = self._http.request(
             "POST",
             "/v3/payments",
             headers=self._headers(),
-            json={
-                "tx_ref": ref,
-                "amount": amount,
-                "currency": currency,
-                "redirect_url": redirect_url or self._config.redirect_url,
-                "customer": {
-                    "email": f"{normalise_msisdn(phone_number)}@mobilemoney.example.com",
-                    "phonenumber": normalise_msisdn(phone_number),
-                },
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -146,6 +166,8 @@ class FlutterwaveClient:
         narration: str = "Payout",
     ) -> dict[str, Any]:
         """Initiate a Flutterwave transfer."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = reference or generate_reference_id()
         response = self._http.request(
             "POST",
@@ -154,8 +176,8 @@ class FlutterwaveClient:
             json={
                 "account_bank": "MPS",
                 "account_number": normalise_msisdn(account_number),
-                "amount": amount,
-                "currency": currency,
+                "amount": validated_amount,
+                "currency": validated_currency,
                 "narration": narration,
                 "reference": ref,
             },
@@ -195,6 +217,7 @@ class AsyncFlutterwaveClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -213,21 +236,29 @@ class AsyncFlutterwaveClient:
         tx_ref: str | None = None,
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if redirect_url is not None:
+            validate_callback_url(redirect_url)
+        resolved_redirect = redirect_url or self._config.redirect_url
         ref = tx_ref or generate_reference_id()
+        clean_msisdn = normalise_msisdn(phone_number)
+        payload: dict[str, Any] = {
+            "tx_ref": ref,
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "customer": {
+                "email": f"{clean_msisdn}@mobilemoney.example.com",
+                "phonenumber": clean_msisdn,
+            },
+        }
+        if resolved_redirect is not None:
+            payload["redirect_url"] = resolved_redirect
         response = await self._http.request(
             "POST",
             "/v3/payments",
             headers=self._headers(),
-            json={
-                "tx_ref": ref,
-                "amount": amount,
-                "currency": currency,
-                "redirect_url": redirect_url or self._config.redirect_url,
-                "customer": {
-                    "email": f"{normalise_msisdn(phone_number)}@mobilemoney.example.com",
-                    "phonenumber": normalise_msisdn(phone_number),
-                },
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -249,6 +280,8 @@ class AsyncFlutterwaveClient:
         reference: str | None = None,
         narration: str = "Payout",
     ) -> dict[str, Any]:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = reference or generate_reference_id()
         response = await self._http.request(
             "POST",
@@ -257,8 +290,8 @@ class AsyncFlutterwaveClient:
             json={
                 "account_bank": "MPS",
                 "account_number": normalise_msisdn(account_number),
-                "amount": amount,
-                "currency": currency,
+                "amount": validated_amount,
+                "currency": validated_currency,
                 "narration": narration,
                 "reference": ref,
             },

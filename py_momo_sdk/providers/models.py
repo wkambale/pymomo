@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from py_momo_sdk.utils import validate_amount, validate_currency
+from py_momo_sdk.utils import validate_amount, validate_callback_url, validate_currency
 
 
 class NormalizedStatus(str, Enum):
@@ -56,6 +56,13 @@ class PaymentRequest(BaseModel):
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
 
+    @field_validator("callback_url")
+    @classmethod
+    def _check_callback_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_callback_url(value)
+
 
 class DisbursementRequest(BaseModel):
     """Normalized disbursement payout request."""
@@ -69,6 +76,7 @@ class DisbursementRequest(BaseModel):
     payer_message: str = ""
     payee_note: str = ""
     reference_id: str | None = None
+    callback_url: str | None = None
 
     @field_validator("amount")
     @classmethod
@@ -79,6 +87,13 @@ class DisbursementRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("callback_url")
+    @classmethod
+    def _check_callback_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_callback_url(value)
 
 
 class PaymentResult(BaseModel):

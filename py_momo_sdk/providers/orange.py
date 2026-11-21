@@ -22,8 +22,13 @@ from py_momo_sdk.providers.models import (
 from py_momo_sdk.utils import (
     build_basic_auth_header,
     generate_reference_id,
+    validate_amount,
+    validate_base_url,
     validate_callback_url,
+    validate_currency,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 
@@ -49,21 +54,33 @@ class OrangeMoneyConfig:
     client_id: str
     client_secret: str
     merchant_key: str
-    return_url: str = "https://example.com/orange/return"
-    cancel_url: str = "https://example.com/orange/cancel"
-    notif_url: str = "https://example.com/orange/webhook"
+    return_url: str | None = None
+    cancel_url: str | None = None
+    notif_url: str | None = None
     base_url: str = ORANGE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
+    retry_backoff: float = 0.5
 
     def __post_init__(self) -> None:
-        validate_header_value(self.client_id, field_name="client_id")
-        validate_header_value(self.client_secret, field_name="client_secret")
-        validate_header_value(self.merchant_key, field_name="merchant_key")
-        validate_callback_url(self.return_url)
-        validate_callback_url(self.cancel_url)
-        validate_callback_url(self.notif_url)
+        for fname, fval in (
+            ("client_id", self.client_id),
+            ("client_secret", self.client_secret),
+            ("merchant_key", self.merchant_key),
+        ):
+            if not isinstance(fval, str) or not fval.strip():
+                raise ValueError(f"{fname} must be a non-empty string")
+            validate_header_value(fval, field_name=fname)
+        if self.return_url is not None:
+            validate_callback_url(self.return_url)
+        if self.cancel_url is not None:
+            validate_callback_url(self.cancel_url)
+        if self.notif_url is not None:
+            validate_callback_url(self.notif_url)
+        validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
 
     def __repr__(self) -> str:
         return (
@@ -128,6 +145,7 @@ class OrangeMoneyClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -160,9 +178,23 @@ class OrangeMoneyClient:
         currency: str,
         *,
         order_id: str | None = None,
+        return_url: str | None = None,
+        cancel_url: str | None = None,
         notif_url: str | None = None,
     ) -> dict[str, Any]:
         """Initialize an Orange Money web payment session."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        for u in (return_url, cancel_url, notif_url):
+            if u is not None:
+                validate_callback_url(u)
+        resolved_notif = notif_url or self._config.notif_url
+        resolved_return = return_url or self._config.return_url or resolved_notif
+        resolved_cancel = cancel_url or self._config.cancel_url or resolved_notif
+        if not resolved_notif or not resolved_return or not resolved_cancel:
+            raise ValueError(
+                "return_url, cancel_url, and notif_url are required for Orange Money"
+            )
         ref = order_id or generate_reference_id()
         response = self._http.request(
             "POST",
@@ -173,12 +205,12 @@ class OrangeMoneyClient:
             },
             json={
                 "merchant_key": self._config.merchant_key,
-                "currency": currency,
+                "currency": validated_currency,
                 "order_id": ref,
-                "amount": amount,
-                "return_url": self._config.return_url,
-                "cancel_url": self._config.cancel_url,
-                "notif_url": notif_url or self._config.notif_url,
+                "amount": validated_amount,
+                "return_url": resolved_return,
+                "cancel_url": resolved_cancel,
+                "notif_url": resolved_notif,
                 "lang": "en",
             },
             product_name="orange_money",
@@ -232,6 +264,7 @@ class AsyncOrangeMoneyClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -264,8 +297,22 @@ class AsyncOrangeMoneyClient:
         currency: str,
         *,
         order_id: str | None = None,
+        return_url: str | None = None,
+        cancel_url: str | None = None,
         notif_url: str | None = None,
     ) -> dict[str, Any]:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        for u in (return_url, cancel_url, notif_url):
+            if u is not None:
+                validate_callback_url(u)
+        resolved_notif = notif_url or self._config.notif_url
+        resolved_return = return_url or self._config.return_url or resolved_notif
+        resolved_cancel = cancel_url or self._config.cancel_url or resolved_notif
+        if not resolved_notif or not resolved_return or not resolved_cancel:
+            raise ValueError(
+                "return_url, cancel_url, and notif_url are required for Orange Money"
+            )
         ref = order_id or generate_reference_id()
         response = await self._http.request(
             "POST",
@@ -276,12 +323,12 @@ class AsyncOrangeMoneyClient:
             },
             json={
                 "merchant_key": self._config.merchant_key,
-                "currency": currency,
+                "currency": validated_currency,
                 "order_id": ref,
-                "amount": amount,
-                "return_url": self._config.return_url,
-                "cancel_url": self._config.cancel_url,
-                "notif_url": notif_url or self._config.notif_url,
+                "amount": validated_amount,
+                "return_url": resolved_return,
+                "cancel_url": resolved_cancel,
+                "notif_url": resolved_notif,
                 "lang": "en",
             },
             product_name="orange_money",
