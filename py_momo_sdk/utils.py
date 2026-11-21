@@ -14,11 +14,11 @@ from py_momo_sdk.exceptions import PyMomoSDKError
 if TYPE_CHECKING:
     from py_momo_sdk.models import AccountHolderIdType
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 _COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
-_AMOUNT_RE = re.compile(r"^\d+(?:\.\d+)?$")
+_AMOUNT_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
 _HEADER_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _BARE_HOST_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -51,13 +51,18 @@ def validate_base_url(base_url: str) -> str:
         not isinstance(base_url, str)
         or not base_url
         or base_url != base_url.strip()
+        or any(ch.isspace() for ch in base_url)
         or _CONTROL_CHAR_RE.search(base_url)
         or "\\" in base_url
     ):
         raise PyMomoSDKError("Base URL must use HTTPS")
 
+    if "?" in base_url or "#" in base_url:
+        raise PyMomoSDKError("Base URL must not contain a query string or fragment")
+
     try:
         split = urlsplit(base_url)
+        split_port = split.port
         httpx_url = httpx.URL(base_url)
     except (ValueError, httpx.InvalidURL) as exc:
         raise PyMomoSDKError("Base URL must use HTTPS") from exc
@@ -67,7 +72,12 @@ def validate_base_url(base_url: str) -> str:
     httpx_scheme = httpx_url.scheme.lower()
     httpx_host = httpx_url.host.lower()
 
-    if not host or scheme != httpx_scheme or host != httpx_host:
+    if (
+        not host
+        or scheme != httpx_scheme
+        or host != httpx_host
+        or split_port != httpx_url.port
+    ):
         raise PyMomoSDKError("Base URL must use HTTPS")
 
     if not (scheme == "https" or (scheme == "http" and host in _LOCALHOST_HOSTS)):
@@ -102,14 +112,19 @@ def validate_request_path(path: str) -> str:
 
     Raises:
         PyMomoSDKError: If the path is empty, absolute, protocol-relative, or
-            contains control characters or backslashes.
+            contains control characters, whitespace, dot-segments, query/fragment,
+            or backslashes.
     """
+    raw_path = path.split("?", 1)[0] if isinstance(path, str) else ""
     if (
         not isinstance(path, str)
         or not path.startswith("/")
         or path.startswith("//")
         or "\\" in path
+        or "#" in path
+        or any(ch.isspace() for ch in path)
         or _CONTROL_CHAR_RE.search(path)
+        or any(seg in {".", ".."} for seg in raw_path.split("/"))
     ):
         raise PyMomoSDKError("Request path must be a relative path starting with '/'")
 
@@ -132,15 +147,18 @@ def generate_reference_id() -> str:
 
 
 def normalise_msisdn(msisdn: str) -> str:
-    """Strip non-digit characters and return a clean MSISDN string.
+    """Strip non-digit characters and return a clean ASCII MSISDN string.
 
     Does not validate the number against any country's numbering plan.
     Callers are responsible for providing a valid number.
 
     Raises:
-        ValueError: If no digits remain after stripping non-digit characters.
+        TypeError: If ``msisdn`` is not a string.
+        ValueError: If no ASCII digits remain after stripping non-digit characters.
     """
-    digits = re.sub(r"\D", "", msisdn)
+    if not isinstance(msisdn, str):
+        raise TypeError("MSISDN must be a string")
+    digits = re.sub(r"[^0-9]", "", msisdn)
     if not digits:
         raise ValueError("MSISDN must contain at least one digit")
     return digits
@@ -257,23 +275,46 @@ def validate_environment_name(environment: str) -> str:
     return environment
 
 
+def validate_max_retries(max_retries: int) -> int:
+    """Validate that ``max_retries`` is a non-negative integer."""
+    if not isinstance(max_retries, int):
+        raise TypeError("max_retries must be a non-negative integer")
+    if type(max_retries) is bool or max_retries < 0:
+        raise ValueError("max_retries must be a non-negative integer")
+    return max_retries
+
+
+def validate_retry_backoff(retry_backoff: float) -> float:
+    """Validate that ``retry_backoff`` is a positive finite number."""
+    if isinstance(retry_backoff, bool) or not isinstance(retry_backoff, (int, float)):
+        raise TypeError("retry_backoff must be a positive finite number")
+    backoff_float = float(retry_backoff)
+    if not math.isfinite(backoff_float) or backoff_float <= 0:
+        raise ValueError("retry_backoff must be a positive finite number")
+    return backoff_float
+
+
 def validate_callback_url(callback_url: str) -> str:
     """Validate that a callback URL uses HTTPS (or localhost/127.0.0.1 for testing).
 
     Raises:
         ValueError: If the callback URL is not a valid HTTPS/localhost URL or
-            contains embedded credentials or control characters.
+            contains embedded credentials, fragments, whitespace, or control characters.
     """
     if (
         not isinstance(callback_url, str)
         or not callback_url
         or callback_url != callback_url.strip()
+        or any(ch.isspace() for ch in callback_url)
         or _CONTROL_CHAR_RE.search(callback_url)
         or "\\" in callback_url
     ):
         raise ValueError("Callback URL must use HTTPS")
+    if "#" in callback_url:
+        raise ValueError("Callback URL must not contain a fragment")
     try:
         split = urlsplit(callback_url)
+        split_port = split.port
         httpx_url = httpx.URL(callback_url)
     except (ValueError, httpx.InvalidURL) as exc:
         raise ValueError("Callback URL must use HTTPS") from exc
@@ -284,6 +325,7 @@ def validate_callback_url(callback_url: str) -> str:
         not host
         or scheme != httpx_url.scheme.lower()
         or host != httpx_url.host.lower()
+        or split_port != httpx_url.port
         or not (scheme == "https" or (scheme == "http" and host in _LOCALHOST_HOSTS))
     ):
         raise ValueError("Callback URL must use HTTPS")
@@ -295,6 +337,8 @@ def validate_callback_url(callback_url: str) -> str:
         or httpx_url.password
     ):
         raise ValueError("Callback URL must not contain embedded credentials")
+    if split.fragment:
+        raise ValueError("Callback URL must not contain a fragment")
     return callback_url
 
 
@@ -437,11 +481,34 @@ def detect_carrier_from_msisdn(msisdn: str) -> tuple[str, str] | None:
     Returns ``None`` if the prefix is not in the built-in routing table. Callers
     should allow explicit provider overrides for ported numbers.
     """
-    digits = re.sub(r"\D", "", msisdn)
+    if not isinstance(msisdn, str):
+        raise TypeError("MSISDN must be a string")
+    digits = re.sub(r"[^0-9]", "", msisdn)
     for prefix, country, provider in _CARRIER_PREFIX_MAP:
         if digits.startswith(prefix):
             return (country, provider)
     return None
+
+
+def _validate_polling_params(
+    interval: float, backoff: float, max_interval: float
+) -> tuple[float, float, float]:
+    for val in (interval, backoff, max_interval):
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise TypeError("Polling interval, backoff, and max_interval must be valid")
+    interval_f = float(interval)
+    backoff_f = float(backoff)
+    max_interval_f = float(max_interval)
+    if (
+        not math.isfinite(interval_f)
+        or not math.isfinite(backoff_f)
+        or not math.isfinite(max_interval_f)
+        or interval_f <= 0
+        or backoff_f < 1.0
+        or max_interval_f <= 0
+    ):
+        raise ValueError("Polling interval, backoff, and max_interval must be valid")
+    return interval_f, backoff_f, max_interval_f
 
 
 def wait_for_settlement(
@@ -473,15 +540,14 @@ def wait_for_settlement(
     """
     import time
 
-    from py_momo_sdk.exceptions import PyMomoSDKError
-
-    validate_timeout(timeout)
-    if interval <= 0 or backoff < 1.0 or max_interval <= 0:
-        raise ValueError("Polling interval, backoff, and max_interval must be valid")
+    timeout_f = validate_timeout(timeout)
+    interval_f, backoff_f, max_interval_f = _validate_polling_params(
+        interval, backoff, max_interval
+    )
 
     sleeper = sleep_fn or time.sleep
-    deadline = time.monotonic() + timeout
-    delay = min(interval, max_interval)
+    deadline = time.monotonic() + timeout_f
+    delay = min(interval_f, max_interval_f)
 
     while True:
         result = poll_fn()
@@ -496,7 +562,7 @@ def wait_for_settlement(
         if remaining <= 0:
             raise PyMomoSDKError("Transaction settlement polling timed out")
         sleeper(min(delay, remaining))
-        delay = min(delay * backoff, max_interval)
+        delay = min(delay * backoff_f, max_interval_f)
 
 
 async def async_wait_for_settlement(
@@ -512,15 +578,14 @@ async def async_wait_for_settlement(
     import asyncio
     import time
 
-    from py_momo_sdk.exceptions import PyMomoSDKError
-
-    validate_timeout(timeout)
-    if interval <= 0 or backoff < 1.0 or max_interval <= 0:
-        raise ValueError("Polling interval, backoff, and max_interval must be valid")
+    timeout_f = validate_timeout(timeout)
+    interval_f, backoff_f, max_interval_f = _validate_polling_params(
+        interval, backoff, max_interval
+    )
 
     sleeper = sleep_fn or asyncio.sleep
-    deadline = time.monotonic() + timeout
-    delay = min(interval, max_interval)
+    deadline = time.monotonic() + timeout_f
+    delay = min(interval_f, max_interval_f)
 
     while True:
         result = await poll_fn()
@@ -535,4 +600,4 @@ async def async_wait_for_settlement(
         if remaining <= 0:
             raise PyMomoSDKError("Transaction settlement polling timed out")
         await sleeper(min(delay, remaining))
-        delay = min(delay * backoff, max_interval)
+        delay = min(delay * backoff_f, max_interval_f)

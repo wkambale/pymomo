@@ -159,6 +159,18 @@ def test_sandbox_provisioner_guards_and_redaction() -> None:
             AsyncSandboxProvisioner(
                 subscription_key="sub-key", config=PyMomoSDKConfig(), http=None
             )
+
+        # Control chars / blank subscription_key & production base_url without config rejected
+        with pytest.raises(MissingCredentialsError):
+            SandboxProvisioner("   ", http)
+        with pytest.raises(ValueError, match="control characters"):
+            SandboxProvisioner("sub\r\nkey", http)
+        prod_http = HttpClient("https://proxy.momoapi.mtn.com", 30.0)
+        try:
+            with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+                SandboxProvisioner("sub-key", prod_http)
+        finally:
+            prod_http.close()
     finally:
         http.close()
 

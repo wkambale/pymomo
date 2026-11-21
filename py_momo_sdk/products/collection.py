@@ -219,7 +219,9 @@ class Collection(BaseProduct):
             raise ValueError("access_type must be a non-empty string")
         validate_header_value(access_type, field_name="access_type")
 
-        if login_hint.isdigit() or login_hint.startswith("+"):
+        if (login_hint.isascii() and login_hint.isdigit()) or login_hint.startswith(
+            "+"
+        ):
             login_hint = f"ID:{normalise_msisdn(login_hint)}/MSISDN"
 
         from py_momo_sdk.models import BcAuthorizeRequest

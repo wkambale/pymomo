@@ -125,3 +125,82 @@ def test_validate_reference_id() -> None:
     ):
         with pytest.raises(ValueError, match="must be a valid UUID v4"):
             validate_reference_id(non_canonical)
+
+
+def test_url_path_numeric_and_polling_hardening() -> None:
+    """Verify hardened URL, path, ASCII-digit, header, and polling validators."""
+    from py_momo_sdk.exceptions import PyMomoSDKError
+    from py_momo_sdk.utils import (
+        detect_carrier_from_msisdn,
+        validate_amount,
+        validate_base_url,
+        validate_callback_url,
+        validate_header_value,
+        validate_max_retries,
+        validate_request_path,
+        validate_retry_backoff,
+        wait_for_settlement,
+    )
+
+    # Trailing empty query/fragment and invalid ports rejected in validate_base_url
+    for bad_base in (
+        "https://example.com?",
+        "https://example.com#",
+        "https://example.com:99999",
+        "https://example.com/a b",
+    ):
+        with pytest.raises(PyMomoSDKError):
+            validate_base_url(bad_base)
+
+    # Dot-segments, fragment, and whitespace rejected in validate_request_path; query allowed
+    assert (
+        validate_request_path("/oauth/v1/generate?grant_type=client_credentials")
+        == "/oauth/v1/generate?grant_type=client_credentials"
+    )
+    for bad_path in (
+        "/collection/../disbursement/v1_0/account/balance",
+        "/collection/./token/",
+        "/collection/../token/?foo=1",
+        "/collection/token/#frag",
+        "/collection/token/ ",
+    ):
+        with pytest.raises(PyMomoSDKError):
+            validate_request_path(bad_path)
+
+    # Fragments, whitespace, and invalid ports rejected in validate_callback_url
+    for bad_cb in (
+        "https://example.com/hook#frag",
+        "https://example.com/a b",
+        "https://example.com:99999/hook",
+    ):
+        with pytest.raises(ValueError):
+            validate_callback_url(bad_cb)
+
+    # Non-ASCII Unicode digits rejected in amount and stripped in MSISDN/carrier
+    for bad_amount in ("\u0661\u0660\u0660", "\uff11\uff10.\uff15"):
+        with pytest.raises(ValueError, match="Amount"):
+            validate_amount(bad_amount)
+    with pytest.raises(ValueError, match="at least one digit"):
+        normalise_msisdn("\u0667\u0667\u0661")
+    assert normalise_msisdn("+256 \u0667\u0667\u0661 771234567") == "256771234567"
+    assert detect_carrier_from_msisdn("\u0662\u0665\u0666\u0667\u0667") is None
+
+    # C1 control characters rejected in header values
+    with pytest.raises(ValueError, match="control characters"):
+        validate_header_value("bad\x85val", field_name="test_hdr")
+
+    # Retry & polling validators reject bool, float max_retries, NaN, and inf
+    for bad_retries in (True, False, -1, 1.5):  # type: ignore[list-item]
+        with pytest.raises((TypeError, ValueError), match="max_retries"):
+            validate_max_retries(bad_retries)  # type: ignore[arg-type]
+    for bad_backoff in (True, 0, -0.5, float("inf"), float("nan")):
+        with pytest.raises((TypeError, ValueError), match="retry_backoff"):
+            validate_retry_backoff(bad_backoff)
+    for bad_interval in (True, 0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises((TypeError, ValueError), match="Polling"):
+            wait_for_settlement(lambda: None, interval=bad_interval)
+        with pytest.raises((TypeError, ValueError), match="Polling"):
+            wait_for_settlement(lambda: None, max_interval=bad_interval)
+    for bad_mult in (True, 0.5, float("inf"), float("nan")):
+        with pytest.raises((TypeError, ValueError), match="Polling"):
+            wait_for_settlement(lambda: None, backoff=bad_mult)
