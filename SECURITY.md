@@ -6,6 +6,7 @@ The following versions of Py MoMo SDK (`py-momo-sdk`) currently receive security
 
 | Version | Supported |
 | --- | --- |
+| 1.1.x | Yes |
 | 1.0.x | Yes |
 | < 1.0.0 | No |
 

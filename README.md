@@ -136,20 +136,25 @@ asyncio.run(main())
 
 ## CLI usage
 
-Py MoMo SDK bundles the `py-momo-sdk` CLI tool for sandbox management, balance checks, and payment queries:
+Py MoMo SDK bundles the `py-momo-sdk` CLI tool for sandbox management, balance checks, and payment queries. Export credentials as `PY_MOMO_SDK_*` environment variables so secrets are not recorded in shell history or process listings:
 
 ```bash
+export PY_MOMO_SDK_ENVIRONMENT="sandbox"
+export PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY="your-key"
+export PY_MOMO_SDK_COLLECTION_API_USER="550e8400-e29b-41d4-a716-446655440000"
+export PY_MOMO_SDK_COLLECTION_API_KEY="your-api-key"
+
 # Show installed version
 py-momo-sdk --version
 
 # Provision a sandbox environment
-py-momo-sdk sandbox provision --subscription-key "your-key"
+py-momo-sdk sandbox provision --callback-host "https://example.com"
 
 # Query the collection balance
-py-momo-sdk collection balance --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "key"
+py-momo-sdk collection balance
 
 # Check the status of a request to pay transaction
-py-momo-sdk collection status "550e8400-e29b-41d4-a716-446655440000" --subscription-key "your-key" --api-user "550e8400-e29b-41d4-a716-446655440000" --api-key "key"
+py-momo-sdk collection status "550e8400-e29b-41d4-a716-446655440000"
 ```
 
 Use `py-momo-sdk --help` to list all available commands and flags.

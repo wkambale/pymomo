@@ -1,5 +1,5 @@
 site_name: Py MoMo SDK
-site_description: Production-grade, strictly typed Python client library for MTN Mobile Money and Airtel Money APIs.
+site_description: Strictly typed Python client library for MTN Mobile Money and Airtel Money APIs.
 site_url: https://wkambale.github.io/pymomo/
 repo_url: https://github.com/wkambale/pymomo
 repo_name: wkambale/pymomo

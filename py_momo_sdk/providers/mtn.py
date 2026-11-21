@@ -25,7 +25,7 @@ _MTN_CAPABILITIES = ProviderCapabilities(
     supports_collection=True,
     supports_disbursement=True,
     supports_balance=True,
-    supports_webhook_hmac=True,
+    supports_webhook_hmac=False,
     currencies=("UGX", "GHS", "ZMW", "XAF", "XOF", "EUR", "ZAR", "SZL", "LRD", "GNF"),
 )
 

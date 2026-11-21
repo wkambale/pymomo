@@ -6,7 +6,7 @@ Py MoMo SDK includes a unified provider abstraction and routing layer (`PaymentR
 
 | Provider | Sync adapter | Async adapter | Capabilities |
 | --- | --- | --- | --- |
-| MTN MoMo | `MtnMomoProvider` | `AsyncMtnMomoProvider` | Collection, disbursement, balance, HMAC webhooks |
+| MTN MoMo | `MtnMomoProvider` | `AsyncMtnMomoProvider` | Collection, disbursement, balance |
 | Airtel Money | `AirtelMoneyProvider` | `AsyncAirtelMoneyProvider` | Collection, disbursement, balance |
 | Wave | `WaveProvider` | `AsyncWaveProvider` | Checkout sessions, payouts, balance, timestamped HMAC |
 | M-Pesa (Daraja) | `MpesaProvider` | `AsyncMpesaProvider` | STK Push, STK query, B2C disbursement |
@@ -16,7 +16,7 @@ Py MoMo SDK includes a unified provider abstraction and routing layer (`PaymentR
 
 ## Routing payments across providers
 
-Register provider adapters with `PaymentRouter` (or `AsyncPaymentRouter`) to route by MSISDN carrier prefix, explicit provider ID, or automatic `5xx` fallback:
+Register provider adapters with `PaymentRouter` (or `AsyncPaymentRouter`) to route by MSISDN carrier prefix, explicit provider ID, or safe pre-flight failover (`fallback=True`). By default, `fallback=True` fails over only on unambiguous pre-flight authentication or missing-credential errors so ambiguous `5xx` or timeout responses cannot double-bill a subscriber; set `allow_ambiguous_write_fallback=True` only when downstream idempotency is safe across providers:
 
 ```python
 from py_momo_sdk import (
@@ -52,7 +52,13 @@ airtel_client = AirtelClient(
         currency="UGX",
     )
 )
-wave_client = WaveClient(WaveConfig(api_key="your-wave-api-key"))
+wave_client = WaveClient(
+    WaveConfig(
+        api_key="your-wave-api-key",
+        success_url="https://your-app.com/wave/success",
+        error_url="https://your-app.com/wave/error",
+    )
+)
 
 router = PaymentRouter(
     [
@@ -62,7 +68,7 @@ router = PaymentRouter(
     ]
 )
 
-# Routes 25677... automatically to mtn_momo and falls back on 5xx errors
+# Routes 25677... automatically to mtn_momo and fails over on pre-flight auth errors
 result = router.collect(
     PaymentRequest(
         amount="5000.00",
@@ -93,6 +99,7 @@ with MpesaClient(
         consumer_secret="your-consumer-secret",
         short_code="174379",
         passkey="your-daraja-passkey",
+        callback_url="https://your-app.com/mpesa/callback",
     )
 ) as mpesa_client:
     provider = MpesaProvider(mpesa_client)
@@ -109,12 +116,12 @@ with MpesaClient(
 
 ## Discovering third-party provider plugins
 
-External packages can register custom adapters via the `py_momo_sdk.providers` entry-point group in `pyproject.toml`:
+External packages can register custom adapters via the `py_momo_sdk.providers` entry-point group in `pyproject.toml`. Pass `allowed_plugins` in production to restrict loading to trusted entry-point names:
 
 ```python
 from py_momo_sdk.providers import discover_provider_plugins
 
-plugins = discover_provider_plugins()
+plugins = discover_provider_plugins(allowed_plugins={"my_custom_gateway"})
 print(list(plugins.keys()))
 ```
 

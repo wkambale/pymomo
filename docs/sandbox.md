@@ -63,6 +63,8 @@ with PyMomoSDK(config) as client:
 Verify the configuration of an existing sandbox API user:
 
 ```python
+with PyMomoSDK(config) as client:
+    provisioner = client.create_sandbox_provisioner("your-subscription-key")
     user_info = provisioner.get_api_user(api_user)
     print(f"Target environment: {user_info.target_environment}")
     print(f"Provider callback host: {user_info.provider_callback_host}")
@@ -73,6 +75,8 @@ Verify the configuration of an existing sandbox API user:
 Generate the API key used to obtain product access tokens:
 
 ```python
+with PyMomoSDK(config) as client:
+    provisioner = client.create_sandbox_provisioner("your-subscription-key")
     api_key = provisioner.create_api_key(api_user)
     print(f"API key: {api_key}")
 ```
