@@ -312,3 +312,110 @@ def test_non_dict_json_error_body_and_parse_json_dict(httpx_mock: HTTPXMock) -> 
     bad_schema_resp = httpx.Response(200, json={"unexpected": "value"})
     with pytest.raises(PyMomoSDKError, match="did not match expected Balance schema"):
         parse_model(bad_schema_resp, Balance)
+
+
+def test_redirects_injected_client_ownership_and_max_response_bytes_sync(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify 3xx rejection, injected client safety/ownership, and response byte bounds."""
+    # 1. 302 redirect rejected rather than silently treated as success
+    httpx_mock.add_response(
+        method="POST",
+        url="https://example.com/collection/v1_0/requesttopay",
+        status_code=302,
+        headers={"Location": "https://evil.example.com/collect"},
+    )
+    with (
+        HttpClient("https://example.com", 10.0) as owned_client,
+        pytest.raises(PyMomoSDKError, match="redirect HTTP status: 302"),
+    ):
+        owned_client.request("POST", "/collection/v1_0/requesttopay", headers={})
+
+    # 2. Injected client with http:// base_url rejected
+    insecure = httpx.Client(base_url="http://insecure.example.com")
+    try:
+        with pytest.raises(PyMomoSDKError, match="HTTPS"):
+            HttpClient("https://example.com", 10.0, client=insecure)
+    finally:
+        insecure.close()
+
+    # 3. Injected client (even with follow_redirects=True and empty base_url) is not closed
+    #    and does NOT follow redirects
+    shared = httpx.Client(follow_redirects=True)
+    try:
+        httpx_mock.add_response(
+            method="GET",
+            url="https://example.com/redir",
+            status_code=307,
+            headers={"Location": "https://evil.example.com/leak"},
+        )
+        with (
+            HttpClient("https://example.com", 10.0, client=shared) as wrapped,
+            pytest.raises(PyMomoSDKError, match="redirect HTTP status: 307"),
+        ):
+            wrapped.request(
+                "GET",
+                "/redir",
+                headers={"Ocp-Apim-Subscription-Key": "secret-sub"},
+            )
+        assert shared.is_closed is False
+        assert (
+            len(httpx_mock.get_requests()) == 2
+        )  # No request sent to evil.example.com
+    finally:
+        shared.close()
+
+    # 4. Oversized response body rejected
+    httpx_mock.add_response(
+        method="GET",
+        url="https://example.com/huge",
+        content=b"x" * 256,
+        status_code=200,
+    )
+    with (
+        HttpClient("https://example.com", 10.0, max_response_bytes=64) as small_cap,
+        pytest.raises(PyMomoSDKError, match="maximum allowed size"),
+    ):
+        small_cap.request("GET", "/huge", headers={})
+
+
+@pytest.mark.asyncio
+async def test_redirects_injected_client_and_max_response_bytes_async(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify async 3xx rejection, injected AsyncClient ownership, and response bounds."""
+    insecure = httpx.AsyncClient(base_url="http://insecure.example.com")
+    try:
+        with pytest.raises(PyMomoSDKError, match="HTTPS"):
+            AsyncHttpClient("https://example.com", 10.0, client=insecure)
+    finally:
+        await insecure.aclose()
+
+    shared = httpx.AsyncClient(follow_redirects=True)
+    try:
+        httpx_mock.add_response(
+            method="POST",
+            url="https://example.com/redir",
+            status_code=302,
+            headers={"Location": "https://evil.example.com/leak"},
+        )
+        async with AsyncHttpClient(
+            "https://example.com", 10.0, client=shared
+        ) as wrapped:
+            with pytest.raises(PyMomoSDKError, match="redirect HTTP status: 302"):
+                await wrapped.request("POST", "/redir", headers={})
+        assert shared.is_closed is False
+
+        httpx_mock.add_response(
+            method="GET",
+            url="https://example.com/huge",
+            content=b"y" * 256,
+            status_code=200,
+        )
+        async with AsyncHttpClient(
+            "https://example.com", 10.0, max_response_bytes=64
+        ) as small_cap:
+            with pytest.raises(PyMomoSDKError, match="maximum allowed size"):
+                await small_cap.request("GET", "/huge", headers={})
+    finally:
+        await shared.aclose()

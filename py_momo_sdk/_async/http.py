@@ -11,16 +11,14 @@ import httpx
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.exceptions import (
     AuthenticationError,
-    BadRequestError,
-    ConflictError,
     PyMomoSDKError,
-    PyMomoSDKServerError,
-    ResourceNotFoundError,
 )
 from py_momo_sdk.http import (
     _RETRYABLE_STATUS_CODES,
+    DEFAULT_MAX_RESPONSE_BYTES,
     _compute_retry_delay,
     _is_retryable_request,
+    _raise_for_status,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
 from py_momo_sdk.utils import (
@@ -47,19 +45,35 @@ class AsyncHttpClient:
         *,
         max_retries: int = 0,
         retry_backoff: float = 0.5,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         client: httpx.AsyncClient | None = None,
         telemetry: TelemetryHook | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
         validated_timeout = validate_timeout(timeout)
+        if (
+            isinstance(max_response_bytes, bool)
+            or not isinstance(max_response_bytes, int)
+            or max_response_bytes <= 0
+        ):
+            raise ValueError("max_response_bytes must be a positive integer")
+        self._validated_base_url = validated_url.rstrip("/")
         self._max_retries = validate_max_retries(max_retries)
         self._retry_backoff = validate_retry_backoff(retry_backoff)
+        self._max_response_bytes = max_response_bytes
         self._telemetry = telemetry
-        self._client = client or httpx.AsyncClient(
-            base_url=validated_url,
-            timeout=validated_timeout,
-            follow_redirects=False,
-        )
+        self._owns_client = client is None
+        if client is not None:
+            injected_base = str(client.base_url)
+            if injected_base:
+                validate_base_url(injected_base)
+            self._client = client
+        else:
+            self._client = httpx.AsyncClient(
+                base_url=validated_url,
+                timeout=validated_timeout,
+                follow_redirects=False,
+            )
 
     def _emit_telemetry(
         self,
@@ -85,6 +99,59 @@ class AsyncHttpClient:
             )
         )
 
+    async def _execute_bounded_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        json: Any,
+        data: Any,
+    ) -> httpx.Response:
+        target = (
+            path if str(self._client.base_url) else f"{self._validated_base_url}{path}"
+        )
+        if "request" in self._client.__dict__:
+            response = await self._client.request(
+                method,
+                target,
+                headers=headers,
+                json=json,
+                data=data,
+                follow_redirects=False,
+            )
+            if len(response.content) > self._max_response_bytes:
+                raise PyMomoSDKError(
+                    f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                )
+            return response
+
+        req = self._client.build_request(
+            method, target, headers=headers, json=json, data=data
+        )
+        response = await self._client.send(req, stream=True, follow_redirects=False)
+        try:
+            cl_header = response.headers.get("Content-Length")
+            if cl_header is not None:
+                try:
+                    if int(cl_header) > self._max_response_bytes:
+                        raise PyMomoSDKError(
+                            f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                        )
+                except ValueError:
+                    pass
+            buf = bytearray()
+            async for chunk in response.aiter_bytes():
+                buf.extend(chunk)
+                if len(buf) > self._max_response_bytes:
+                    raise PyMomoSDKError(
+                        f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                    )
+            response._content = bytes(buf)
+        finally:
+            await response.aclose()
+        return response
+
     async def _send_with_transient_retries(
         self,
         method: str,
@@ -103,7 +170,7 @@ class AsyncHttpClient:
         for attempt in range(attempts):
             started = time.monotonic()
             try:
-                response = await self._client.request(
+                response = await self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
             except httpx.TimeoutException:
@@ -228,36 +295,12 @@ class AsyncHttpClient:
         return response
 
     async def close(self) -> None:
-        """Close the underlying client session."""
-        await self._client.aclose()
+        """Close the underlying client session if owned by this wrapper."""
+        if self._owns_client:
+            await self._client.aclose()
 
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
-
-
-def _raise_for_status(response: httpx.Response) -> None:
-    """Map HTTP status codes to custom exception classes."""
-    if response.status_code < 400:
-        return
-    body: dict[str, Any] = {}
-    try:
-        parsed = response.json()
-        if isinstance(parsed, dict):
-            body = parsed
-    except ValueError:
-        body = {}
-
-    if response.status_code == 400:
-        raise BadRequestError(body.get("message", "Bad request"), response_body=body)
-    if response.status_code == 401:
-        raise AuthenticationError("Invalid or expired credentials")
-    if response.status_code == 404:
-        raise ResourceNotFoundError("Resource not found")
-    if response.status_code == 409:
-        raise ConflictError("Duplicate X-Reference-Id")
-    if response.status_code >= 500:
-        raise PyMomoSDKServerError(f"MTN server error: {response.status_code}")
-    raise PyMomoSDKError(f"Unexpected HTTP status: {response.status_code}")

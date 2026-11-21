@@ -34,6 +34,7 @@ logger = logging.getLogger("py_momo_sdk.http")
 
 _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+DEFAULT_MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB
 
 
 def _is_retryable_request(method: str, headers: dict[str, str]) -> bool:
@@ -69,19 +70,35 @@ class HttpClient:
         *,
         max_retries: int = 0,
         retry_backoff: float = 0.5,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         client: httpx.Client | None = None,
         telemetry: TelemetryHook | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
         validated_timeout = validate_timeout(timeout)
+        if (
+            isinstance(max_response_bytes, bool)
+            or not isinstance(max_response_bytes, int)
+            or max_response_bytes <= 0
+        ):
+            raise ValueError("max_response_bytes must be a positive integer")
+        self._validated_base_url = validated_url.rstrip("/")
         self._max_retries = validate_max_retries(max_retries)
         self._retry_backoff = validate_retry_backoff(retry_backoff)
+        self._max_response_bytes = max_response_bytes
         self._telemetry = telemetry
-        self._client = client or httpx.Client(
-            base_url=validated_url,
-            timeout=validated_timeout,
-            follow_redirects=False,
-        )
+        self._owns_client = client is None
+        if client is not None:
+            injected_base = str(client.base_url)
+            if injected_base:
+                validate_base_url(injected_base)
+            self._client = client
+        else:
+            self._client = httpx.Client(
+                base_url=validated_url,
+                timeout=validated_timeout,
+                follow_redirects=False,
+            )
 
     def _emit_telemetry(
         self,
@@ -107,6 +124,59 @@ class HttpClient:
             )
         )
 
+    def _execute_bounded_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        json: Any,
+        data: Any,
+    ) -> httpx.Response:
+        target = (
+            path if str(self._client.base_url) else f"{self._validated_base_url}{path}"
+        )
+        if "request" in self._client.__dict__:
+            response = self._client.request(
+                method,
+                target,
+                headers=headers,
+                json=json,
+                data=data,
+                follow_redirects=False,
+            )
+            if len(response.content) > self._max_response_bytes:
+                raise PyMomoSDKError(
+                    f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                )
+            return response
+
+        req = self._client.build_request(
+            method, target, headers=headers, json=json, data=data
+        )
+        response = self._client.send(req, stream=True, follow_redirects=False)
+        try:
+            cl_header = response.headers.get("Content-Length")
+            if cl_header is not None:
+                try:
+                    if int(cl_header) > self._max_response_bytes:
+                        raise PyMomoSDKError(
+                            f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                        )
+                except ValueError:
+                    pass
+            buf = bytearray()
+            for chunk in response.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > self._max_response_bytes:
+                    raise PyMomoSDKError(
+                        f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                    )
+            response._content = bytes(buf)
+        finally:
+            response.close()
+        return response
+
     def _send_with_transient_retries(
         self,
         method: str,
@@ -125,7 +195,7 @@ class HttpClient:
         for attempt in range(attempts):
             started = time.monotonic()
             try:
-                response = self._client.request(
+                response = self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
             except httpx.TimeoutException:
@@ -246,8 +316,9 @@ class HttpClient:
         return response
 
     def close(self) -> None:
-        """Close the underlying client session."""
-        self._client.close()
+        """Close the underlying client session if owned by this wrapper."""
+        if self._owns_client:
+            self._client.close()
 
     def __enter__(self) -> Self:
         return self
@@ -292,8 +363,10 @@ def parse_model(response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
 
 def _raise_for_status(response: httpx.Response) -> None:
     """Map HTTP status codes to custom exception classes."""
-    if response.status_code < 400:
+    if 200 <= response.status_code < 300:
         return
+    if 300 <= response.status_code < 400:
+        raise PyMomoSDKError(f"Unexpected redirect HTTP status: {response.status_code}")
     body: dict[str, Any] = {}
     try:
         parsed = response.json()
@@ -303,7 +376,9 @@ def _raise_for_status(response: httpx.Response) -> None:
         body = {}
 
     if response.status_code == 400:
-        raise BadRequestError(body.get("message", "Bad request"), response_body=body)
+        raw_msg = body.get("message")
+        msg = raw_msg if isinstance(raw_msg, str) and raw_msg else "Bad request"
+        raise BadRequestError(msg, response_body=body)
     if response.status_code == 401:
         raise AuthenticationError("Invalid or expired credentials")
     if response.status_code == 404:
