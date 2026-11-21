@@ -375,3 +375,70 @@ def test_local_mock_server_and_cli_carrier() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+    # Non-loopback host, invalid status, oversized body, malformed JSON, FAILED mapping, and FIFO eviction
+    from py_momo_sdk.mock_server import create_mock_server
+
+    with pytest.raises(ValueError, match="non-loopback"):
+        create_mock_server(host="0.0.0.0")  # nosec B104
+    with pytest.raises(ValueError, match="default_status"):
+        create_mock_server(default_status="BOGUS")
+
+    fail_srv, fail_state, _ = start_mock_server_thread(
+        port=0, default_status="FAILED", max_body_bytes=64, max_entries=2
+    )
+    fbase = f"http://127.0.0.1:{fail_srv.server_address[1]}"
+    try:
+        # Oversized body -> 413; invalid JSON -> 400; nested path -> 404
+        assert (
+            httpx.post(
+                f"{fbase}/collection/v1_0/requesttopay",
+                content=b"x" * 128,
+                timeout=5.0,
+            ).status_code
+            == 413
+        )
+        assert (
+            httpx.post(
+                f"{fbase}/collection/v1_0/requesttopay",
+                content=b"{bad-json",
+                timeout=5.0,
+            ).status_code
+            == 400
+        )
+        assert (
+            httpx.get(
+                f"{fbase}/collection/v1_0/requesttopay/a/b", timeout=5.0
+            ).status_code
+            == 404
+        )
+
+        # Airtel with null transaction & FAILED -> TF
+        assert (
+            httpx.post(
+                f"{fbase}/merchant/v1/payments/",
+                json={"reference": "air-1", "transaction": None},
+                timeout=5.0,
+            ).status_code
+            == 200
+        )
+        air_get = httpx.get(f"{fbase}/standard/v1/payments/air-1", timeout=5.0)
+        assert air_get.json()["data"]["transaction"]["status"] == "TF"
+
+        # Wave FAILED -> failed & FIFO eviction on max_entries=2
+        for idx in range(3):
+            httpx.post(
+                f"{fbase}/v1/checkout/sessions",
+                json={
+                    "amount": "10",
+                    "currency": "XOF",
+                    "client_reference": f"r-{idx}",
+                },
+                timeout=5.0,
+            )
+        assert len(fail_state.wave_sessions) == 2
+        assert "cos-1" not in fail_state.wave_sessions
+        assert fail_state.wave_sessions["cos-3"]["payment_status"] == "failed"
+    finally:
+        fail_srv.shutdown()
+        fail_srv.server_close()

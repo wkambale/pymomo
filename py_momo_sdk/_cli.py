@@ -475,11 +475,21 @@ def run_mock_gateway(
     status: str = typer.Option(
         "SUCCESSFUL",
         "--status",
-        help="Default transaction status returned by the mock server.",
+        help="Default transaction status returned by the mock server (PENDING, SUCCESSFUL, or FAILED).",
+    ),
+    allow_non_loopback: bool = typer.Option(
+        False,
+        "--allow-non-loopback",
+        help="Explicitly allow binding the unauthenticated mock server to a non-loopback interface.",
     ),
 ) -> None:
     """Start a local HTTP mock gateway server for CI and sandbox testing."""
-    server, _state = create_mock_server(host, port, default_status=status)
+    server, _state = create_mock_server(
+        host,
+        port,
+        default_status=status,
+        allow_non_loopback=allow_non_loopback,
+    )
     bound_host, bound_port = server.server_address[:2]
     typer.echo(
         f"Py MoMo SDK mock gateway listening on http://{bound_host!s}:{bound_port}"
@@ -487,7 +497,7 @@ def run_mock_gateway(
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        server.shutdown()
+        pass
     finally:
         server.server_close()
 
