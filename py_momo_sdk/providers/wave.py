@@ -20,8 +20,13 @@ from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
     normalise_msisdn,
+    validate_amount,
+    validate_base_url,
     validate_callback_url,
+    validate_currency,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 from py_momo_sdk.webhooks import WebhookHandler
@@ -47,21 +52,27 @@ class WaveConfig:
 
     api_key: str
     webhook_secret: str | None = None
-    success_url: str = "https://example.com/success"
-    error_url: str = "https://example.com/error"
+    success_url: str | None = None
+    error_url: str | None = None
     base_url: str = WAVE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
+    retry_backoff: float = 0.5
 
     def __post_init__(self) -> None:
+        if not isinstance(self.api_key, str) or not self.api_key.strip():
+            raise ValueError("api_key must be a non-empty string")
         validate_header_value(self.api_key, field_name="api_key")
         if self.webhook_secret is not None:
             validate_header_value(self.webhook_secret, field_name="webhook_secret")
-        validate_callback_url(self.success_url)
-        validate_callback_url(self.error_url)
+        if self.success_url is not None:
+            validate_callback_url(self.success_url)
+        if self.error_url is not None:
+            validate_callback_url(self.error_url)
+        validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
-        if isinstance(self.max_retries, bool) or self.max_retries < 0:
-            raise ValueError("max_retries must be a non-negative integer")
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
 
     def __repr__(self) -> str:
         return (
@@ -124,6 +135,7 @@ class WaveClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -133,6 +145,7 @@ class WaveClient:
             "Content-Type": "application/json",
         }
         if idempotency_key:
+            validate_header_value(idempotency_key, field_name="client_reference")
             headers["Idempotency-Key"] = idempotency_key
             headers["X-Reference-Id"] = idempotency_key
         return headers
@@ -147,12 +160,24 @@ class WaveClient:
         error_url: str | None = None,
     ) -> WaveCheckoutSession:
         """Create a Wave checkout session."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if success_url is not None:
+            validate_callback_url(success_url)
+        if error_url is not None:
+            validate_callback_url(error_url)
+        resolved_success = success_url or self._config.success_url
+        resolved_error = error_url or self._config.error_url
+        if not resolved_success or not resolved_error:
+            raise ValueError(
+                "success_url and error_url are required for Wave checkout sessions"
+            )
         ref = client_reference or generate_reference_id()
         payload: dict[str, Any] = {
-            "amount": amount,
-            "currency": currency,
-            "success_url": success_url or self._config.success_url,
-            "error_url": error_url or self._config.error_url,
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "success_url": resolved_success,
+            "error_url": resolved_error,
             "client_reference": ref,
         }
         response = self._http.request(
@@ -182,14 +207,16 @@ class WaveClient:
         client_reference: str | None = None,
     ) -> WavePayoutResponse:
         """Send a Wave payout to a subscriber mobile number."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = client_reference or generate_reference_id()
         response = self._http.request(
             "POST",
             "/v1/payout",
             headers=self._headers(idempotency_key=ref),
             json={
-                "amount": amount,
-                "currency": currency,
+                "amount": validated_amount,
+                "currency": validated_currency,
                 "mobile": f"+{normalise_msisdn(mobile)}",
                 "client_reference": ref,
             },
@@ -247,6 +274,7 @@ class AsyncWaveClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -256,6 +284,7 @@ class AsyncWaveClient:
             "Content-Type": "application/json",
         }
         if idempotency_key:
+            validate_header_value(idempotency_key, field_name="client_reference")
             headers["Idempotency-Key"] = idempotency_key
             headers["X-Reference-Id"] = idempotency_key
         return headers
@@ -269,16 +298,28 @@ class AsyncWaveClient:
         success_url: str | None = None,
         error_url: str | None = None,
     ) -> WaveCheckoutSession:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if success_url is not None:
+            validate_callback_url(success_url)
+        if error_url is not None:
+            validate_callback_url(error_url)
+        resolved_success = success_url or self._config.success_url
+        resolved_error = error_url or self._config.error_url
+        if not resolved_success or not resolved_error:
+            raise ValueError(
+                "success_url and error_url are required for Wave checkout sessions"
+            )
         ref = client_reference or generate_reference_id()
         response = await self._http.request(
             "POST",
             "/v1/checkout/sessions",
             headers=self._headers(idempotency_key=ref),
             json={
-                "amount": amount,
-                "currency": currency,
-                "success_url": success_url or self._config.success_url,
-                "error_url": error_url or self._config.error_url,
+                "amount": validated_amount,
+                "currency": validated_currency,
+                "success_url": resolved_success,
+                "error_url": resolved_error,
                 "client_reference": ref,
             },
         )
@@ -301,14 +342,16 @@ class AsyncWaveClient:
         *,
         client_reference: str | None = None,
     ) -> WavePayoutResponse:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = client_reference or generate_reference_id()
         response = await self._http.request(
             "POST",
             "/v1/payout",
             headers=self._headers(idempotency_key=ref),
             json={
-                "amount": amount,
-                "currency": currency,
+                "amount": validated_amount,
+                "currency": validated_currency,
                 "mobile": f"+{normalise_msisdn(mobile)}",
                 "client_reference": ref,
             },
@@ -362,6 +405,7 @@ class WaveProvider:
             currency=request.currency,
             client_reference=request.reference_id or request.external_id or None,
             success_url=request.callback_url,
+            error_url=self._client._config.error_url or request.callback_url,
         )
         return PaymentResult(
             provider=self.name,
@@ -448,6 +492,7 @@ class AsyncWaveProvider:
             currency=request.currency,
             client_reference=request.reference_id or request.external_id or None,
             success_url=request.callback_url,
+            error_url=self._client._config.error_url or request.callback_url,
         )
         return PaymentResult(
             provider=self.name,

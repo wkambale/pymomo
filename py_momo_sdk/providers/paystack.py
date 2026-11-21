@@ -20,8 +20,13 @@ from py_momo_sdk.providers.models import (
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
+    validate_amount,
+    validate_base_url,
     validate_callback_url,
+    validate_currency,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 from py_momo_sdk.webhooks import WebhookHandler
@@ -46,15 +51,22 @@ class PaystackConfig:
     """Credentials and settings for Paystack API."""
 
     secret_key: str
-    callback_url: str = "https://example.com/paystack/callback"
+    callback_url: str | None = None
     base_url: str = PAYSTACK_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
+    retry_backoff: float = 0.5
 
     def __post_init__(self) -> None:
+        if not isinstance(self.secret_key, str) or not self.secret_key.strip():
+            raise ValueError("secret_key must be a non-empty string")
         validate_header_value(self.secret_key, field_name="secret_key")
-        validate_callback_url(self.callback_url)
+        if self.callback_url is not None:
+            validate_callback_url(self.callback_url)
+        validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
 
     def __repr__(self) -> str:
         return (
@@ -100,6 +112,7 @@ class PaystackClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -119,18 +132,25 @@ class PaystackClient:
         callback_url: str | None = None,
     ) -> dict[str, Any]:
         """Initialize a Paystack transaction (amounts converted to minor units)."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
+        resolved_cb = callback_url or self._config.callback_url
         ref = reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "email": email,
+            "amount": _to_minor_units(validated_amount),
+            "currency": validated_currency,
+            "reference": ref,
+        }
+        if resolved_cb is not None:
+            payload["callback_url"] = resolved_cb
         response = self._http.request(
             "POST",
             "/transaction/initialize",
             headers=self._headers(),
-            json={
-                "email": email,
-                "amount": _to_minor_units(amount),
-                "currency": currency,
-                "reference": ref,
-                "callback_url": callback_url or self._config.callback_url,
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -152,6 +172,8 @@ class PaystackClient:
         reason: str = "Payout",
     ) -> dict[str, Any]:
         """Initiate a Paystack transfer to a recipient code."""
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = reference or generate_reference_id()
         response = self._http.request(
             "POST",
@@ -159,8 +181,8 @@ class PaystackClient:
             headers=self._headers(),
             json={
                 "source": "balance",
-                "amount": _to_minor_units(amount),
-                "currency": currency,
+                "amount": _to_minor_units(validated_amount),
+                "currency": validated_currency,
                 "recipient": recipient,
                 "reference": ref,
                 "reason": reason,
@@ -200,6 +222,7 @@ class AsyncPaystackClient:
             base_url=config.base_url,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -218,18 +241,25 @@ class AsyncPaystackClient:
         reference: str | None = None,
         callback_url: str | None = None,
     ) -> dict[str, Any]:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
+        resolved_cb = callback_url or self._config.callback_url
         ref = reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "email": email,
+            "amount": _to_minor_units(validated_amount),
+            "currency": validated_currency,
+            "reference": ref,
+        }
+        if resolved_cb is not None:
+            payload["callback_url"] = resolved_cb
         response = await self._http.request(
             "POST",
             "/transaction/initialize",
             headers=self._headers(),
-            json={
-                "email": email,
-                "amount": _to_minor_units(amount),
-                "currency": currency,
-                "reference": ref,
-                "callback_url": callback_url or self._config.callback_url,
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -249,6 +279,8 @@ class AsyncPaystackClient:
         reference: str | None = None,
         reason: str = "Payout",
     ) -> dict[str, Any]:
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
         ref = reference or generate_reference_id()
         response = await self._http.request(
             "POST",
@@ -256,8 +288,8 @@ class AsyncPaystackClient:
             headers=self._headers(),
             json={
                 "source": "balance",
-                "amount": _to_minor_units(amount),
-                "currency": currency,
+                "amount": _to_minor_units(validated_amount),
+                "currency": validated_currency,
                 "recipient": recipient,
                 "reference": ref,
                 "reason": reason,

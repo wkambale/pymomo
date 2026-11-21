@@ -64,6 +64,8 @@ def _wave_config() -> WaveConfig:
     return WaveConfig(
         api_key="wave_sn_prod_secret",
         webhook_secret="whsec_wave",
+        success_url="https://callback.example.test/wave/success",
+        error_url="https://callback.example.test/wave/error",
     )
 
 

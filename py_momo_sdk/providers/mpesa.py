@@ -24,8 +24,12 @@ from py_momo_sdk.providers.models import (
 from py_momo_sdk.utils import (
     build_basic_auth_header,
     normalise_msisdn,
+    validate_amount,
+    validate_base_url,
     validate_callback_url,
     validate_header_value,
+    validate_max_retries,
+    validate_retry_backoff,
     validate_timeout,
 )
 
@@ -45,6 +49,9 @@ _MPESA_CAPABILITIES = ProviderCapabilities(
 )
 
 
+_VALID_MPESA_ENVIRONMENTS = frozenset({"sandbox", "production"})
+
+
 @dataclass
 class MpesaConfig:
     """Credentials and settings for Safaricom M-Pesa Daraja API."""
@@ -53,27 +60,52 @@ class MpesaConfig:
     consumer_secret: str
     short_code: str
     passkey: str
-    callback_url: str = "https://example.com/mpesa/callback"
-    initiator_name: str = "testapi"
+    callback_url: str | None = None
+    initiator_name: str | None = None
     security_credential: str | None = None
     environment: str = "sandbox"
     base_url: str | None = None
     timeout: float = 30.0
     max_retries: int = 0
+    retry_backoff: float = 0.5
 
     def __post_init__(self) -> None:
-        validate_header_value(self.consumer_key, field_name="consumer_key")
-        validate_header_value(self.consumer_secret, field_name="consumer_secret")
-        validate_header_value(self.short_code, field_name="short_code")
-        validate_header_value(self.passkey, field_name="passkey")
-        validate_callback_url(self.callback_url)
+        for fname, fval in (
+            ("consumer_key", self.consumer_key),
+            ("consumer_secret", self.consumer_secret),
+            ("short_code", self.short_code),
+            ("passkey", self.passkey),
+        ):
+            if not isinstance(fval, str) or not fval.strip():
+                raise ValueError(f"{fname} must be a non-empty string")
+            validate_header_value(fval, field_name=fname)
+        if self.callback_url is not None:
+            validate_callback_url(self.callback_url)
+        if self.environment not in _VALID_MPESA_ENVIRONMENTS:
+            raise ValueError("environment must be 'sandbox' or 'production'")
+        if self.initiator_name is None and self.environment == "sandbox":
+            self.initiator_name = "testapi"
+        if self.initiator_name is not None:
+            if not self.initiator_name.strip():
+                raise ValueError("initiator_name must not be blank")
+            validate_header_value(self.initiator_name, field_name="initiator_name")
+        if self.security_credential is not None:
+            if not self.security_credential.strip():
+                raise ValueError("security_credential must not be blank")
+            validate_header_value(
+                self.security_credential, field_name="security_credential"
+            )
         self.timeout = validate_timeout(self.timeout)
+        self.max_retries = validate_max_retries(self.max_retries)
+        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
         if self.base_url is None:
             self.base_url = (
                 MPESA_SANDBOX_BASE_URL
                 if self.environment == "sandbox"
                 else MPESA_PRODUCTION_BASE_URL
             )
+        else:
+            validate_base_url(self.base_url)
 
     def __repr__(self) -> str:
         return (
@@ -164,6 +196,7 @@ class MpesaClient:
             base_url=config.base_url or MPESA_SANDBOX_BASE_URL,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -204,6 +237,12 @@ class MpesaClient:
         callback_url: str | None = None,
     ) -> MpesaStkPushResponse:
         """Initiate an M-Pesa STK Push (Lipa Na M-Pesa Online) prompt."""
+        validated_amount = validate_amount(amount)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
+        cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError("callback_url is required for M-Pesa STK Push")
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
@@ -217,11 +256,11 @@ class MpesaClient:
                 "Password": password,
                 "Timestamp": timestamp,
                 "TransactionType": "CustomerPayBillOnline",
-                "Amount": amount,
+                "Amount": validated_amount,
                 "PartyA": msisdn,
                 "PartyB": self._config.short_code,
                 "PhoneNumber": msisdn,
-                "CallBackURL": callback_url or self._config.callback_url,
+                "CallBackURL": cb,
                 "AccountReference": account_reference,
                 "TransactionDesc": transaction_desc,
             },
@@ -262,10 +301,17 @@ class MpesaClient:
         callback_url: str | None = None,
     ) -> MpesaB2CResponse:
         """Initiate an M-Pesa B2C disbursement payout."""
+        validated_amount = validate_amount(amount)
         if not self._config.security_credential:
             raise ValueError("security_credential is required for M-Pesa B2C payouts")
-        msisdn = normalise_msisdn(phone_number)
+        if not self._config.initiator_name:
+            raise ValueError("initiator_name is required for M-Pesa B2C payouts")
+        if callback_url is not None:
+            validate_callback_url(callback_url)
         cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError("callback_url is required for M-Pesa B2C payouts")
+        msisdn = normalise_msisdn(phone_number)
         response = self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
@@ -274,7 +320,7 @@ class MpesaClient:
                 "InitiatorName": self._config.initiator_name,
                 "SecurityCredential": self._config.security_credential,
                 "CommandID": "BusinessPayment",
-                "Amount": amount,
+                "Amount": validated_amount,
                 "PartyA": self._config.short_code,
                 "PartyB": msisdn,
                 "Remarks": remarks,
@@ -311,6 +357,7 @@ class AsyncMpesaClient:
             base_url=config.base_url or MPESA_SANDBOX_BASE_URL,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            retry_backoff=config.retry_backoff,
             client=client,
         )
 
@@ -351,6 +398,12 @@ class AsyncMpesaClient:
         transaction_desc: str = "Payment",
         callback_url: str | None = None,
     ) -> MpesaStkPushResponse:
+        validated_amount = validate_amount(amount)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
+        cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError("callback_url is required for M-Pesa STK Push")
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
@@ -364,11 +417,11 @@ class AsyncMpesaClient:
                 "Password": password,
                 "Timestamp": timestamp,
                 "TransactionType": "CustomerPayBillOnline",
-                "Amount": amount,
+                "Amount": validated_amount,
                 "PartyA": msisdn,
                 "PartyB": self._config.short_code,
                 "PhoneNumber": msisdn,
-                "CallBackURL": callback_url or self._config.callback_url,
+                "CallBackURL": cb,
                 "AccountReference": account_reference,
                 "TransactionDesc": transaction_desc,
             },
@@ -407,10 +460,17 @@ class AsyncMpesaClient:
         occasion: str = "Payout",
         callback_url: str | None = None,
     ) -> MpesaB2CResponse:
+        validated_amount = validate_amount(amount)
         if not self._config.security_credential:
             raise ValueError("security_credential is required for M-Pesa B2C payouts")
-        msisdn = normalise_msisdn(phone_number)
+        if not self._config.initiator_name:
+            raise ValueError("initiator_name is required for M-Pesa B2C payouts")
+        if callback_url is not None:
+            validate_callback_url(callback_url)
         cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError("callback_url is required for M-Pesa B2C payouts")
+        msisdn = normalise_msisdn(phone_number)
         response = await self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
@@ -419,7 +479,7 @@ class AsyncMpesaClient:
                 "InitiatorName": self._config.initiator_name,
                 "SecurityCredential": self._config.security_credential,
                 "CommandID": "BusinessPayment",
-                "Amount": amount,
+                "Amount": validated_amount,
                 "PartyA": self._config.short_code,
                 "PartyB": msisdn,
                 "Remarks": remarks,
@@ -502,6 +562,7 @@ class MpesaProvider:
             phone_number=request.payee_msisdn,
             remarks=request.payer_message or "Payout",
             occasion=request.external_id or "Payout",
+            callback_url=request.callback_url,
         )
         status = (
             NormalizedStatus.PENDING
@@ -572,6 +633,7 @@ class AsyncMpesaProvider:
             phone_number=request.payee_msisdn,
             remarks=request.payer_message or "Payout",
             occasion=request.external_id or "Payout",
+            callback_url=request.callback_url,
         )
         status = (
             NormalizedStatus.PENDING
