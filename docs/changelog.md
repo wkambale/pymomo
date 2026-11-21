@@ -2,6 +2,22 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## 1.2.0 - 2026-11-21
+
+### Added
+- Exported `py_momo_sdk.__version__`, `encrypt_airtel_pin()`, per-request `callback_url` overrides across MTN Collection, Disbursement, and Remittance write methods, `payer_email` and `payee_bank_code` on unified provider DTOs, `verify_transfer()` on Paystack clients, `get_transfer()` on Flutterwave clients, and `verify_webhook()` / `verify_webhook_hash()` on async Wave, Paystack, and Flutterwave clients.
+- Brought `AirtelClient` and `AsyncAirtelClient` to full transport parity with injectable `httpx` clients, `max_retries` and `retry_backoff`, `TelemetryHook` observability, bounded streaming response reads, and safe alphanumeric `reference_id` support.
+
+### Security
+- Prevented automatic `PaymentRouter` and `AsyncPaymentRouter` failover on ambiguous `5xx` or network write failures unless `allow_ambiguous_write_fallback=True` is explicitly set, while keeping safe pre-flight failover on authentication and missing-credential errors; enforced capability and currency filtering during candidate resolution.
+- Rejected HTTP `3xx` redirects in `_raise_for_status` and Airtel clients, validated injected `httpx` client base URLs and per-request `follow_redirects=False`, and enforced a streaming `max_response_bytes` cap (`1 MiB` default) across sync and async HTTP clients.
+- Hardened `WebhookHandler`, `create_asgi_webhook_verifier`, `verify_django_webhook_request`, and `verify_constant_time_token` against non-ASCII `compare_digest` errors, oversized request bodies, spoofed or IPv4-mapped IPv6 addresses, duplicate `t=` or signature headers, non-finite `tolerance_seconds`, and future timestamp skew.
+- Validated per-request callback/redirect URLs, `base_url`, `max_retries`, `retry_backoff`, and `"sandbox"` vs `"production"` environment names across all provider configurations and direct client write methods; removed `example.com` default callback URLs and production `"testapi"` initiator defaults; guarded Airtel production configurations against plaintext numeric PINs.
+- Added `allowed_plugins` allowlisting and protocol validation to `discover_provider_plugins()`, hardened `mock_server` with body-size and state-entry caps, socket timeouts, thread locking, and non-loopback bind protection, redacted `/accountholder/{type}/{id}` PII in logs and telemetry events, and isolated GitHub Actions `verify`, `build`, and `publish` / `deploy-pages` jobs without `contents: write`.
+
+### Fixed
+- Fixed Airtel disbursement payload schema (`{payee, transaction, reference, pin}`), Airtel currency validation, Orange Money country `api_path_prefix` and `(order_id, amount)` status tracking, Paystack minor-unit precision and envelope checks, Flutterwave explicit `email` and `account_bank` handling, `kind` validation across all 7 providers, status mappings (`REVERSED`, `EXPIRED`, `CANCELLED`, indeterminate `PENDING`), and documentation/CLI credential guidance.
+
 ## 1.1.0 - 2026-11-21
 
 ### Added

@@ -11,7 +11,7 @@ hide:
   </svg>
   <div class="pm-hero__eyebrow">
     <span class="pm-hero__eyebrow-line" aria-hidden="true"></span>
-    <span>Python SDK version 1.1.0</span>
+    <span>Python SDK version 1.2.0</span>
   </div>
   <h1 class="pm-hero__title">Py MoMo SDK for MTN Mobile Money and Airtel Money</h1>
   <p class="pm-hero__lead">A strictly typed Python client for MTN MoMo and Airtel Money. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
