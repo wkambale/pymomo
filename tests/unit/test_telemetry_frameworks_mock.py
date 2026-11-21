@@ -52,6 +52,13 @@ def test_telemetry_hook_emits_sanitized_request_events(httpx_mock: HTTPXMock) ->
         status_code=200,
     )
 
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/accountholder/msisdn/256771234567/active",
+        json={"result": True},
+        status_code=200,
+    )
+
     hook = _CollectorHook()
     cfg = PyMomoSDKConfig(
         environment="sandbox",
@@ -64,11 +71,49 @@ def test_telemetry_hook_emits_sanitized_request_events(httpx_mock: HTTPXMock) ->
     )
     with PyMomoSDK(cfg) as client:
         client.collection.get_balance()
+        assert client.collection.is_account_holder_active("256771234567") is True
 
-    assert len(hook.requests) == 2
+    assert len(hook.requests) == 3
     assert hook.requests[1].path == "/collection/v1_0/account/balance"
     assert hook.requests[1].status_code == 200
     assert hook.requests[1].latency_ms >= 0.0
+    assert "256771234567" not in hook.requests[2].path
+    assert (
+        hook.requests[2].path
+        == "/collection/v1_0/accountholder/msisdn/<redacted>/active"
+    )
+
+    class _ExplodingHook:
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            raise RuntimeError("metrics backend down")
+
+        def on_webhook(self, event: WebhookTelemetryEvent) -> None:
+            raise RuntimeError("metrics backend down")
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={"access_token": "tok", "token_type": "access_token", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+        status_code=202,
+    )
+    exploding_cfg = PyMomoSDKConfig(
+        environment="sandbox",
+        telemetry=_ExplodingHook(),
+        collection=cfg.collection,
+    )
+    with PyMomoSDK(exploding_cfg) as client:
+        ref = client.collection.request_to_pay(
+            amount="100",
+            currency="EUR",
+            payer_msisdn="256771234567",
+            external_id="ord-telemetry-safe",
+        )
+        assert len(ref) == 36
 
 
 @pytest.mark.asyncio
@@ -215,6 +260,73 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
         await err_verifier(
             _FakeRequest(body, {"content-length": "invalid"}, "10.0.0.1")
         )
+
+    # WebhookTelemetryEvent emitted on pass and fail across framework verifiers
+    wh_hook = _CollectorHook()
+    verify_raw_webhook_request(
+        raw_body=body,
+        headers={"X-Momo-Sig": sig},
+        signature_header_name="X-Momo-Sig",
+        secret=secret,
+        telemetry=wh_hook,
+        provider="paystack",
+    )
+    with pytest.raises(WebhookVerificationError):
+        verify_raw_webhook_request(
+            raw_body=body,
+            headers={"X-Momo-Sig": "bad"},
+            signature_header_name="X-Momo-Sig",
+            secret=secret,
+            telemetry=wh_hook,
+            provider="paystack",
+        )
+    assert len(wh_hook.webhooks) == 2
+    assert wh_hook.webhooks[0] == WebhookTelemetryEvent(
+        provider="paystack", verified=True, reason=None
+    )
+    assert wh_hook.webhooks[1].provider == "paystack"
+    assert wh_hook.webhooks[1].verified is False
+    assert wh_hook.webhooks[1].reason is not None
+
+    # Empty X-Reference-Id must NOT be treated as retryable
+    from py_momo_sdk.http import _is_retryable_request
+    from py_momo_sdk.providers.mpesa import MpesaTokenResponse
+    from py_momo_sdk.providers.orange import OrangeTokenResponse
+
+    assert _is_retryable_request("POST", {"X-Reference-Id": "   "}) is False
+    assert _is_retryable_request("POST", {"x-reference-id": "req-1"}) is True
+    mtok = MpesaTokenResponse(access_token="sec-mpesa-tok", expires_in="3599")
+    otok = OrangeTokenResponse(access_token="sec-orange-tok", expires_in="3600")  # type: ignore[arg-type]
+    assert "sec-mpesa-tok" not in str(mtok)
+    assert "sec-orange-tok" not in str(otok)
+    from pydantic import ValidationError
+
+    for bad_tok in ("", "bad\r\ntok"):
+        with pytest.raises(ValidationError):
+            MpesaTokenResponse(access_token=bad_tok, expires_in=3600)
+        with pytest.raises(ValidationError):
+            OrangeTokenResponse(access_token=bad_tok, expires_in=3600)
+    for bad_exp in (True, -1, 1.5, "abc"):
+        with pytest.raises(ValidationError):
+            MpesaTokenResponse(access_token="ok", expires_in=bad_exp)  # type: ignore[arg-type]
+        with pytest.raises(ValidationError):
+            OrangeTokenResponse(access_token="ok", expires_in=bad_exp)  # type: ignore[arg-type]
+
+    # ASGI & Django webhook telemetry emission + broken on_webhook isolation
+    await create_asgi_webhook_verifier(
+        secret=secret,
+        signature_header_name="X-Momo-Sig",
+        telemetry=wh_hook,
+        provider="asgi_test",
+    )(_FakeRequest(body, {"x-momo-sig": sig}, "10.0.0.1"))
+    verify_django_webhook_request(
+        django_req,
+        secret=secret,
+        signature_header_name="X-Momo-Sig",
+        telemetry=wh_hook,
+        provider="django_test",
+    )
+    assert len(wh_hook.webhooks) == 4
 
 
 def test_local_mock_server_and_cli_carrier() -> None:

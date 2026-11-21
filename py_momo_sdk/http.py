@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import httpx
@@ -35,12 +36,27 @@ logger = logging.getLogger("py_momo_sdk.http")
 _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB
+_ACCOUNTHOLDER_PATH_RE = re.compile(r"(/accountholder/[^/]+/)[^/?#]+")
+
+
+def _get_header_ci(headers: Mapping[str, str], name: str) -> str | None:
+    target = name.lower()
+    for k, v in headers.items():
+        if k.lower() == target:
+            return v
+    return None
+
+
+def _sanitize_telemetry_path(path: str) -> str:
+    raw_path = path.split("?", 1)[0]
+    return _ACCOUNTHOLDER_PATH_RE.sub(r"\1<redacted>", raw_path)
 
 
 def _is_retryable_request(method: str, headers: dict[str, str]) -> bool:
     if method.upper() in _IDEMPOTENT_METHODS:
         return True
-    return any(k.lower() == "x-reference-id" for k in headers)
+    ref_val = _get_header_ci(headers, "X-Reference-Id")
+    return bool(ref_val and ref_val.strip())
 
 
 def _compute_retry_delay(
@@ -112,17 +128,22 @@ class HttpClient:
     ) -> None:
         if self._telemetry is None:
             return
-        self._telemetry.on_request(
-            RequestTelemetryEvent(
-                method=method,
-                path=path,
-                status_code=status_code,
-                latency_ms=(time.monotonic() - started) * 1000.0,
-                attempt=attempt,
-                correlation_id=correlation_id,
-                error_type=error_type,
+        try:
+            self._telemetry.on_request(
+                RequestTelemetryEvent(
+                    method=method,
+                    path=_sanitize_telemetry_path(path),
+                    status_code=status_code,
+                    latency_ms=(time.monotonic() - started) * 1000.0,
+                    attempt=attempt,
+                    correlation_id=correlation_id,
+                    error_type=error_type,
+                )
             )
-        )
+        except Exception:
+            logger.warning(
+                "Telemetry hook on_request raised an exception", exc_info=True
+            )
 
     def _execute_bounded_request(
         self,
@@ -190,7 +211,7 @@ class HttpClient:
     ) -> httpx.Response:
         can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
         attempts = (self._max_retries + 1) if can_retry else 1
-        correlation_id = headers.get("X-Reference-Id")
+        correlation_id = _get_header_ci(headers, "X-Reference-Id")
 
         for attempt in range(attempts):
             started = time.monotonic()
@@ -244,7 +265,7 @@ class HttpClient:
                     "Transient HTTP %s on %s %s; retrying in %.2fs",
                     response.status_code,
                     method,
-                    path,
+                    _sanitize_telemetry_path(path),
                     delay,
                 )
                 time.sleep(delay)
@@ -267,15 +288,16 @@ class HttpClient:
     ) -> httpx.Response:
         """Execute HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
-        logger.debug("%s %s", method, path)
+        safe_path = _sanitize_telemetry_path(path)
+        logger.debug("%s %s", method, safe_path)
         response = self._send_with_transient_retries(
             method,
             path,
             headers=headers,
             json=json,
             data=data,
-            timeout_msg=f"Request timed out: {method} {path}",
-            conn_msg=f"Connection error: {method} {path}",
+            timeout_msg=f"Request timed out: {method} {safe_path}",
+            conn_msg=f"Connection error: {method} {safe_path}",
         )
 
         if (
@@ -285,7 +307,7 @@ class HttpClient:
             and product_name
         ):
             # Only invalidate if cache still holds the token that just failed
-            auth_val = headers.get("Authorization", "")
+            auth_val = _get_header_ci(headers, "Authorization") or ""
             failed_token = auth_val[7:] if auth_val.startswith("Bearer ") else None
             token_cache.invalidate(product_name, expected_token=failed_token)
 
@@ -298,18 +320,20 @@ class HttpClient:
                 ) from None
 
             # Retry original request exactly once
-            retry_headers = headers.copy()
+            retry_headers = {
+                k: v for k, v in headers.items() if k.lower() != "authorization"
+            }
             retry_headers["Authorization"] = f"Bearer {new_token}"
 
-            logger.debug("Retrying %s %s with new token", method, path)
+            logger.debug("Retrying %s %s with new token", method, safe_path)
             response = self._send_with_transient_retries(
                 method,
                 path,
                 headers=retry_headers,
                 json=json,
                 data=data,
-                timeout_msg=f"Request timed out on retry: {method} {path}",
-                conn_msg=f"Connection error on retry: {method} {path}",
+                timeout_msg=f"Request timed out on retry: {method} {safe_path}",
+                conn_msg=f"Connection error on retry: {method} {safe_path}",
             )
 
         _raise_for_status(response)

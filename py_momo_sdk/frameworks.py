@@ -2,13 +2,32 @@ from __future__ import annotations
 
 import hmac
 import importlib
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from py_momo_sdk.exceptions import WebhookVerificationError
+from py_momo_sdk.telemetry import TelemetryHook, WebhookTelemetryEvent
 from py_momo_sdk.webhooks import WebhookHandler
 
+logger = logging.getLogger("py_momo_sdk.webhooks")
 DEFAULT_MAX_WEBHOOK_BYTES = 1_048_576  # 1 MiB
+
+
+def _emit_webhook_telemetry(
+    telemetry: TelemetryHook | None,
+    provider: str,
+    verified: bool,
+    reason: str | None = None,
+) -> None:
+    if telemetry is None:
+        return
+    try:
+        telemetry.on_webhook(
+            WebhookTelemetryEvent(provider=provider, verified=verified, reason=reason)
+        )
+    except Exception:
+        logger.warning("Telemetry hook on_webhook raised an exception", exc_info=True)
 
 
 def _validate_max_body_bytes(max_body_bytes: int) -> int:
@@ -46,6 +65,8 @@ def verify_raw_webhook_request(
     remote_ip: str | None = None,
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
+    telemetry: TelemetryHook | None = None,
+    provider: str = "unknown",
 ) -> None:
     """Verify an inbound webhook from any ASGI or WSGI framework using raw bytes.
 
@@ -60,38 +81,48 @@ def verify_raw_webhook_request(
         remote_ip: Optional peer IP address to enforce CIDR allowlisting.
         allowed_networks: Allowed IP/CIDR ranges when ``remote_ip`` is checked.
         max_body_bytes: Maximum accepted webhook payload size in bytes.
+        telemetry: Optional ``TelemetryHook`` receiving ``WebhookTelemetryEvent``.
+        provider: Provider identifier attached to emitted telemetry events.
 
     Raises:
         WebhookVerificationError: If IP allowlisting, size bounds, or HMAC
             verification fails.
     """
     limit = _validate_max_body_bytes(max_body_bytes)
-    if allowed_networks is not None:
-        if remote_ip is None:
-            raise WebhookVerificationError("Webhook source IP address is required")
-        WebhookHandler.verify_source_ip(remote_ip, allowed_networks)
+    try:
+        if allowed_networks is not None:
+            if remote_ip is None:
+                raise WebhookVerificationError("Webhook source IP address is required")
+            WebhookHandler.verify_source_ip(remote_ip, allowed_networks)
 
-    if not isinstance(raw_body, (bytes, bytearray)):
-        raise WebhookVerificationError("Webhook payload must be bytes")
-    if len(raw_body) > limit:
-        raise WebhookVerificationError("Webhook payload exceeds maximum allowed size")
+        if not isinstance(raw_body, (bytes, bytearray)):
+            raise WebhookVerificationError("Webhook payload must be bytes")
+        if len(raw_body) > limit:
+            raise WebhookVerificationError(
+                "Webhook payload exceeds maximum allowed size"
+            )
 
-    sig_value = _extract_single_header(headers, signature_header_name) or ""
-    if timestamped:
-        WebhookHandler.verify_timestamped_hmac_signature(
-            raw_body,
-            sig_value,
-            secret,
-            tolerance_seconds=tolerance_seconds,
-            algorithm=algorithm,
-        )
-    else:
-        WebhookHandler.verify_hmac_signature(
-            raw_body,
-            sig_value,
-            secret,
-            algorithm=algorithm,
-        )
+        sig_value = _extract_single_header(headers, signature_header_name) or ""
+        if timestamped:
+            WebhookHandler.verify_timestamped_hmac_signature(
+                raw_body,
+                sig_value,
+                secret,
+                tolerance_seconds=tolerance_seconds,
+                algorithm=algorithm,
+            )
+        else:
+            WebhookHandler.verify_hmac_signature(
+                raw_body,
+                sig_value,
+                secret,
+                algorithm=algorithm,
+            )
+    except WebhookVerificationError as exc:
+        _emit_webhook_telemetry(telemetry, provider, verified=False, reason=str(exc))
+        raise
+
+    _emit_webhook_telemetry(telemetry, provider, verified=True)
 
 
 def verify_constant_time_token(provided: str, expected: str) -> None:
@@ -124,6 +155,8 @@ def create_asgi_webhook_verifier(
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
     http_error_status: int | None = None,
+    telemetry: TelemetryHook | None = None,
+    provider: str = "unknown",
 ) -> Callable[[Any], Awaitable[bytes]]:
     """Build an async FastAPI or Starlette dependency verifying raw webhook bodies.
 
@@ -197,8 +230,12 @@ def create_asgi_webhook_verifier(
                 allowed_networks=None,
                 max_body_bytes=limit,
             )
+            _emit_webhook_telemetry(telemetry, provider, verified=True)
             return raw_body
         except WebhookVerificationError as exc:
+            _emit_webhook_telemetry(
+                telemetry, provider, verified=False, reason=str(exc)
+            )
             _raise_error(exc)
             raise  # unreachable; keeps mypy satisfied
 
@@ -223,34 +260,44 @@ def verify_django_webhook_request(
     algorithm: str = "sha256",
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
+    telemetry: TelemetryHook | None = None,
+    provider: str = "unknown",
 ) -> bytes:
     """Verify a Django ``HttpRequest`` using ``request.body`` and ``request.headers``."""
     limit = _validate_max_body_bytes(max_body_bytes)
-    meta = getattr(request, "META", {})
-    remote_ip = meta.get("REMOTE_ADDR") if isinstance(meta, dict) else None
-    if allowed_networks is not None:
-        if remote_ip is None:
-            raise WebhookVerificationError("Webhook source IP address is required")
-        WebhookHandler.verify_source_ip(remote_ip, allowed_networks)
+    try:
+        meta = getattr(request, "META", {})
+        remote_ip = meta.get("REMOTE_ADDR") if isinstance(meta, dict) else None
+        if allowed_networks is not None:
+            if remote_ip is None:
+                raise WebhookVerificationError("Webhook source IP address is required")
+            WebhookHandler.verify_source_ip(remote_ip, allowed_networks)
 
-    cl_meta = meta.get("CONTENT_LENGTH") if isinstance(meta, dict) else None
-    cl_hdr = _extract_single_header(request.headers, "content-length")
-    _check_content_length_header(cl_hdr if cl_hdr is not None else cl_meta, limit)
+        cl_meta = meta.get("CONTENT_LENGTH") if isinstance(meta, dict) else None
+        cl_hdr = _extract_single_header(request.headers, "content-length")
+        _check_content_length_header(cl_hdr if cl_hdr is not None else cl_meta, limit)
 
-    raw_body = bytes(request.body)
-    if len(raw_body) > limit:
-        raise WebhookVerificationError("Webhook payload exceeds maximum allowed size")
+        raw_body = bytes(request.body)
+        if len(raw_body) > limit:
+            raise WebhookVerificationError(
+                "Webhook payload exceeds maximum allowed size"
+            )
 
-    verify_raw_webhook_request(
-        raw_body=raw_body,
-        headers=request.headers,
-        signature_header_name=signature_header_name,
-        secret=secret,
-        timestamped=timestamped,
-        tolerance_seconds=tolerance_seconds,
-        algorithm=algorithm,
-        remote_ip=None,
-        allowed_networks=None,
-        max_body_bytes=limit,
-    )
+        verify_raw_webhook_request(
+            raw_body=raw_body,
+            headers=request.headers,
+            signature_header_name=signature_header_name,
+            secret=secret,
+            timestamped=timestamped,
+            tolerance_seconds=tolerance_seconds,
+            algorithm=algorithm,
+            remote_ip=None,
+            allowed_networks=None,
+            max_body_bytes=limit,
+        )
+    except WebhookVerificationError as exc:
+        _emit_webhook_telemetry(telemetry, provider, verified=False, reason=str(exc))
+        raise
+
+    _emit_webhook_telemetry(telemetry, provider, verified=True)
     return raw_body

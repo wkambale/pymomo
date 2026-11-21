@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from py_momo_sdk.auth import TokenCache
@@ -46,6 +47,7 @@ class PyMomoSDK:
             retry_backoff=config.retry_backoff,
             telemetry=config.telemetry,
         )
+        self._init_lock = threading.Lock()
         self._collection: Collection | None = None
         self._disbursement: Disbursement | None = None
         self._remittance: Remittance | None = None
@@ -62,12 +64,14 @@ class PyMomoSDK:
                 "Collection credentials not provided in PyMomoSDKConfig"
             )
         if self._collection is None:
-            self._collection = Collection(
-                config=self._config,
-                product_config=self._config.collection,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._collection is None:
+                    self._collection = Collection(
+                        config=self._config,
+                        product_config=self._config.collection,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._collection
 
     @property
@@ -82,12 +86,14 @@ class PyMomoSDK:
                 "Disbursement credentials not provided in PyMomoSDKConfig"
             )
         if self._disbursement is None:
-            self._disbursement = Disbursement(
-                config=self._config,
-                product_config=self._config.disbursement,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._disbursement is None:
+                    self._disbursement = Disbursement(
+                        config=self._config,
+                        product_config=self._config.disbursement,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._disbursement
 
     @property
@@ -102,12 +108,14 @@ class PyMomoSDK:
                 "Remittance credentials not provided in PyMomoSDKConfig"
             )
         if self._remittance is None:
-            self._remittance = Remittance(
-                config=self._config,
-                product_config=self._config.remittance,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._remittance is None:
+                    self._remittance = Remittance(
+                        config=self._config,
+                        product_config=self._config.remittance,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._remittance
 
     @property
