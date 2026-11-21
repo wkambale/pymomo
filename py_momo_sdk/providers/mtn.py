@@ -12,6 +12,7 @@ from py_momo_sdk.providers.models import (
     ProviderCapabilities,
     validate_operation_kind,
 )
+from py_momo_sdk.utils import generate_reference_id
 
 _MTN_STATUS_MAP = {
     TransactionStatus.pending: NormalizedStatus.PENDING,
@@ -58,14 +59,17 @@ class MtnMomoProvider:
         return _MTN_CAPABILITIES
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
+        planned_ref = request.reference_id or generate_reference_id()
+        ext_id = request.external_id or planned_ref
         ref = self._client.collection.request_to_pay(
             amount=request.amount,
             currency=request.currency,
             payer_msisdn=request.payer_msisdn,
-            external_id=request.external_id or "py-momo-sdk",
+            external_id=ext_id,
             payer_message=request.payer_message,
             payee_note=request.payee_note,
-            reference_id=request.reference_id,
+            reference_id=planned_ref,
+            callback_url=request.callback_url,
         )
         return PaymentResult(
             provider=self.name,
@@ -73,18 +77,21 @@ class MtnMomoProvider:
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
-            external_id=request.external_id or None,
+            external_id=ext_id,
         )
 
     def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        planned_ref = request.reference_id or generate_reference_id()
+        ext_id = request.external_id or planned_ref
         ref = self._client.disbursement.transfer(
             amount=request.amount,
             currency=request.currency,
             payee_msisdn=request.payee_msisdn,
-            external_id=request.external_id or "py-momo-sdk",
+            external_id=ext_id,
             payer_message=request.payer_message,
             payee_note=request.payee_note,
-            reference_id=request.reference_id,
+            reference_id=planned_ref,
+            callback_url=request.callback_url,
         )
         return PaymentResult(
             provider=self.name,
@@ -92,7 +99,7 @@ class MtnMomoProvider:
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
-            external_id=request.external_id or None,
+            external_id=ext_id,
         )
 
     def get_status(
@@ -135,14 +142,17 @@ class AsyncMtnMomoProvider:
         return _MTN_CAPABILITIES
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
+        planned_ref = request.reference_id or generate_reference_id()
+        ext_id = request.external_id or planned_ref
         ref = await self._client.collection.request_to_pay(
             amount=request.amount,
             currency=request.currency,
             payer_msisdn=request.payer_msisdn,
-            external_id=request.external_id or "py-momo-sdk",
+            external_id=ext_id,
             payer_message=request.payer_message,
             payee_note=request.payee_note,
-            reference_id=request.reference_id,
+            reference_id=planned_ref,
+            callback_url=request.callback_url,
         )
         return PaymentResult(
             provider=self.name,
@@ -150,18 +160,21 @@ class AsyncMtnMomoProvider:
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
-            external_id=request.external_id or None,
+            external_id=ext_id,
         )
 
     async def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        planned_ref = request.reference_id or generate_reference_id()
+        ext_id = request.external_id or planned_ref
         ref = await self._client.disbursement.transfer(
             amount=request.amount,
             currency=request.currency,
             payee_msisdn=request.payee_msisdn,
-            external_id=request.external_id or "py-momo-sdk",
+            external_id=ext_id,
             payer_message=request.payer_message,
             payee_note=request.payee_note,
-            reference_id=request.reference_id,
+            reference_id=planned_ref,
+            callback_url=request.callback_url,
         )
         return PaymentResult(
             provider=self.name,
@@ -169,7 +182,7 @@ class AsyncMtnMomoProvider:
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
-            external_id=request.external_id or None,
+            external_id=ext_id,
         )
 
     async def get_status(

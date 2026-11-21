@@ -659,3 +659,103 @@ def test_airtel_client_header_method_and_config_guards(
         req = next(r for r in httpx_mock.get_requests() if r.url.path == "/test")
         assert req.headers["Authorization"] == "Bearer mock-airtel-access-token"
         assert req.headers["X-Custom"] == "safe"
+
+
+def test_airtel_client_parity_injected_client_telemetry_and_errors(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Test AirtelClient HttpClient parity (#63): injected client, retries, telemetry, 400/409/302, ORD-123."""
+    import httpx
+
+    from py_momo_sdk import RequestTelemetryEvent, TelemetryHook
+    from py_momo_sdk.exceptions import BadRequestError, ConflictError
+
+    events: list[RequestTelemetryEvent] = []
+
+    class _Recorder(TelemetryHook):
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            events.append(event)
+
+    mock_airtel_token(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/retry-me",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/retry-me",
+        json={"ok": True},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/nested-400",
+        json={"status": {"code": "400", "message": "Invalid MSISDN format"}},
+        status_code=400,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/nonstr-400",
+        json={"message": ["list-not-str"]},
+        status_code=400,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/dup-409",
+        status_code=409,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/redir-302",
+        status_code=302,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/merchant/v1/payments/",
+        json={"status": {"code": "200", "message": "Accepted", "result_code": "DP008"}},
+        status_code=200,
+    )
+
+    injected = httpx.Client(
+        base_url="https://openapiuat.airtel.africa", follow_redirects=False
+    )
+    cfg = AirtelConfig(
+        client_id="id",
+        client_secret="sec",
+        country="UG",
+        currency="UGX",
+        max_retries=1,
+        retry_backoff=0.01,
+        telemetry=_Recorder(),
+    )
+    with AirtelClient(cfg, client=injected) as client:
+        resp = client.request("GET", "/retry-me", headers={"x-country": "KE"})
+        assert resp.status_code == 200
+        sent = next(r for r in httpx_mock.get_requests() if r.url.path == "/retry-me")
+        assert sent.headers["x-country"] == "KE"
+        assert len([k for k in sent.headers if k.lower() == "x-country"]) == 1
+
+        with pytest.raises(BadRequestError, match="Invalid MSISDN format"):
+            client.request("GET", "/nested-400")
+        with pytest.raises(BadRequestError, match="Bad request"):
+            client.request("GET", "/nonstr-400")
+        with pytest.raises(ConflictError, match="Duplicate transaction reference"):
+            client.request("GET", "/dup-409")
+        with pytest.raises(PyMomoSDKError, match="redirect"):
+            client.request("GET", "/redir-302")
+
+        # Non-UUID merchant order reference works on Airtel
+        assert (
+            client.collection.request_to_pay(
+                amount="500", payer_msisdn="256751234567", reference_id="ORD-123"
+            )
+            == "ORD-123"
+        )
+        with pytest.raises(ValueError, match="Invalid Airtel reference ID"):
+            client.collection.get_payment_status("../bad")
+
+    # Injected client must NOT be closed by AirtelClient.close()
+    assert injected.is_closed is False
+    injected.close()
+    assert len(events) >= 5

@@ -392,6 +392,12 @@ class AsyncPaystackClient:
         response = await self._http.request("GET", "/balance", headers=self._headers())
         return parse_json_dict(response)
 
+    def verify_webhook(self, payload: bytes, signature: str) -> None:
+        """Verify ``x-paystack-signature`` HMAC-SHA512 header against raw bytes."""
+        WebhookHandler.verify_hmac_signature(
+            payload, signature, self._config.secret_key, algorithm="sha512"
+        )
+
     async def close(self) -> None:
         await self._http.close()
 

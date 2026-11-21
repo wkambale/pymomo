@@ -387,6 +387,17 @@ class AsyncWaveClient:
         )
         return parse_model(response, WaveBalanceResponse)
 
+    def verify_webhook(
+        self, payload: bytes, signature_header: str, *, tolerance_seconds: int = 300
+    ) -> None:
+        """Verify a ``Wave-Signature`` header against raw request body bytes."""
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload,
+            signature_header,
+            self._config.webhook_secret or "",
+            tolerance_seconds=tolerance_seconds,
+        )
+
     async def close(self) -> None:
         await self._http.close()
 

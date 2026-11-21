@@ -32,6 +32,7 @@ class Disbursement(AsyncBaseProduct):
         payer_message: str = "",
         payee_note: str = "",
         reference_id: str | None = None,
+        callback_url: str | None = None,
     ) -> str:
         """Transfer funds to a payee.
 
@@ -66,7 +67,9 @@ class Disbursement(AsyncBaseProduct):
         await self._http.request(
             "POST",
             "/disbursement/v1_0/transfer",
-            headers=await self._build_headers(reference_id=ref, include_callback=True),
+            headers=await self._build_headers(
+                reference_id=ref, include_callback=True, callback_url=callback_url
+            ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
@@ -104,6 +107,7 @@ class Disbursement(AsyncBaseProduct):
         payer_message: str = "",
         payee_note: str = "",
         reference_id: str | None = None,
+        callback_url: str | None = None,
     ) -> str:
         """Initiate a Deposit (v2).
 
@@ -138,7 +142,9 @@ class Disbursement(AsyncBaseProduct):
         await self._http.request(
             "POST",
             "/disbursement/v2_0/deposit",
-            headers=await self._build_headers(reference_id=ref, include_callback=True),
+            headers=await self._build_headers(
+                reference_id=ref, include_callback=True, callback_url=callback_url
+            ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,
@@ -176,6 +182,7 @@ class Disbursement(AsyncBaseProduct):
         payer_message: str = "",
         payee_note: str = "",
         reference_id: str | None = None,
+        callback_url: str | None = None,
     ) -> str:
         """Initiate a Refund (v2).
 
@@ -208,7 +215,9 @@ class Disbursement(AsyncBaseProduct):
         await self._http.request(
             "POST",
             "/disbursement/v2_0/refund",
-            headers=await self._build_headers(reference_id=ref, include_callback=True),
+            headers=await self._build_headers(
+                reference_id=ref, include_callback=True, callback_url=callback_url
+            ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
             token_cache=self._token_cache,

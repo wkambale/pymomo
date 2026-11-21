@@ -1086,3 +1086,106 @@ async def test_async_provider_contracts_and_pin_encryption(
             )
         )
         assert (await om.get_status("om-apay")).is_successful()
+
+
+@pytest.mark.asyncio
+async def test_async_webhook_parity_mtn_callback_and_active_guard(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Test #63 async webhook methods, MtnMomoProvider callback_url/external_id, and active bool check."""
+    import time
+
+    from py_momo_sdk import (
+        AirtelConfig,
+        AsyncAirtelClient,
+        AsyncWaveClient,
+        MtnMomoProvider,
+        ProductConfig,
+        PyMomoSDK,
+        PyMomoSDKConfig,
+        PyMomoSDKError,
+        WaveConfig,
+    )
+
+    payload = b'{"id":"evt-1"}'
+    ts = int(time.time())
+    wave_sig = hmac.new(
+        b"wave-wh-sec", f"{ts}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+    ps_sig = hmac.new(b"ps-sec", payload, hashlib.sha512).hexdigest()
+
+    async with (
+        AsyncWaveClient(WaveConfig(api_key="wk", webhook_secret="wave-wh-sec")) as aw,
+        AsyncPaystackClient(PaystackConfig(secret_key="ps-sec")) as aps,
+        AsyncFlutterwaveClient(
+            FlutterwaveConfig(secret_key="flw-sec", webhook_hash="flw-h")
+        ) as aflw,
+        AsyncAirtelClient(
+            AirtelConfig(
+                client_id="id",
+                client_secret="sec",
+                country="UG",
+                currency="UGX",
+                max_retries=1,
+                retry_backoff=0.01,
+            )
+        ) as aairtel,
+    ):
+        aw.verify_webhook(payload, f"t={ts},v1={wave_sig}")
+        aps.verify_webhook(payload, ps_sig)
+        aflw.verify_webhook_hash("flw-h")
+        assert aairtel._owns_client is True
+
+    # MtnMomoProvider forwards callback_url and returns matching external_id, and active check rejects non-bool
+    ref = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={
+            "access_token": "mtn-tok",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+        status_code=202,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/accountholder/msisdn/256771234567/active",
+        json={"result": 123},
+        status_code=200,
+    )
+    mtn_cfg = PyMomoSDKConfig(
+        collection=ProductConfig(
+            subscription_key="sub",
+            api_user="f47ac10b-58cc-4372-a567-0e02b2c3d479",
+            api_key="key",
+        )
+    )
+    with PyMomoSDK(mtn_cfg) as mtn_client:
+        mp = MtnMomoProvider(mtn_client)
+        res = mp.collect(
+            PaymentRequest(
+                amount="100",
+                currency="EUR",
+                payer_msisdn="256771234567",
+                reference_id=ref,
+                callback_url="https://callback.example.test/mtn-override",
+            )
+        )
+        assert res.external_id == ref
+        pay_req = next(
+            r
+            for r in httpx_mock.get_requests()
+            if r.url.path == "/collection/v1_0/requesttopay"
+        )
+        assert (
+            pay_req.headers["X-Callback-Url"]
+            == "https://callback.example.test/mtn-override"
+        )
+        with pytest.raises(PyMomoSDKError, match="boolean 'result'"):
+            mtn_client.collection.is_account_holder_active("256771234567")

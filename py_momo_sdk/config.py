@@ -89,10 +89,10 @@ class PyMomoSDKConfig:
 
     @staticmethod
     def _product_from_env(prefix: str, product_label: str) -> ProductConfig | None:
-        sub = os.environ.get(f"{prefix}_SUBSCRIPTION_KEY")
-        user = os.environ.get(f"{prefix}_API_USER")
-        key = os.environ.get(f"{prefix}_API_KEY")
-        cb = os.environ.get(f"{prefix}_CALLBACK_URL")
+        sub = os.environ.get(f"{prefix}_SUBSCRIPTION_KEY") or None
+        user = os.environ.get(f"{prefix}_API_USER") or None
+        key = os.environ.get(f"{prefix}_API_KEY") or None
+        cb = os.environ.get(f"{prefix}_CALLBACK_URL") or None
         if not (sub or user or key):
             return None
         if not (sub and user and key):
@@ -117,8 +117,8 @@ class PyMomoSDKConfig:
             ValueError: If ``PY_MOMO_SDK_TIMEOUT`` is not a positive finite number.
             MissingCredentialsError: If a product is only partially configured.
         """
-        env = os.environ.get("PY_MOMO_SDK_ENVIRONMENT", SANDBOX)
-        base_url = os.environ.get("PY_MOMO_SDK_BASE_URL")
+        env = os.environ.get("PY_MOMO_SDK_ENVIRONMENT") or SANDBOX
+        base_url = os.environ.get("PY_MOMO_SDK_BASE_URL") or None
         timeout_str = os.environ.get("PY_MOMO_SDK_TIMEOUT")
         if timeout_str:
             try:

@@ -17,6 +17,7 @@ from py_momo_sdk.utils import (
     encode_path_segment,
     normalise_msisdn,
     validate_account_holder_id_type,
+    validate_callback_url,
     validate_currency,
 )
 
@@ -82,6 +83,7 @@ class BaseProduct:
         *,
         reference_id: str | None = None,
         include_callback: bool = False,
+        callback_url: str | None = None,
     ) -> dict[str, str]:
         token = self._get_token()
         headers = {
@@ -92,8 +94,14 @@ class BaseProduct:
         }
         if reference_id:
             headers["X-Reference-Id"] = reference_id
-        if include_callback and self._product_config.callback_url:
-            headers["X-Callback-Url"] = self._product_config.callback_url
+        if include_callback:
+            resolved_cb = (
+                validate_callback_url(callback_url)
+                if callback_url is not None
+                else self._product_config.callback_url
+            )
+            if resolved_cb:
+                headers["X-Callback-Url"] = resolved_cb
         return headers
 
     def get_balance(self) -> Balance:
@@ -167,9 +175,13 @@ class BaseProduct:
         )
         res = parse_json_dict(response)
         result = res.get("result")
-        if isinstance(result, str):
-            return result.lower() == "true"
-        return bool(result)
+        if type(result) is bool:
+            return result
+        if isinstance(result, str) and result.strip().lower() in ("true", "false"):
+            return result.strip().lower() == "true"
+        raise PyMomoSDKError(
+            "Malformed account holder active response: expected boolean 'result'"
+        )
 
     def get_basic_user_info(
         self,

@@ -204,3 +204,34 @@ def test_url_path_numeric_and_polling_hardening() -> None:
     for bad_mult in (True, 0.5, float("inf"), float("nan")):
         with pytest.raises((TypeError, ValueError), match="Polling"):
             wait_for_settlement(lambda: None, backoff=bad_mult)
+
+
+def test_core_parity_cleanups_issue_63(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test __version__, whitespace segment guard, 00/length carrier detection, and empty from_env."""
+    import py_momo_sdk
+    from py_momo_sdk import PyMomoSDKConfig
+    from py_momo_sdk.config import SANDBOX
+    from py_momo_sdk.utils import detect_carrier_from_msisdn, encode_path_segment
+
+    assert isinstance(py_momo_sdk.__version__, str) and py_momo_sdk.__version__
+
+    with pytest.raises(ValueError, match="Invalid path segment"):
+        encode_path_segment("   ", field_name="ref")
+
+    # 00 international prefix stripped and short numbers rejected
+    assert detect_carrier_from_msisdn("00256771234567") == ("UG", "mtn_momo")
+    assert detect_carrier_from_msisdn("25677") is None
+    assert detect_carrier_from_msisdn("256771234567890123") is None
+
+    # Empty env vars treated as unset in from_env()
+    monkeypatch.setenv("PY_MOMO_SDK_ENVIRONMENT", "")
+    monkeypatch.setenv("PY_MOMO_SDK_BASE_URL", "")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY", "sub")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_API_USER", "usr")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_API_KEY", "key")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_CALLBACK_URL", "")
+    cfg = PyMomoSDKConfig.from_env()
+    assert cfg.environment == SANDBOX
+    assert cfg.base_url == "https://sandbox.momodeveloper.mtn.com"
+    assert cfg.collection is not None
+    assert cfg.collection.callback_url is None

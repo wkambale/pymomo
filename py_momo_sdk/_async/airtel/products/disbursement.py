@@ -11,9 +11,10 @@ from py_momo_sdk.airtel.models import (
 )
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.utils import (
+    encode_path_segment,
     generate_reference_id,
     normalise_msisdn,
-    validate_reference_id,
+    validate_airtel_reference_id,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ class AsyncAirtelDisbursement:
             raise ValueError("pin is required for Airtel disbursements")
 
         ref = reference_id or generate_reference_id()
-        validate_reference_id(ref)
+        validate_airtel_reference_id(ref)
 
         payload = AirtelDisbursementRequest(
             payee=AirtelDisbursementPayee(msisdn=normalise_msisdn(payee_msisdn)),
@@ -55,10 +56,11 @@ class AsyncAirtelDisbursement:
 
     async def get_transfer_status(self, reference_id: str) -> AirtelTransactionResponse:
         """Query the status of a disbursement transaction asynchronously."""
-        validate_reference_id(reference_id)
+        validate_airtel_reference_id(reference_id)
+        encoded = encode_path_segment(reference_id, field_name="reference_id")
         response = await self._client.request(
             "GET",
-            f"/standard/v1/disbursements/{reference_id}",
+            f"/standard/v1/disbursements/{encoded}",
         )
         return parse_model(response, AirtelTransactionResponse)
 

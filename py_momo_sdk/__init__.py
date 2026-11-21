@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _package_version
+
 # Async client exports
 from py_momo_sdk._async.airtel.client import AsyncAirtelClient
 from py_momo_sdk._async.client import AsyncPyMomoSDK
@@ -95,6 +98,11 @@ from py_momo_sdk.telemetry import (
 )
 from py_momo_sdk.webhooks import WebhookHandler
 
+try:
+    __version__ = _package_version("py-momo-sdk")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
 __all__ = [
     "AccountHolderIdType",
     "AirtelClient",
@@ -175,6 +183,7 @@ __all__ = [
     "WebhookHandler",
     "WebhookTelemetryEvent",
     "WebhookVerificationError",
+    "__version__",
     "create_asgi_webhook_verifier",
     "create_mock_server",
     "encrypt_airtel_pin",
