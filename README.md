@@ -1,14 +1,19 @@
+3
+
 # Py MoMo SDK
 
 [![PyPI version](https://img.shields.io/pypi/v/py-momo-sdk.svg)](https://pypi.org/project/py-momo-sdk/)
+[![Python versions](https://img.shields.io/pypi/pyversions/py-momo-sdk.svg)](https://pypi.org/project/py-momo-sdk/)
 [![Build status](https://github.com/wkambale/pymomo/actions/workflows/ci.yml/badge.svg)](https://github.com/wkambale/pymomo/actions)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+Py MoMo SDK (`py-momo-sdk` 1.1.0) is a strictly typed, production-grade Python client library for the MTN Mobile Money (MoMo) Open API and Airtel Money API. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict validation, and complete product coverage.
 Py MoMo SDK (`py-momo-sdk` 1.1.0) is a strictly typed Python client library for the MTN Mobile Money (MoMo) Open API and Airtel Money API. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict validation, and complete product coverage.
 
 Developed for high reliability and clean developer experience, Py MoMo SDK adheres to the strict security standards of modern payment systems.
 
 - **PyPI package:** [py-momo-sdk](https://pypi.org/project/py-momo-sdk/) (`1.1.0`, imported as `py_momo_sdk`)
+- **Python support:** Python 3.10 to 3.15
 - **Documentation:** [https://wkambale.github.io/pymomo/](https://wkambale.github.io/pymomo/)
 - **Repository:** [https://github.com/wkambale/pymomo](https://github.com/wkambale/pymomo)
 
