@@ -119,6 +119,102 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
     verify_constant_time_token("tok-123", "tok-123")
     with pytest.raises(WebhookVerificationError):
         verify_constant_time_token("wrong", "tok-123")
+    with pytest.raises(WebhookVerificationError):
+        verify_constant_time_token("é-non-ascii", "tok-123")
+
+    # Blocked IP must fail BEFORE reading request.body()
+    body_read_called = False
+
+    class _ExplodingBodyRequest:
+        def __init__(self, payload: bytes, headers: dict[str, str], host: str) -> None:
+            self._payload = payload
+            self.headers = headers
+            self.client = SimpleNamespace(host=host)
+
+        async def body(self) -> bytes:
+            nonlocal body_read_called
+            body_read_called = True
+            return self._payload
+
+    with pytest.raises(WebhookVerificationError, match="not in allowed networks"):
+        await verifier(
+            _ExplodingBodyRequest(b"x" * 1024, {"x-momo-sig": sig}, "192.0.2.99")
+        )
+    assert body_read_called is False
+
+    # Max body bytes enforced on ASGI streaming & Django verifier
+    small_verifier = create_asgi_webhook_verifier(
+        secret=secret, signature_header_name="X-Momo-Sig", max_body_bytes=16
+    )
+
+    class _StreamingRequest:
+        def __init__(self, chunks: list[bytes], headers: dict[str, str]) -> None:
+            self._chunks = chunks
+            self.headers = headers
+            self.client = SimpleNamespace(host="10.0.0.1")
+
+        async def stream(self):  # type: ignore[no-untyped-def]
+            for ch in self._chunks:
+                yield ch
+
+    with pytest.raises(WebhookVerificationError, match="maximum allowed size"):
+        await small_verifier(
+            _StreamingRequest([b"0123456789", b"0123456789"], {"x-momo-sig": sig})
+        )
+    with pytest.raises(WebhookVerificationError, match="maximum allowed size"):
+        verify_django_webhook_request(
+            SimpleNamespace(
+                body=b"01234567890123456789", headers={"X-Momo-Sig": sig}, META={}
+            ),
+            secret=secret,
+            signature_header_name="X-Momo-Sig",
+            max_body_bytes=16,
+        )
+
+    # Duplicate signature headers rejected
+    class _DupHeaders:
+        def items(self) -> list[tuple[str, str]]:
+            return [("X-Momo-Sig", sig), ("x-momo-sig", sig)]
+
+    from py_momo_sdk.frameworks import verify_raw_webhook_request
+
+    with pytest.raises(WebhookVerificationError, match="Duplicate"):
+        verify_raw_webhook_request(
+            raw_body=body,
+            headers=_DupHeaders(),  # type: ignore[arg-type]
+            signature_header_name="X-Momo-Sig",
+            secret=secret,
+        )
+
+    # Timestamped mode, Content-Length bounds, empty tokens, and http_error_status fallback
+    ts_sig = hmac.new(
+        secret.encode(), b"1700000000." + body, hashlib.sha256
+    ).hexdigest()
+    with pytest.raises(WebhookVerificationError):
+        verify_raw_webhook_request(
+            raw_body=body,
+            headers={"X-Momo-Sig": f"t=1700000000,v1={ts_sig}"},
+            signature_header_name="X-Momo-Sig",
+            secret=secret,
+            timestamped=True,
+        )
+    with pytest.raises(ValueError, match="max_body_bytes"):
+        create_asgi_webhook_verifier(secret=secret, max_body_bytes=0)
+    with pytest.raises(WebhookVerificationError):
+        verify_constant_time_token("", "tok")
+    with pytest.raises(WebhookVerificationError):
+        verify_constant_time_token("tok", "")
+    err_verifier = create_asgi_webhook_verifier(
+        secret=secret, signature_header_name="X-Momo-Sig", http_error_status=401
+    )
+    with pytest.raises(WebhookVerificationError):
+        await err_verifier(
+            _FakeRequest(body, {"content-length": "99999999"}, "10.0.0.1")
+        )
+    with pytest.raises(WebhookVerificationError):
+        await err_verifier(
+            _FakeRequest(body, {"content-length": "invalid"}, "10.0.0.1")
+        )
 
 
 def test_local_mock_server_and_cli_carrier() -> None:

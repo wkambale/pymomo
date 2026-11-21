@@ -116,3 +116,75 @@ def test_webhook_verify_source_ip() -> None:
         WebhookHandler.verify_source_ip("not-an-ip", ["196.201.214.0/24"])
     with pytest.raises(WebhookVerificationError, match="Invalid CIDR"):
         WebhookHandler.verify_source_ip("196.201.214.42", ["not-a-cidr"])
+
+    # IPv4-mapped IPv6 matches IPv4 CIDR; trailing invalid CIDR & host-bit typos rejected
+    WebhookHandler.verify_source_ip("::ffff:196.201.214.42", ["196.201.214.0/24"])
+    with pytest.raises(WebhookVerificationError, match="Invalid CIDR"):
+        WebhookHandler.verify_source_ip(
+            "196.201.214.42", ["196.201.214.0/24", "not-a-cidr"]
+        )
+    with pytest.raises(WebhookVerificationError, match="Invalid CIDR"):
+        WebhookHandler.verify_source_ip("196.201.214.42", ["196.201.214.42/8"])
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_source_ip("196.201.214.42", "196.201.214.0/24")
+
+
+def test_webhook_non_ascii_and_timestamped_replay_hardening() -> None:
+    """Verify non-ASCII signatures raise WebhookVerificationError and replay edge cases fail closed."""
+    payload = b'{"status":"SUCCESSFUL"}'
+    secret = "whsec_test"
+
+    # Non-ASCII signature characters must raise WebhookVerificationError, never TypeError
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_hmac_signature(payload, "é-non-ascii", secret)
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, "t=1700000000,v1=é-non-ascii", secret, now=1700000000
+        )
+
+    # Valid timestamped signature
+    valid_sig = hmac.new(
+        secret.encode(), b"1700000000." + payload, hashlib.sha256
+    ).hexdigest()
+    WebhookHandler.verify_timestamped_hmac_signature(
+        payload, f"t=1700000000,v1={valid_sig}", secret, now=1700000010
+    )
+
+    # NaN / inf / bool tolerance_seconds or now rejected
+    for bad_tol in (float("nan"), float("inf"), 0, -5, True):
+        with pytest.raises(WebhookVerificationError):
+            WebhookHandler.verify_timestamped_hmac_signature(
+                payload,
+                f"t=1700000000,v1={valid_sig}",
+                secret,
+                tolerance_seconds=bad_tol,
+                now=1700000000,
+            )
+    with pytest.raises(WebhookVerificationError):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t=1700000000,v1={valid_sig}", secret, now=float("nan")
+        )
+
+    # Duplicate t=, leading-zero timestamp, and future timestamp rejected
+    with pytest.raises(WebhookVerificationError, match="Duplicate timestamp"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload,
+            f"t=1700000000,t=1700000000,v1={valid_sig}",
+            secret,
+            now=1700000000,
+        )
+    with pytest.raises(WebhookVerificationError, match="Invalid timestamp"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t=01700000000,v1={valid_sig}", secret, now=1700000000
+        )
+    future_sig = hmac.new(
+        secret.encode(), b"1700000500." + payload, hashlib.sha256
+    ).hexdigest()
+    with pytest.raises(WebhookVerificationError, match="future"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload,
+            f"t=1700000500,v1={future_sig}",
+            secret,
+            tolerance_seconds=3600,
+            now=1700000000,
+        )
