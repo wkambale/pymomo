@@ -68,9 +68,12 @@ def _wave_config() -> WaveConfig:
 
 
 def test_router_carrier_inference_and_fallback(httpx_mock: HTTPXMock) -> None:
-    """Test PaymentRouter routes by MSISDN carrier and falls back on 5xx."""
+    """Test PaymentRouter safe pre-flight fallback, ambiguous 5xx protection, and capability filtering."""
+    from py_momo_sdk import OrangeMoneyClient, OrangeMoneyConfig, OrangeMoneyProvider
+    from py_momo_sdk.exceptions import PyMomoSDKServerError
+
     ref = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
-    # 1. MTN Ugandan MSISDN (25677...) fails with 503, falls back to Airtel
+    # 1. Ambiguous 503 on POST write must NOT fail over unless allow_ambiguous_write_fallback=True
     httpx_mock.add_response(
         method="POST",
         url="https://sandbox.momodeveloper.mtn.com/collection/token/",
@@ -85,6 +88,12 @@ def test_router_carrier_inference_and_fallback(httpx_mock: HTTPXMock) -> None:
         method="POST",
         url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
         status_code=503,
+    )
+    # 2. Pre-flight auth failure (401 on token endpoint) safely fails over to Airtel
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        status_code=401,
     )
     httpx_mock.add_response(
         method="POST",
@@ -101,26 +110,51 @@ def test_router_carrier_inference_and_fallback(httpx_mock: HTTPXMock) -> None:
 
     with (
         PyMomoSDK(_mtn_config()) as mtn_client,
+        PyMomoSDK(_mtn_config()) as mtn_bad_auth,
         AirtelClient(_airtel_config()) as airtel_client,
+        OrangeMoneyClient(
+            OrangeMoneyConfig(client_id="cid", client_secret="sec", merchant_key="mk")
+        ) as orange_client,
     ):
         router = PaymentRouter(
             [MtnMomoProvider(mtn_client), AirtelMoneyProvider(airtel_client)]
         )
         assert router.list_providers() == ["mtn_momo", "airtel_money"]
 
-        result = router.collect(
-            PaymentRequest(
-                amount="5000.00",
-                currency="UGX",
-                payer_msisdn="256771234567",
-                external_id="order-1",
-                reference_id=ref,
-            ),
-            fallback=True,
+        req = PaymentRequest(
+            amount="5000.00",
+            currency="UGX",
+            payer_msisdn="256771234567",
+            external_id="order-1",
+            reference_id=ref,
         )
+        with pytest.raises(PyMomoSDKServerError):
+            router.collect(req, fallback=True)
+
+        # Safe failover on unambiguous pre-flight AuthenticationError
+        router_pre = PaymentRouter(
+            [MtnMomoProvider(mtn_bad_auth), AirtelMoneyProvider(airtel_client)]
+        )
+        result = router_pre.collect(req, fallback=True)
         assert result.provider == "airtel_money"
         assert result.reference_id == ref
         assert result.is_pending()
+
+        # Capability & currency filtering + unknown default_provider validation
+        with pytest.raises(PyMomoSDKError, match="Default provider is not registered"):
+            PaymentRouter([MtnMomoProvider(mtn_client)], default_provider="nonexistent")
+        orange_router = PaymentRouter([OrangeMoneyProvider(orange_client)])
+        with pytest.raises(PyMomoSDKError, match="does not support disbursement"):
+            orange_router.disburse(
+                DisbursementRequest(
+                    amount="100",
+                    currency="XOF",
+                    payee_msisdn="221771234567",
+                ),
+                provider="orange_money",
+            )
+        with pytest.raises(PyMomoSDKError, match="No matching payment provider"):
+            orange_router.collect(req)
 
 
 def test_wave_client_and_provider_sync(httpx_mock: HTTPXMock) -> None:
