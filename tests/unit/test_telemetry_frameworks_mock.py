@@ -249,13 +249,22 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
         verify_constant_time_token("", "tok")
     with pytest.raises(WebhookVerificationError):
         verify_constant_time_token("tok", "")
+    import importlib
+
     err_verifier = create_asgi_webhook_verifier(
         secret=secret, signature_header_name="X-Momo-Sig", http_error_status=401
     )
-    with pytest.raises(WebhookVerificationError):
+    try:
+        starlette_exc_mod = importlib.import_module("starlette.exceptions")
+        expected_err_cls: type[Exception] = starlette_exc_mod.HTTPException
+    except ImportError:
+        expected_err_cls = WebhookVerificationError
+    with pytest.raises(expected_err_cls) as err_exc:
         await err_verifier(
             _FakeRequest(body, {"content-length": "99999999"}, "10.0.0.1")
         )
+    if expected_err_cls is not WebhookVerificationError:
+        assert getattr(err_exc.value, "status_code", None) == 401
     with pytest.raises(WebhookVerificationError):
         await err_verifier(
             _FakeRequest(body, {"content-length": "invalid"}, "10.0.0.1")
