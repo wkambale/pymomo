@@ -508,3 +508,182 @@ async def test_framework_timestamped_asgi_and_missing_django_remote_addr() -> No
             signature_header_name="X-Sig",
             allowed_networks=["10.0.0.0/8"],
         )
+
+
+@pytest.mark.asyncio
+async def test_framework_verifiers_issue_89_security_and_streaming() -> None:
+    """Verify Issue #89: duplicate multi-dict headers, Content-Length DoS, Starlette _body caching, Django META Mapping, static token."""
+    import time
+    from collections.abc import Mapping
+
+    import httpx
+
+    from py_momo_sdk import (
+        verify_raw_webhook_request,
+        verify_static_token_webhook_request,
+    )
+    from py_momo_sdk.telemetry import TelemetryHook
+
+    secret = "whsec_fw_89"
+    body = b'{"id":"evt_89","status":"ok"}'
+    ts = int(time.time())
+    good_sig = hmac.new(
+        secret.encode(), f"{ts}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+
+    # 1. Duplicate header detection on httpx.Headers (multi-dict with .raw / .multi_items())
+    dup_hdrs = httpx.Headers(
+        [("Wave-Signature", f"t={ts},v1=bad"), ("wave-signature", f"v1={good_sig}")]
+    )
+    with pytest.raises(WebhookVerificationError, match="Duplicate"):
+        verify_raw_webhook_request(
+            raw_body=body,
+            headers=dup_hdrs,  # type: ignore[arg-type]
+            signature_header_name="Wave-Signature",
+            secret=secret,
+            timestamped=True,
+        )
+
+    # Non-string header key raises WebhookVerificationError, never AttributeError
+    with pytest.raises(WebhookVerificationError, match="Invalid webhook header"):
+        verify_raw_webhook_request(
+            raw_body=body,
+            headers={123: "bad"},  # type: ignore[dict-item]
+            signature_header_name="X-Sig",
+            secret=secret,
+        )
+
+    # 2. http_error_status validation
+    for bad_status in (200, 0, True, 600):
+        with pytest.raises(ValueError, match="http_error_status"):
+            create_asgi_webhook_verifier(
+                secret=secret, http_error_status=bad_status  # type: ignore[arg-type]
+            )
+
+    # 3. ASGI streaming: checks chunk BEFORE extend, caches request._body, catches ClientDisconnect, bounds Content-Length digits
+    raw_sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    verifier = create_asgi_webhook_verifier(
+        secret=secret,
+        signature_header_name="X-Sig",
+        max_body_bytes=64,
+    )
+
+    class _StreamReq:
+        def __init__(
+            self,
+            chunks: list[bytes],
+            headers: dict[str, str],
+            *,
+            disconnect: bool = False,
+        ) -> None:
+            self._chunks = chunks
+            self.headers = headers
+            self.client = SimpleNamespace(host="127.0.0.1")
+            self._disconnect = disconnect
+            self._body: bytes | None = None
+
+        async def stream(self):
+            for c in self._chunks:
+                yield c
+            if self._disconnect:
+
+                class ClientDisconnect(Exception):
+                    pass
+
+                raise ClientDisconnect()
+
+    ok_req = _StreamReq([body[:10], body[10:]], {"X-Sig": raw_sig})
+    assert await verifier(ok_req) == body
+    assert ok_req._body == body  # Cached so Starlette request.body()/json() work
+
+    # Oversized 5000-digit Content-Length raises WebhookVerificationError, not ValueError
+    huge_cl_req = _StreamReq([body], {"X-Sig": raw_sig, "Content-Length": "9" * 5000})
+    with pytest.raises(WebhookVerificationError, match="Content-Length"):
+        await verifier(huge_cl_req)
+
+    # Oversized single chunk rejected before copying
+    big_chunk_req = _StreamReq([b"x" * 100], {"X-Sig": raw_sig})
+    with pytest.raises(WebhookVerificationError, match="maximum allowed size"):
+        await verifier(big_chunk_req)
+
+    # ClientDisconnect converted to WebhookVerificationError
+    dc_req = _StreamReq([b"part"], {"X-Sig": raw_sig}, disconnect=True)
+    with pytest.raises(WebhookVerificationError, match="Client disconnected"):
+        await verifier(dc_req)
+
+    # 4. Django verifier: blank Content-Length header falls back to META["CONTENT_LENGTH"], custom Mapping META, RequestDataTooBig
+    class _MetaMapping(Mapping[str, object]):
+        def __init__(self, data: dict[str, object]) -> None:
+            self._data = data
+
+        def __getitem__(self, key: str) -> object:
+            return self._data[key]
+
+        def __iter__(self):
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    django_oversized_meta = SimpleNamespace(
+        body=body,
+        headers={"X-Sig": raw_sig, "Content-Length": "   "},
+        META=_MetaMapping({"REMOTE_ADDR": "10.0.0.5", "CONTENT_LENGTH": "999"}),
+    )
+    with pytest.raises(WebhookVerificationError, match="maximum allowed size"):
+        verify_django_webhook_request(
+            django_oversized_meta,
+            secret=secret,
+            signature_header_name="X-Sig",
+            allowed_networks=["10.0.0.0/8"],
+            max_body_bytes=64,
+        )
+
+    class _TooBigReq:
+        def __init__(self) -> None:
+            self.headers = {"X-Sig": raw_sig}
+            self.META = {"REMOTE_ADDR": "10.0.0.5"}
+
+        @property
+        def body(self) -> bytes:
+            class RequestDataTooBig(Exception):
+                pass
+
+            raise RequestDataTooBig("too big")
+
+    with pytest.raises(WebhookVerificationError, match="maximum allowed size"):
+        verify_django_webhook_request(
+            _TooBigReq(),
+            secret=secret,
+            signature_header_name="X-Sig",
+            allowed_networks=["10.0.0.0/8"],
+        )
+
+    # 5. Static-token webhook verifier with telemetry & IP allowlisting
+    wh_events: list[tuple[str, bool]] = []
+
+    class _WhHook(TelemetryHook):
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            pass
+
+        def on_webhook(self, event: WebhookTelemetryEvent) -> None:
+            wh_events.append((event.provider, event.verified))
+
+    verify_static_token_webhook_request(
+        headers={"verif-hash": "flw-secret-token"},
+        token_header_name="verif-hash",
+        expected_token="flw-secret-token",
+        remote_ip="10.0.0.1",
+        allowed_networks=["10.0.0.0/8"],
+        telemetry=_WhHook(),
+        provider="flutterwave",
+    )
+    with pytest.raises(WebhookVerificationError):
+        verify_static_token_webhook_request(
+            headers={"verif-hash": "wrong"},
+            token_header_name="verif-hash",
+            expected_token="flw-secret-token",
+            telemetry=_WhHook(),
+            provider="flutterwave",
+        )
+    assert wh_events == [("flutterwave", True), ("flutterwave", False)]

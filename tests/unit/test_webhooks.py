@@ -188,3 +188,76 @@ def test_webhook_non_ascii_and_timestamped_replay_hardening() -> None:
             tolerance_seconds=3600,
             now=1700000000,
         )
+
+
+def test_webhook_issue_89_dos_ipv6_cidr_strict_parsing_and_replay() -> None:
+    """Verify Issue #89: digit-length DoS, header cap, strict token parsing, replay_check, IPv6 zone/CIDR, require_identifier."""
+    payload = b'{"event":"payment.completed"}'
+    secret = "whsec_issue_89"
+    ts = 1700000000
+    valid_sig = hmac.new(
+        secret.encode(), f"{ts}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+
+    # 1. Oversized timestamp digits (310 & 5000 digits) raise WebhookVerificationError, never OverflowError/ValueError
+    with pytest.raises(WebhookVerificationError, match="Invalid timestamp"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t={'9' * 310},v1={valid_sig}", secret, now=ts
+        )
+    with pytest.raises(WebhookVerificationError, match="maximum allowed length"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t={'9' * 5000},v1={valid_sig}", secret, now=ts
+        )
+
+    # 2. Strict token parsing rejects tokens without '=' and empty 'v1='
+    with pytest.raises(WebhookVerificationError, match="Malformed"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t={ts},junk,v1={valid_sig}", secret, now=ts
+        )
+    with pytest.raises(WebhookVerificationError, match="Malformed"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, f"t={ts},v1=,v1={valid_sig}", secret, now=ts
+        )
+
+    # 3. Optional replay_check rejects second delivery of identical signature
+    seen: set[str] = set()
+
+    def _replay_guard(sig_hdr: str, body: bytes, timestamp: int) -> bool:
+        del body, timestamp
+        if sig_hdr in seen:
+            return False
+        seen.add(sig_hdr)
+        return True
+
+    hdr = f"t={ts},v1={valid_sig}"
+    WebhookHandler.verify_timestamped_hmac_signature(
+        payload, hdr, secret, replay_check=_replay_guard, now=ts
+    )
+    with pytest.raises(WebhookVerificationError, match="replay"):
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payload, hdr, secret, replay_check=_replay_guard, now=ts
+        )
+
+    # 4. IPv6 zone IDs rejected; IPv4-mapped IPv6 CIDRs normalized cleanly
+    with pytest.raises(WebhookVerificationError, match="Invalid webhook source IP"):
+        WebhookHandler.verify_source_ip("2001:db8::1%eth0", ["2001:db8::/32"])
+    with pytest.raises(WebhookVerificationError, match="Invalid webhook source IP"):
+        WebhookHandler.verify_source_ip(
+            "::ffff:196.201.214.42%eth0", ["196.201.214.0/24"]
+        )
+    WebhookHandler.verify_source_ip(
+        "::ffff:196.201.214.42", ["::ffff:196.201.214.0/120"]
+    )
+    WebhookHandler.verify_source_ip("196.201.214.42", ["::ffff:196.201.214.0/120"])
+
+    # 5. require_identifier rejects identifier-less transaction payloads
+    with pytest.raises(WebhookVerificationError, match="identifier"):
+        WebhookHandler.parse_transaction_notification(
+            {"status": "SUCCESSFUL"}, require_identifier=True
+        )
+    assert (
+        WebhookHandler.is_successful(
+            {"status": "SUCCESSFUL", "externalId": "ord-89"}, require_identifier=True
+        )
+        is True
+    )
