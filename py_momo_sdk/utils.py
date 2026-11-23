@@ -567,15 +567,10 @@ def validate_reference_id(reference_id: str) -> None:
     if not isinstance(reference_id, str) or not _CANONICAL_UUID_RE.fullmatch(
         reference_id
     ):
-        raise ValueError(f"The reference ID must be a valid UUID v4: {reference_id}")
-    try:
-        val = uuid.UUID(reference_id)
-    except ValueError as exc:
-        raise ValueError(
-            f"The reference ID must be a valid UUID v4: {reference_id}"
-        ) from exc
+        raise ValueError("The reference ID must be a valid UUID v4")
+    val = uuid.UUID(reference_id)
     if val.version != 4:
-        raise ValueError(f"The reference ID must be a version 4 UUID: {reference_id}")
+        raise ValueError("The reference ID must be a version 4 UUID")
 
 
 def validate_airtel_reference_id(reference_id: str) -> str:
@@ -591,7 +586,7 @@ def validate_airtel_reference_id(reference_id: str) -> str:
         or reference_id in (".", "..")
         or not _HEADER_TOKEN_RE.fullmatch(reference_id)
     ):
-        raise ValueError(f"Invalid Airtel reference ID: {reference_id!r}")
+        raise ValueError("Invalid Airtel reference ID")
     return reference_id
 
 

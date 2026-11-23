@@ -6,18 +6,19 @@ from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
 
 
 def test_product_config_repr_redaction() -> None:
-    """Verify that ProductConfig repr redacts subscription key and API key."""
+    """Verify that ProductConfig repr and str redact api_user, subscription_key, and api_key."""
     config = ProductConfig(
         subscription_key="secret-sub-key",
         api_user="test-user-id",
         api_key="secret-api-key",
     )
-    repr_str = repr(config)
-    assert "test-user-id" in repr_str
-    assert "secret-sub-key" not in repr_str
-    assert "secret-api-key" not in repr_str
-    assert "api_key=<redacted>" in repr_str
-    assert "subscription_key=<redacted>" in repr_str
+    for rendered in (repr(config), str(config)):
+        assert "test-user-id" not in rendered
+        assert "secret-sub-key" not in rendered
+        assert "secret-api-key" not in rendered
+        assert "api_user=<redacted>" in rendered
+        assert "api_key=<redacted>" in rendered
+        assert "subscription_key=<redacted>" in rendered
 
 
 def test_momo_config_from_env() -> None:

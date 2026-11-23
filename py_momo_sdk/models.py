@@ -278,6 +278,15 @@ class BcAuthorizeResponse(BaseModel):
     def _check_expires_in(cls, value: object) -> object:
         return _validate_positive_expires_in(value)
 
+    def __repr__(self) -> str:
+        return (
+            f"BcAuthorizeResponse(auth_req_id=<redacted>, "
+            f"expires_in={self.expires_in!r}, interval={self.interval!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class Balance(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
