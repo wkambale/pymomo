@@ -341,6 +341,12 @@ button {
   margin: 0 0 1.5rem;
 }
 
+.md-typeset .pm-hero code {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--accent-300);
+}
+
 .pm-hero__actions {
   display: flex;
   flex-wrap: wrap;

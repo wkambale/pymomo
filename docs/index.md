@@ -15,9 +15,9 @@ hide:
   </div>
   <h1 class="pm-hero__title">Py MoMo SDK for African Mobile Money and Payment Rails</h1>
   <p class="pm-hero__lead">A strictly typed Python SDK for MTN Mobile Money, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, and Orange Money behind a unified <code>PaymentRouter</code>. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
-  <div class="pm-hero__actions" markdown="1">
-[Get started](quickstart.md){ .pm-btn-primary }
-[Configure authentication](authentication.md){ .pm-btn-secondary }
+  <div class="pm-hero__actions">
+    <a class="pm-btn-primary" href="quickstart/">Get started</a>
+    <a class="pm-btn-secondary" href="authentication/">Configure authentication</a>
   </div>
   <svg class="pm-hero__chevron" viewBox="0 0 1200 18" preserveAspectRatio="none" aria-hidden="true">
     <defs>
@@ -43,34 +43,34 @@ Py MoMo SDK covers every MTN MoMo Open API product alongside Airtel Money and pa
 <div class="pm-card-grid">
   <article class="pm-card">
     <p class="pm-card__eyebrow">MTN MoMo</p>
-    <div class="pm-card__body" markdown="1">
+    <div class="pm-card__body">
       <h3 class="pm-card__title">Collection</h3>
       <p class="pm-card__text">Request payments, initiate withdrawals, query balances, and exchange CIBA OAuth2 consent tokens.</p>
-[Explore collection](collection.md){ .pm-card__link }
+      <a class="pm-card__link" href="collection/">Explore collection</a>
     </div>
   </article>
   <article class="pm-card">
     <p class="pm-card__eyebrow">MTN MoMo</p>
-    <div class="pm-card__body" markdown="1">
+    <div class="pm-card__body">
       <h3 class="pm-card__title">Disbursement and remittance</h3>
       <p class="pm-card__text">Execute subscriber transfers, v2 deposits, refunds, wallet-to-wallet remittances, and account validation.</p>
-[Explore disbursement](disbursement.md){ .pm-card__link }
+      <a class="pm-card__link" href="disbursement/">Explore disbursement</a>
     </div>
   </article>
   <article class="pm-card">
     <p class="pm-card__eyebrow">Airtel Open API</p>
-    <div class="pm-card__body" markdown="1">
+    <div class="pm-card__body">
       <h3 class="pm-card__title">Airtel Money</h3>
       <p class="pm-card__text">Initiate USSD Push collections, RSA-encrypted PIN disbursements, status inquiries, and wallet balances.</p>
-[Explore Airtel Money](airtel.md){ .pm-card__link }
+      <a class="pm-card__link" href="airtel/">Explore Airtel Money</a>
     </div>
   </article>
   <article class="pm-card">
     <p class="pm-card__eyebrow">Multi-provider</p>
-    <div class="pm-card__body" markdown="1">
+    <div class="pm-card__body">
       <h3 class="pm-card__title">PaymentRouter and 7 rails</h3>
       <p class="pm-card__text">Route across MTN MoMo, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, and Orange Money.</p>
-[Explore providers](providers.md){ .pm-card__link }
+      <a class="pm-card__link" href="providers/">Explore providers</a>
     </div>
   </article>
 </div>
@@ -129,22 +129,22 @@ with PyMomoSDK(config) as client:
 
 ## Explore the guides
 
-<ul class="pm-directory" markdown="1">
-  <li>[Quickstart guide](quickstart.md)</li>
-  <li>[Authentication configuration](authentication.md)</li>
-  <li>[Multi-provider orchestration](providers.md)</li>
-  <li>[Resilience and observability](resilience.md)</li>
-  <li>[Collection API reference](collection.md)</li>
-  <li>[Disbursement API reference](disbursement.md)</li>
-  <li>[Remittance API reference](remittance.md)</li>
-  <li>[Airtel Money reference](airtel.md)</li>
-  <li>[Sandbox provisioning](sandbox.md)</li>
-  <li>[Webhook processing](webhooks.md)</li>
-  <li>[Asynchronous client support](async.md)</li>
-  <li>[Error handling](error-handling.md)</li>
-  <li>[Command line interface](cli.md)</li>
-  <li>[Changelog](changelog.md)</li>
-  <li>[Contributing guide](contributing.md)</li>
+<ul class="pm-directory">
+  <li><a href="quickstart/">Quickstart guide</a></li>
+  <li><a href="authentication/">Authentication configuration</a></li>
+  <li><a href="providers/">Multi-provider orchestration</a></li>
+  <li><a href="resilience/">Resilience and observability</a></li>
+  <li><a href="collection/">Collection API reference</a></li>
+  <li><a href="disbursement/">Disbursement API reference</a></li>
+  <li><a href="remittance/">Remittance API reference</a></li>
+  <li><a href="airtel/">Airtel Money reference</a></li>
+  <li><a href="sandbox/">Sandbox provisioning</a></li>
+  <li><a href="webhooks/">Webhook processing</a></li>
+  <li><a href="async/">Asynchronous client support</a></li>
+  <li><a href="error-handling/">Error handling</a></li>
+  <li><a href="cli/">Command line interface</a></li>
+  <li><a href="changelog/">Changelog</a></li>
+  <li><a href="contributing/">Contributing guide</a></li>
 </ul>
 
 </div>
