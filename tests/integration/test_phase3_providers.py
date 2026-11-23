@@ -1368,3 +1368,277 @@ async def test_phase3_negative_webhooks_path_traversal_payloads_and_not_implemen
             await aomp.get_balance()
         with pytest.raises(NotImplementedError):
             await aomp.get_status("pay-1", kind="disbursement")
+
+
+@pytest.mark.asyncio
+async def test_mpesa_daraja_protocol_fixes(httpx_mock: HTTPXMock) -> None:
+    """Verify Issue #85: EAT timestamp, integer Amount, B2C v3 OriginatorConversationID, BuyGoods/CommandID, retries, and validation."""
+    import base64
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from py_momo_sdk.providers.mpesa import _build_stk_password
+    from py_momo_sdk.telemetry import (
+        RequestTelemetryEvent,
+        TelemetryHook,
+        WebhookTelemetryEvent,
+    )
+
+    # 1. EAT (UTC+3) timestamp in _build_stk_password
+    eat_before = datetime.now(timezone(timedelta(hours=3)))
+    password, ts = _build_stk_password("174379", "secret-passkey")
+    eat_after = datetime.now(timezone(timedelta(hours=3)))
+    parsed_ts = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(
+        tzinfo=timezone(timedelta(hours=3))
+    )
+    assert (
+        eat_before - timedelta(seconds=2)
+        <= parsed_ts
+        <= eat_after + timedelta(seconds=2)
+    )
+    decoded_pw = base64.b64decode(password).decode("utf-8")
+    assert decoded_pw == f"174379secret-passkey{ts}"
+
+    # 2. Config validation: consumer_key ':', transaction_type, command_id, queue_timeout_url, party_b
+    with pytest.raises(ValueError, match="consumer_key"):
+        MpesaConfig(
+            consumer_key="bad:key",
+            consumer_secret="cs",
+            short_code="174379",
+            passkey="pk",
+        )
+    with pytest.raises(ValueError, match="transaction_type"):
+        MpesaConfig(
+            consumer_key="ck",
+            consumer_secret="cs",
+            short_code="174379",
+            passkey="pk",
+            transaction_type="InvalidType",
+        )
+    with pytest.raises(ValueError, match="command_id"):
+        MpesaConfig(
+            consumer_key="ck",
+            consumer_secret="cs",
+            short_code="174379",
+            passkey="pk",
+            command_id="UnknownCommand",
+        )
+    with pytest.raises(ValueError, match="HTTPS"):
+        MpesaConfig(
+            consumer_key="ck",
+            consumer_secret="cs",
+            short_code="174379",
+            passkey="pk",
+            queue_timeout_url="http://insecure.example.test/timeout",
+        )
+
+    # 3. Sync STK Push (BuyGoods + party_b + integer Amount + telemetry), retryable STK Query, and B2C v3 (OriginatorConversationID + SalaryPayment + separate QueueTimeOutURL)
+    events: list[tuple[str, str, int | None]] = []
+
+    class _Hook(TelemetryHook):
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            events.append(("req", event.path, event.status_code))
+
+        def on_webhook(self, event: WebhookTelemetryEvent) -> None:
+            events.append(("wh", event.provider, None))
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "tok-85", "expires_in": "3599"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        json={"CheckoutRequestID": "ws_CO_85", "ResponseCode": "0"},
+        status_code=200,
+    )
+    # First stk_query returns 503, second succeeds (verifies idempotent=True retry)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+        json={"errorMessage": "Temporary unavailable"},
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+        json={"CheckoutRequestID": "ws_CO_85", "ResultCode": "0", "ResultDesc": "OK"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/b2c/v3/paymentrequest",
+        json={
+            "ConversationID": "AG_85",
+            "OriginatorConversationID": "orig-85",
+            "ResponseCode": "0",
+        },
+        status_code=200,
+    )
+
+    cfg = MpesaConfig(
+        consumer_key="ck",
+        consumer_secret="cs",
+        short_code="174379",
+        passkey="pk",
+        callback_url="https://callback.example.test/mpesa/result",
+        queue_timeout_url="https://callback.example.test/mpesa/timeout",
+        security_credential="sec-cred",
+        transaction_type="CustomerBuyGoodsOnline",
+        party_b="998877",
+        command_id="SalaryPayment",
+        max_retries=1,
+        retry_backoff=0.001,
+        telemetry=_Hook(),
+    )
+    with MpesaClient(cfg) as client:
+        # Reject fractional amount, >12 char AccountReference, empty checkout_request_id
+        with pytest.raises(ValueError, match="whole integer"):
+            client.stk_push(amount="100.50", phone_number="254712345678")
+        with pytest.raises(ValueError, match="12 characters"):
+            client.stk_push(
+                amount="100",
+                phone_number="254712345678",
+                account_reference="THIS-IS-LONGER-THAN-12",
+            )
+        with pytest.raises(ValueError, match="checkout_request_id"):
+            client.stk_query("   ")
+        with pytest.raises(ValueError, match="whole integer"):
+            client.b2c_transfer(amount="50.25", phone_number="254712345678")
+
+        # Whole-number decimal string "100.00" is normalized to integer 100
+        provider = MpesaProvider(client)
+        assert provider.capabilities.currencies == ("KES",)
+        with pytest.raises(ValueError, match="KES only"):
+            provider.collect(
+                PaymentRequest(
+                    amount="100", currency="TZS", payer_msisdn="254712345678"
+                )
+            )
+        with pytest.raises(ValueError, match="KES only"):
+            provider.disburse(
+                DisbursementRequest(
+                    amount="100", currency="UGX", payee_msisdn="254712345678"
+                )
+            )
+
+        # Provider truncates 36-char UUID external_id safely to <=12 chars for AccountReference
+        col = provider.collect(
+            PaymentRequest(
+                amount="100.00",
+                currency="KES",
+                payer_msisdn="254712345678",
+                external_id="12345678-1234-4123-8123-1234567890ab",
+            )
+        )
+        assert col.reference_id == "ws_CO_85"
+
+        q_res = provider.get_status("ws_CO_85")
+        assert q_res.is_successful()
+
+        disb = provider.disburse(
+            DisbursementRequest(
+                amount="250.00",
+                currency="KES",
+                payee_msisdn="254712345678",
+                reference_id="orig-85",
+                external_id="payroll-1",
+            )
+        )
+        assert disb.reference_id == "AG_85"
+
+    reqs = httpx_mock.get_requests()
+    stk_req = next(r for r in reqs if r.url.path == "/mpesa/stkpush/v1/processrequest")
+    stk_body = json.loads(stk_req.read().decode("utf-8"))
+    assert stk_body["Amount"] == 100
+    assert isinstance(stk_body["Amount"], int)
+    assert stk_body["TransactionType"] == "CustomerBuyGoodsOnline"
+    assert stk_body["BusinessShortCode"] == "174379"
+    assert stk_body["PartyB"] == "998877"
+    assert stk_body["AccountReference"] == "12345678-123"
+    assert len(stk_body["AccountReference"]) == 12
+
+    query_reqs = [r for r in reqs if r.url.path == "/mpesa/stkpushquery/v1/query"]
+    assert len(query_reqs) == 2
+
+    b2c_req = next(r for r in reqs if r.url.path == "/mpesa/b2c/v3/paymentrequest")
+    b2c_body = json.loads(b2c_req.read().decode("utf-8"))
+    assert b2c_body["OriginatorConversationID"] == "orig-85"
+    assert b2c_body["CommandID"] == "SalaryPayment"
+    assert b2c_body["Amount"] == 250
+    assert isinstance(b2c_body["Amount"], int)
+    assert b2c_body["QueueTimeOutURL"] == "https://callback.example.test/mpesa/timeout"
+    assert b2c_body["ResultURL"] == "https://callback.example.test/mpesa/result"
+    assert any(
+        ev[0] == "req" and ev[1] == "/mpesa/b2c/v3/paymentrequest" and ev[2] == 200
+        for ev in events
+    )
+
+    # 4. Async client parity: auto-generated OriginatorConversationID, integer Amount, BuyGoods override
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "tok-async-85", "expires_in": "3599"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        json={"CheckoutRequestID": "ws_CO_async_85", "ResponseCode": "0"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/b2c/v3/paymentrequest",
+        json={
+            "ConversationID": "AG_async_85",
+            "OriginatorConversationID": "auto-oc",
+            "ResponseCode": "0",
+        },
+        status_code=200,
+    )
+
+    async with AsyncMpesaClient(cfg) as aclient:
+        with pytest.raises(ValueError, match="whole integer"):
+            await aclient.stk_push(amount="10.99", phone_number="254712345678")
+        with pytest.raises(ValueError, match="checkout_request_id"):
+            await aclient.stk_query("")
+
+        aprov = AsyncMpesaProvider(aclient)
+        with pytest.raises(ValueError, match="KES only"):
+            await aprov.collect(
+                PaymentRequest(
+                    amount="100", currency="ETB", payer_msisdn="254712345678"
+                )
+            )
+        await aclient.stk_push(
+            amount="75",
+            phone_number="254712345678",
+            account_reference="TILL-1",
+            transaction_type="CustomerPayBillOnline",
+            party_b="555111",
+        )
+        await aclient.b2c_transfer(
+            amount="300",
+            phone_number="254712345678",
+            command_id="PromotionPayment",
+        )
+
+    all_reqs = httpx_mock.get_requests()
+    async_stk = [
+        r for r in all_reqs if r.url.path == "/mpesa/stkpush/v1/processrequest"
+    ][-1]
+    async_stk_body = json.loads(async_stk.read().decode("utf-8"))
+    assert async_stk_body["Amount"] == 75
+    assert async_stk_body["TransactionType"] == "CustomerPayBillOnline"
+    assert async_stk_body["PartyB"] == "555111"
+
+    async_b2c = [r for r in all_reqs if r.url.path == "/mpesa/b2c/v3/paymentrequest"][
+        -1
+    ]
+    async_b2c_body = json.loads(async_b2c.read().decode("utf-8"))
+    assert async_b2c_body["CommandID"] == "PromotionPayment"
+    assert len(async_b2c_body["OriginatorConversationID"]) == 36
+    assert async_b2c_body["Amount"] == 300
