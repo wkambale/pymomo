@@ -11,7 +11,23 @@ from py_momo_sdk.airtel.client import AirtelClient
 from py_momo_sdk.airtel.config import AirtelConfig, encrypt_airtel_pin
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.client import PyMomoSDK
-from py_momo_sdk.config import MTN_RWANDA, ProductConfig, PyMomoSDKConfig
+from py_momo_sdk.config import (
+    MTN_BENIN,
+    MTN_CAMEROON,
+    MTN_CONGO,
+    MTN_GHANA,
+    MTN_GUINEA_CONAKRY,
+    MTN_IVORY_COAST,
+    MTN_LIBERIA,
+    MTN_RWANDA,
+    MTN_SOUTH_AFRICA,
+    MTN_SWAZILAND,
+    MTN_UGANDA,
+    MTN_ZAMBIA,
+    SANDBOX,
+    ProductConfig,
+    PyMomoSDKConfig,
+)
 from py_momo_sdk.exceptions import (
     AuthenticationError,
     BadRequestError,
@@ -97,7 +113,11 @@ from py_momo_sdk.telemetry import (
     TelemetryHook,
     WebhookTelemetryEvent,
 )
-from py_momo_sdk.utils import async_wait_for_settlement, wait_for_settlement
+from py_momo_sdk.utils import (
+    async_wait_for_settlement,
+    detect_carrier_from_msisdn,
+    wait_for_settlement,
+)
 from py_momo_sdk.webhooks import WebhookHandler
 
 try:
@@ -106,7 +126,19 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "MTN_BENIN",
+    "MTN_CAMEROON",
+    "MTN_CONGO",
+    "MTN_GHANA",
+    "MTN_GUINEA_CONAKRY",
+    "MTN_IVORY_COAST",
+    "MTN_LIBERIA",
     "MTN_RWANDA",
+    "MTN_SOUTH_AFRICA",
+    "MTN_SWAZILAND",
+    "MTN_UGANDA",
+    "MTN_ZAMBIA",
+    "SANDBOX",
     "AccountHolderIdType",
     "AirtelClient",
     "AirtelConfig",
@@ -190,6 +222,7 @@ __all__ = [
     "async_wait_for_settlement",
     "create_asgi_webhook_verifier",
     "create_mock_server",
+    "detect_carrier_from_msisdn",
     "encrypt_airtel_pin",
     "start_mock_server_thread",
     "verify_constant_time_token",

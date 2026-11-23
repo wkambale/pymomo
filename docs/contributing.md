@@ -9,16 +9,16 @@ Clone the repository and install the development dependencies:
 ```bash
 git clone https://github.com/wkambale/pymomo.git
 cd pymomo
-pip install -e ".[dev]"
+pip install -e ".[all,dev]"
 ```
 
 ## Styling rules
 
-We enforce strict formatting rules to maintain codebase quality:
+We enforce strict formatting and quality rules to maintain codebase quality:
 - Formatting: Black with a line limit of 88.
 - Import ordering: Isort configured with the Black profile.
-- Linters: Ruff default ruleset.
-- Security: Bandit scans must report zero findings.
+- Linters: Ruff (`E`, `F`, `B`, `UP`, `SIM`, `RUF`, `S`).
+- Security: Bandit (`-ll`) and `pip-audit` must report zero findings.
 
 ### Formatting commands
 
@@ -27,15 +27,16 @@ Verify your format and style before submitting a pull request:
 ```bash
 ruff check .
 black --check .
-isort --check .
+isort --check-only .
+bandit -r py_momo_sdk/ -ll
 ```
 
 ## Type safety
 
-The library is strictly typed. Run mypy to ensure there are no errors:
+The library and test suite are checked with mypy:
 
 ```bash
-mypy py_momo_sdk/
+mypy py_momo_sdk/ tests/
 ```
 
 ## Writing and running tests
