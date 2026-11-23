@@ -21,7 +21,11 @@ _ENCODED_TRAVERSAL_RE = re.compile(r"%(?:2e|2f|5c|25(?:2e|2f|5c))", re.IGNORECAS
 _CGNAT_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 _CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 _COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
-_AMOUNT_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
+_AMOUNT_RE = re.compile(r"^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]+)?$")
+_MSISDN_ALLOWED_CHARS_RE = re.compile(r"^[0-9+\-\s().]+$")
+_ZERO_DECIMAL_CURRENCIES = frozenset(
+    {"BIF", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "RWF", "UGX", "XAF", "XOF"}
+)
 _HEADER_TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _BARE_HOST_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -274,20 +278,28 @@ def generate_reference_id() -> str:
 
 
 def normalise_msisdn(msisdn: str) -> str:
-    """Strip non-digit characters and return a clean ASCII MSISDN string.
+    """Validate and normalise a phone number into a clean ASCII E.164 digit string.
 
-    Does not validate the number against any country's numbering plan.
-    Callers are responsible for providing a valid number.
+    Accepts ASCII digits and common formatting punctuation (``+``, ``-``,
+    spaces, parentheses, dots), strips a leading ``00`` international prefix,
+    and enforces E.164 length bounds (7 to 15 digits).
 
     Raises:
         TypeError: If ``msisdn`` is not a string.
-        ValueError: If no ASCII digits remain after stripping non-digit characters.
+        ValueError: If ``msisdn`` contains invalid characters or an out-of-range
+            digit count.
     """
     if not isinstance(msisdn, str):
         raise TypeError("MSISDN must be a string")
+    if not msisdn.strip() or not _MSISDN_ALLOWED_CHARS_RE.fullmatch(msisdn):
+        raise ValueError(
+            "MSISDN must contain only digits and standard phone formatting"
+        )
     digits = re.sub(r"[^0-9]", "", msisdn)
-    if not digits:
-        raise ValueError("MSISDN must contain at least one digit")
+    if digits.startswith("00") and len(digits) > 9:
+        digits = digits[2:]
+    if not (7 <= len(digits) <= 15):
+        raise ValueError("MSISDN must contain between 7 and 15 digits")
     return digits
 
 
@@ -340,26 +352,40 @@ def validate_account_holder_id_type(
     return normalized
 
 
-def validate_amount(amount: str) -> str:
-    """Validate that a transaction amount is a positive finite decimal string.
+def validate_amount(amount: str, *, currency: str | None = None) -> str:
+    """Validate that a transaction amount is a canonical positive decimal string.
+
+    Rejects leading zeros (such as ``"000100"``), unbounded lengths (>18 integer
+    digits), more than 2 decimal places, zero/negative values, and non-zero
+    fractional parts on zero-decimal currencies (when ``currency`` is provided).
 
     Args:
         amount: Decimal string representing the transaction amount.
+        currency: Optional ISO 4217 currency code for minor-unit precision checks.
 
     Returns:
         The validated amount string.
 
     Raises:
-        ValueError: If the amount is non-numeric, non-finite, zero, or negative.
+        ValueError: If the amount is invalid, zero, negative, or violates
+            minor-unit rules.
     """
     if not isinstance(amount, str) or not _AMOUNT_RE.fullmatch(amount):
         raise ValueError("Amount must be a positive decimal string")
+    if "." in amount and len(amount.split(".", 1)[1]) > 2:
+        raise ValueError("Amount must not have more than 2 decimal places")
     try:
         dec = Decimal(amount)
     except InvalidOperation as exc:
         raise ValueError("Amount must be a positive decimal string") from exc
     if not dec.is_finite() or dec <= 0:
         raise ValueError("Amount must be greater than zero")
+    if currency is not None:
+        norm_ccy = validate_currency(currency)
+        if norm_ccy in _ZERO_DECIMAL_CURRENCIES and dec != dec.to_integral_value():
+            raise ValueError(
+                f"Amount for zero-decimal currency {norm_ccy} must not have fractional minor units"
+            )
     return amount
 
 
@@ -672,6 +698,65 @@ def _validate_polling_params(
     return interval_f, backoff_f, max_interval_f
 
 
+def _extract_status_str(result: Any) -> str | None:
+    """Extract an uppercase status string from a model, enum, or mapping."""
+    from enum import Enum
+
+    raw = (
+        result.get("status")
+        if isinstance(result, dict)
+        else getattr(result, "status", None)
+    )
+    if isinstance(raw, Enum):
+        raw = raw.value
+    return raw.strip().upper() if isinstance(raw, str) else None
+
+
+def _is_result_pending(result: Any) -> bool:
+    """Determine whether a polled transaction result is still pending."""
+    if hasattr(result, "is_pending"):
+        attr = result.is_pending
+        return bool(attr() if callable(attr) else attr)
+    return _extract_status_str(result) == "PENDING"
+
+
+def _raise_if_result_failed(result: Any) -> None:
+    """Raise TransactionFailedError when a settled result represents a failure."""
+    from py_momo_sdk.exceptions import TransactionFailedError
+
+    is_failed = False
+    if hasattr(result, "is_failed"):
+        attr = result.is_failed
+        is_failed = bool(attr() if callable(attr) else attr)
+    else:
+        is_failed = _extract_status_str(result) == "FAILED"
+
+    if is_failed:
+        ref = (
+            result.get("reference_id")
+            if isinstance(result, dict)
+            else getattr(result, "reference_id", None)
+            or getattr(result, "external_id", None)
+        )
+        reason = (
+            result.get("reason")
+            if isinstance(result, dict)
+            else getattr(result, "reason", None)
+        )
+        raise TransactionFailedError(
+            reference_id=str(ref or "unknown"),
+            reason=str(reason) if reason is not None else None,
+        )
+
+
+def _jittered_poll_delay(delay: float, max_interval: float) -> float:
+    import secrets
+
+    max_jitter_ms = int(min(250.0, delay * 100.0))
+    jitter = secrets.randbelow(max_jitter_ms) / 1000.0 if max_jitter_ms > 0 else 0.0
+    return min(delay + jitter, max_interval)
+
+
 def wait_for_settlement(
     poll_fn: Any,
     *,
@@ -680,17 +765,20 @@ def wait_for_settlement(
     backoff: float = 1.5,
     max_interval: float = 10.0,
     sleep_fn: Any = None,
+    raise_on_failed: bool = False,
 ) -> Any:
     """Poll ``poll_fn`` until a transaction leaves the pending state.
 
     Args:
-        poll_fn: Zero-argument callable returning an object with ``is_pending()``
-            or ``status``.
+        poll_fn: Zero-argument callable returning an object or dict with
+            ``is_pending()`` or ``status``.
         timeout: Maximum total wait time in seconds.
         interval: Initial sleep interval between polls in seconds.
         backoff: Multiplier applied to ``interval`` after each pending poll.
         max_interval: Maximum sleep interval between polls in seconds.
         sleep_fn: Optional sleep callable (defaults to ``time.sleep``).
+        raise_on_failed: When ``True``, raise ``TransactionFailedError`` if the
+            settled result has failed status.
 
     Returns:
         The settled status object.
@@ -698,6 +786,8 @@ def wait_for_settlement(
     Raises:
         PyMomoSDKError: If ``timeout`` expires while the transaction is still
             pending.
+        TransactionFailedError: If ``raise_on_failed=True`` and the transaction
+            settled to a failed state.
     """
     import time
 
@@ -712,17 +802,15 @@ def wait_for_settlement(
 
     while True:
         result = poll_fn()
-        is_pending = (
-            result.is_pending()
-            if hasattr(result, "is_pending")
-            else getattr(result, "status", None) == "PENDING"
-        )
-        if not is_pending:
+        if not _is_result_pending(result):
+            if raise_on_failed:
+                _raise_if_result_failed(result)
             return result
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        sleep_for = _jittered_poll_delay(delay, max_interval_f)
+        if remaining <= 0 or sleep_for >= remaining:
             raise PyMomoSDKError("Transaction settlement polling timed out")
-        sleeper(min(delay, remaining))
+        sleeper(sleep_for)
         delay = min(delay * backoff_f, max_interval_f)
 
 
@@ -734,6 +822,7 @@ async def async_wait_for_settlement(
     backoff: float = 1.5,
     max_interval: float = 10.0,
     sleep_fn: Any = None,
+    raise_on_failed: bool = False,
 ) -> Any:
     """Asynchronously poll ``poll_fn`` until a transaction leaves pending state."""
     import asyncio
@@ -750,15 +839,13 @@ async def async_wait_for_settlement(
 
     while True:
         result = await poll_fn()
-        is_pending = (
-            result.is_pending()
-            if hasattr(result, "is_pending")
-            else getattr(result, "status", None) == "PENDING"
-        )
-        if not is_pending:
+        if not _is_result_pending(result):
+            if raise_on_failed:
+                _raise_if_result_failed(result)
             return result
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        sleep_for = _jittered_poll_delay(delay, max_interval_f)
+        if remaining <= 0 or sleep_for >= remaining:
             raise PyMomoSDKError("Transaction settlement polling timed out")
-        await sleeper(min(delay, remaining))
+        await sleeper(sleep_for)
         delay = min(delay * backoff_f, max_interval_f)

@@ -26,11 +26,13 @@ def test_generate_reference_id() -> None:
 
 
 def test_normalise_msisdn() -> None:
-    """Verify that normalise_msisdn strips non-digit characters."""
+    """Verify normalise_msisdn validates characters, strips 00 prefix, and enforces E.164 length bounds."""
     assert normalise_msisdn("+256-771-234 567") == "256771234567"
-    assert normalise_msisdn("  123a456  ") == "123456"
-    with pytest.raises(ValueError, match="at least one digit"):
-        normalise_msisdn("+++abc")
+    assert normalise_msisdn("00256 771 234 567") == "256771234567"
+    assert normalise_msisdn("(256) 771.234.567") == "256771234567"
+    for bad in ("+++abc", "Call +256771234567 ext 9", "123a456", "123456", "1" * 16):
+        with pytest.raises(ValueError, match="MSISDN"):
+            normalise_msisdn(bad)
 
 
 def test_validate_currency() -> None:
@@ -176,13 +178,14 @@ def test_url_path_numeric_and_polling_hardening() -> None:
         with pytest.raises(ValueError):
             validate_callback_url(bad_cb)
 
-    # Non-ASCII Unicode digits rejected in amount and stripped in MSISDN/carrier
+    # Non-ASCII Unicode digits rejected in amount and MSISDN/carrier
     for bad_amount in ("\u0661\u0660\u0660", "\uff11\uff10.\uff15"):
         with pytest.raises(ValueError, match="Amount"):
             validate_amount(bad_amount)
-    with pytest.raises(ValueError, match="at least one digit"):
+    with pytest.raises(ValueError, match="MSISDN"):
         normalise_msisdn("\u0667\u0667\u0661")
-    assert normalise_msisdn("+256 \u0667\u0667\u0661 771234567") == "256771234567"
+    with pytest.raises(ValueError, match="MSISDN"):
+        normalise_msisdn("+256 \u0667\u0667\u0661 771234567")
     assert detect_carrier_from_msisdn("\u0662\u0665\u0666\u0667\u0667") is None
 
     # C1 control characters rejected in header values

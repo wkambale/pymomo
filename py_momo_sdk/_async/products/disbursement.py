@@ -33,17 +33,20 @@ class Disbursement(AsyncBaseProduct):
         payee_note: str = "",
         reference_id: str | None = None,
         callback_url: str | None = None,
+        party_id_type: str = "MSISDN",
     ) -> str:
         """Transfer funds to a payee.
 
         Args:
             amount: The transaction amount.
             currency: The transaction currency.
-            payee_msisdn: The MSISDN of the payee.
+            payee_msisdn: The MSISDN (or party identifier) of the payee.
             external_id: The external ID.
             payer_message: Message to the payer.
             payee_note: Note to the payee.
             reference_id: Optional client-supplied reference ID.
+            callback_url: Optional per-request webhook callback URL.
+            party_id_type: Party identifier type (``MSISDN``, ``EMAIL``, or ``PARTY_CODE``).
 
         Returns:
             The reference ID associated with the transfer.
@@ -51,14 +54,20 @@ class Disbursement(AsyncBaseProduct):
         if reference_id is not None:
             validate_reference_id(reference_id)
         ref = reference_id or generate_reference_id()
+        norm_party_type = party_id_type.strip().upper()
+        party_id = (
+            normalise_msisdn(payee_msisdn)
+            if norm_party_type == "MSISDN"
+            else payee_msisdn.strip()
+        )
 
         payload = TransferRequest(
             amount=amount,
             currency=currency,
             externalId=external_id,
             payee=Party(
-                partyIdType="MSISDN",
-                partyId=normalise_msisdn(payee_msisdn),
+                partyIdType=norm_party_type,
+                partyId=party_id,
             ),
             payerMessage=payer_message,
             payeeNote=payee_note,
@@ -68,7 +77,10 @@ class Disbursement(AsyncBaseProduct):
             "POST",
             "/disbursement/v1_0/transfer",
             headers=await self._build_headers(
-                reference_id=ref, include_callback=True, callback_url=callback_url
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
             ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
@@ -111,17 +123,20 @@ class Disbursement(AsyncBaseProduct):
         payee_note: str = "",
         reference_id: str | None = None,
         callback_url: str | None = None,
+        party_id_type: str = "MSISDN",
     ) -> str:
         """Initiate a Deposit (v2).
 
         Args:
             amount: The transaction amount.
             currency: The transaction currency.
-            payee_msisdn: The MSISDN of the payee.
+            payee_msisdn: The MSISDN (or party identifier) of the payee.
             external_id: The external ID.
             payer_message: Message to the payer.
             payee_note: Note to the payee.
             reference_id: Optional client-supplied reference ID.
+            callback_url: Optional per-request webhook callback URL.
+            party_id_type: Party identifier type (``MSISDN``, ``EMAIL``, or ``PARTY_CODE``).
 
         Returns:
             The reference ID associated with the deposit.
@@ -129,14 +144,20 @@ class Disbursement(AsyncBaseProduct):
         if reference_id is not None:
             validate_reference_id(reference_id)
         ref = reference_id or generate_reference_id()
+        norm_party_type = party_id_type.strip().upper()
+        party_id = (
+            normalise_msisdn(payee_msisdn)
+            if norm_party_type == "MSISDN"
+            else payee_msisdn.strip()
+        )
 
         payload = DepositRequest(
             amount=amount,
             currency=currency,
             externalId=external_id,
             payee=Party(
-                partyIdType="MSISDN",
-                partyId=normalise_msisdn(payee_msisdn),
+                partyIdType=norm_party_type,
+                partyId=party_id,
             ),
             payerMessage=payer_message,
             payeeNote=payee_note,
@@ -146,7 +167,10 @@ class Disbursement(AsyncBaseProduct):
             "POST",
             "/disbursement/v2_0/deposit",
             headers=await self._build_headers(
-                reference_id=ref, include_callback=True, callback_url=callback_url
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
             ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
@@ -222,7 +246,10 @@ class Disbursement(AsyncBaseProduct):
             "POST",
             "/disbursement/v2_0/refund",
             headers=await self._build_headers(
-                reference_id=ref, include_callback=True, callback_url=callback_url
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
             ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,

@@ -96,14 +96,16 @@ class BaseProduct:
         reference_id: str | None = None,
         include_callback: bool = False,
         callback_url: str | None = None,
+        include_content_type: bool = False,
     ) -> dict[str, str]:
         token = self._get_token()
         headers = {
             "Authorization": f"Bearer {token}",
             "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,
             "X-Target-Environment": self._config.environment,
-            "Content-Type": "application/json",
         }
+        if include_content_type:
+            headers["Content-Type"] = "application/json"
         if reference_id:
             headers["X-Reference-Id"] = reference_id
         if include_callback:
