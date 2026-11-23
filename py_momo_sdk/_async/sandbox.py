@@ -7,6 +7,7 @@ from py_momo_sdk.config import PRODUCTION_BASE_URL, SANDBOX, PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.models import ApiKeyResult, ApiUserInfo
+from py_momo_sdk.sandbox import ProvisionResult
 from py_momo_sdk.utils import (
     generate_reference_id,
     validate_callback_host,
@@ -167,12 +168,13 @@ class AsyncSandboxProvisioner:
         self,
         *,
         callback_host: str = "example.com",
-    ) -> dict[str, str]:
+    ) -> ProvisionResult:
         """Create a user and key in a single call. Returns both values.
 
         Convenience method for bootstrapping a sandbox environment.
-        Returns {"api_user": "...", "api_key": "..."}.
+        Returns a ``ProvisionResult`` mapping with ``"api_user"`` and ``"api_key"``
+        keys whose ``repr()`` / ``str()`` redacts both credentials.
         """
         api_user = await self.create_api_user(callback_host=callback_host)
         api_key = await self.create_api_key(api_user)
-        return {"api_user": api_user, "api_key": api_key}
+        return ProvisionResult(api_user=api_user, api_key=api_key)

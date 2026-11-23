@@ -38,6 +38,7 @@ _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB
 _ACCOUNTHOLDER_PATH_RE = re.compile(r"(/accountholder/[^/]+/)[^/?#]+")
+_APIUSER_PATH_RE = re.compile(r"(/v1_0/apiuser/)[^/?#]+")
 
 
 def _get_header_ci(headers: Mapping[str, str], name: str) -> str | None:
@@ -50,7 +51,8 @@ def _get_header_ci(headers: Mapping[str, str], name: str) -> str | None:
 
 def _sanitize_telemetry_path(path: str) -> str:
     raw_path = path.split("?", 1)[0]
-    return _ACCOUNTHOLDER_PATH_RE.sub(r"\1<redacted>", raw_path)
+    sanitized = _ACCOUNTHOLDER_PATH_RE.sub(r"\1<redacted>", raw_path)
+    return _APIUSER_PATH_RE.sub(r"\1<redacted>", sanitized)
 
 
 def _is_retryable_request(method: str, headers: dict[str, str]) -> bool:

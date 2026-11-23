@@ -16,6 +16,16 @@ from py_momo_sdk.utils import (
 _PRODUCTION_HOST = (urlsplit(PRODUCTION_BASE_URL).hostname or "").lower()
 
 
+class ProvisionResult(dict[str, str]):
+    """Dictionary-compatible sandbox provisioning result that redacts credentials on repr/str."""
+
+    def __repr__(self) -> str:
+        return "ProvisionResult(api_user=<redacted>, api_key=<redacted>)"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
 class SandboxProvisioner:
     """Provisions sandbox API users and API keys.
 
@@ -164,12 +174,13 @@ class SandboxProvisioner:
         self,
         *,
         callback_host: str = "example.com",
-    ) -> dict[str, str]:
+    ) -> ProvisionResult:
         """Create a user and key in a single call. Returns both values.
 
         Convenience method for bootstrapping a sandbox environment.
-        Returns {"api_user": "...", "api_key": "..."}.
+        Returns a ``ProvisionResult`` mapping with ``"api_user"`` and ``"api_key"``
+        keys whose ``repr()`` / ``str()`` redacts both credentials.
         """
         api_user = self.create_api_user(callback_host=callback_host)
         api_key = self.create_api_key(api_user)
-        return {"api_user": api_user, "api_key": api_key}
+        return ProvisionResult(api_user=api_user, api_key=api_key)

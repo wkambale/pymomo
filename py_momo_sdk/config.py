@@ -58,9 +58,12 @@ class ProductConfig:
 
     def __repr__(self) -> str:
         return (
-            f"ProductConfig(api_user={self.api_user!r}, "
-            f"api_key=<redacted>, subscription_key=<redacted>)"
+            "ProductConfig(api_user=<redacted>, "
+            "api_key=<redacted>, subscription_key=<redacted>)"
         )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 @dataclass(frozen=True)

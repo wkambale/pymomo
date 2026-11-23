@@ -34,6 +34,8 @@ def test_sandbox_provision_sync(client: PyMomoSDK, httpx_mock: HTTPXMock) -> Non
         result = client.sandbox.provision()
         assert result["api_user"] == "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
         assert result["api_key"] == "mocked-sandbox-api-key"
+        assert "mocked-sandbox-api-key" not in repr(result)
+        assert "mocked-sandbox-api-key" not in str(result)
     finally:
         sandbox.generate_reference_id = original_gen
 

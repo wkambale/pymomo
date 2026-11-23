@@ -36,3 +36,53 @@ def test_transaction_failed_error_format() -> None:
     assert err.reference_id == "tx-123"
     assert err.reason == "Insufficient funds"
     assert str(err) == "Transaction tx-123 failed: Insufficient funds"
+
+
+def test_secret_redaction_and_error_sanitization_issue_81() -> None:
+    """Verify telemetry path redaction, ProvisionResult, BcAuthorizeResponse, validate_reference_id, and BadRequestError (#81)."""
+    import pytest
+
+    from py_momo_sdk.http import _sanitize_telemetry_path
+    from py_momo_sdk.models import BcAuthorizeResponse
+    from py_momo_sdk.sandbox import ProvisionResult
+    from py_momo_sdk.utils import validate_airtel_reference_id, validate_reference_id
+
+    uid = "11111111-2222-4333-8444-555555555555"
+    assert (
+        _sanitize_telemetry_path(f"/v1_0/apiuser/{uid}") == "/v1_0/apiuser/<redacted>"
+    )
+    assert (
+        _sanitize_telemetry_path(f"/v1_0/apiuser/{uid}/apikey")
+        == "/v1_0/apiuser/<redacted>/apikey"
+    )
+
+    res = ProvisionResult(api_user=uid, api_key="secret-sandbox-key")
+    assert res["api_user"] == uid
+    assert res["api_key"] == "secret-sandbox-key"
+    for rendered in (repr(res), str(res)):
+        assert uid not in rendered
+        assert "secret-sandbox-key" not in rendered
+        assert "api_key=<redacted>" in rendered
+
+    bc = BcAuthorizeResponse(auth_req_id="secret-auth-req-handle", expires_in=3600)
+    for rendered in (repr(bc), str(bc)):
+        assert "secret-auth-req-handle" not in rendered
+        assert "auth_req_id=<redacted>" in rendered
+
+    with pytest.raises(ValueError) as exc_ref:
+        validate_reference_id("super_secret_api_key")
+    assert "super_secret_api_key" not in str(exc_ref.value)
+
+    with pytest.raises(ValueError) as exc_airtel:
+        validate_airtel_reference_id("super_secret_key/with/slash")
+    assert "super_secret_key" not in str(exc_airtel.value)
+
+    injected_err = BadRequestError(
+        "Line1\r\nFakeLog: admin=true\x00" + "A" * 1000,
+        response_body={"secret": "should-not-appear-in-repr"},
+    )
+    assert "\r" not in str(injected_err)
+    assert "\n" not in str(injected_err)
+    assert "\x00" not in str(injected_err)
+    assert len(str(injected_err)) <= 512
+    assert "should-not-appear-in-repr" not in repr(injected_err)
