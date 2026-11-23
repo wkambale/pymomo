@@ -48,7 +48,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = [
-    "typer>=0.12,<1",
+    "typer>=0.29.1,<1",
 ]
 airtel = [
     "cryptography>=42,<47",
@@ -61,14 +61,14 @@ django = [
     "django>=4.2,<7",
 ]
 all = [
-    "typer>=0.12,<1",
+    "typer>=0.29.1,<1",
     "cryptography>=42,<47",
     "starlette>=1.7.0,<2",
     "fastapi>=0.111,<1",
     "django>=4.2,<7",
 ]
 dev = [
-    "typer>=0.12,<1",
+    "typer>=0.29.1,<1",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-httpx>=0.36.2",
