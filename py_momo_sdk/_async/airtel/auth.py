@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import weakref
 
 import httpx
 
-from py_momo_sdk.airtel.auth import AirtelTokenCache
-from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
+from py_momo_sdk.airtel.auth import AirtelTokenCache, _parse_airtel_token_payload
+from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES
 
 logger = logging.getLogger("py_momo_sdk.airtel.auth")
 
@@ -19,12 +22,18 @@ class AsyncAirtelAuth:
         client_id: str,
         client_secret: str,
         base_url: str,
+        *,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
-        self._base_url = base_url
+        self._base_url = base_url.rstrip("/")
+        self._max_response_bytes = max_response_bytes
         self._cache = AirtelTokenCache()
-        self._refresh_lock: asyncio.Lock | None = None
+        self._loop_locks: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Lock
+        ] = weakref.WeakKeyDictionary()
+        self._loop_locks_guard = threading.Lock()
 
     def __repr__(self) -> str:
         return (
@@ -36,9 +45,13 @@ class AsyncAirtelAuth:
         return self.__repr__()
 
     def _get_lock(self) -> asyncio.Lock:
-        if self._refresh_lock is None:
-            self._refresh_lock = asyncio.Lock()
-        return self._refresh_lock
+        loop = asyncio.get_running_loop()
+        with self._loop_locks_guard:
+            lock = self._loop_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._loop_locks[loop] = lock
+            return lock
 
     async def get_token(self, client: httpx.AsyncClient) -> str:
         """Get a valid access token asynchronously, fetching a new one if expired."""
@@ -54,10 +67,15 @@ class AsyncAirtelAuth:
 
     async def _fetch_token(self, client: httpx.AsyncClient) -> str:
         logger.debug("Fetching new async Airtel OAuth2 token")
+        target = (
+            "/auth/oauth2/token"
+            if str(client.base_url)
+            else f"{self._base_url}/auth/oauth2/token"
+        )
         try:
-            response = await client.request(
+            req = client.build_request(
                 "POST",
-                "/auth/oauth2/token",
+                target,
                 headers={"Content-Type": "application/json"},
                 json={
                     "client_id": self._client_id,
@@ -65,6 +83,27 @@ class AsyncAirtelAuth:
                     "grant_type": "client_credentials",
                 },
             )
+            response = await client.send(req, stream=True, follow_redirects=False)
+            try:
+                cl_header = response.headers.get("Content-Length")
+                if cl_header is not None:
+                    try:
+                        if int(cl_header) > self._max_response_bytes:
+                            raise PyMomoSDKError(
+                                f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                            )
+                    except ValueError:
+                        pass
+                buf = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(buf) + len(chunk) > self._max_response_bytes:
+                        raise PyMomoSDKError(
+                            f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
+                        )
+                    buf.extend(chunk)
+                response._content = bytes(buf)
+            finally:
+                await response.aclose()
         except httpx.TimeoutException:
             raise PyMomoSDKError("Airtel authentication request timed out") from None
         except httpx.RequestError:
@@ -72,43 +111,7 @@ class AsyncAirtelAuth:
                 "Airtel authentication request connection error"
             ) from None
 
-        if response.status_code == 401:
-            raise AuthenticationError("Invalid or expired Airtel client credentials")
-        if response.status_code >= 400:
-            raise AuthenticationError(
-                f"Airtel authentication failed: HTTP {response.status_code}"
-            )
-
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise AuthenticationError(
-                "Airtel OAuth response was not valid JSON"
-            ) from exc
-
-        if not isinstance(data, dict):
-            raise AuthenticationError(
-                "Airtel OAuth response did not contain token data"
-            )
-
-        token = data.get("access_token")
-        expires_in = data.get("expires_in")
-
-        if not isinstance(token, str) or not token or expires_in is None:
-            raise AuthenticationError(
-                "Airtel OAuth response did not contain token data"
-            )
-        if isinstance(expires_in, bool):
-            raise AuthenticationError("Airtel OAuth response had invalid expires_in")
-        try:
-            expires_in_int = int(expires_in)
-        except (TypeError, ValueError) as exc:
-            raise AuthenticationError(
-                "Airtel OAuth response had invalid expires_in"
-            ) from exc
-        if expires_in_int <= 0:
-            raise AuthenticationError("Airtel OAuth response had invalid expires_in")
-
+        token, expires_in_int = _parse_airtel_token_payload(response)
         self._cache.set(token, expires_in_int)
         return token
 

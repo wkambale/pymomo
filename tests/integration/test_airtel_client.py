@@ -144,7 +144,7 @@ def test_airtel_collection_flow(httpx_mock: HTTPXMock) -> None:
         reqs = httpx_mock.get_requests()
         pay_req = next(r for r in reqs if r.url.path == "/merchant/v1/payments/")
         sent_body = json.loads(pay_req.read().decode("utf-8"))
-        assert sent_body["subscriber"]["msisdn"] == "256771234567"
+        assert sent_body["subscriber"]["msisdn"] == "771234567"
         assert pay_req.headers["X-Country"] == "UG"
         assert pay_req.headers["X-Currency"] == "UGX"
 
@@ -204,7 +204,7 @@ def test_airtel_disbursement_flow(httpx_mock: HTTPXMock) -> None:
         reqs = httpx_mock.get_requests()
         disb_req = next(r for r in reqs if r.url.path == "/standard/v1/disbursements/")
         sent_body = json.loads(disb_req.read().decode("utf-8"))
-        assert sent_body["payee"]["msisdn"] == "256701987654"
+        assert sent_body["payee"]["msisdn"] == "701987654"
         assert sent_body["transaction"]["amount"] == "10000"
         assert sent_body["transaction"]["id"] == ref
         assert sent_body["reference"] == ref
@@ -348,7 +348,7 @@ def test_airtel_client_exceptions(httpx_mock: HTTPXMock) -> None:
 
         # Timeout on request
         with patch.object(
-            client._http, "request", side_effect=httpx.TimeoutException("timeout")
+            client._http, "send", side_effect=httpx.TimeoutException("timeout")
         ):
             with pytest.raises(PyMomoSDKError) as excinfo:
                 client.request("GET", "/test")
@@ -356,7 +356,7 @@ def test_airtel_client_exceptions(httpx_mock: HTTPXMock) -> None:
 
         # Connection error on request
         with patch.object(
-            client._http, "request", side_effect=httpx.RequestError("connect")
+            client._http, "send", side_effect=httpx.RequestError("connect")
         ):
             with pytest.raises(PyMomoSDKError) as excinfo:
                 client.request("GET", "/test")
@@ -428,7 +428,7 @@ def test_airtel_client_retry_exceptions(httpx_mock: HTTPXMock) -> None:
     # Timeout on retried request
     with patch.object(
         client._http,
-        "request",
+        "send",
         side_effect=[
             httpx.Response(
                 401,
@@ -451,7 +451,7 @@ def test_airtel_client_retry_exceptions(httpx_mock: HTTPXMock) -> None:
     # Connection error on retried request
     with patch.object(
         client._http,
-        "request",
+        "send",
         side_effect=[
             httpx.Response(
                 401,
@@ -587,7 +587,7 @@ def test_airtel_transaction_response_status_states() -> None:
         assert ok.is_pending() is False
         assert ok.is_failed() is False
 
-    # Missing transaction status fails closed on is_successful()
+    # Missing transaction status with success envelope maps cleanly to pending (never all-False)
     missing = AirtelTransactionResponse.model_validate(
         {
             "status": {"code": "200", "message": "Success", "result_code": "00"},
@@ -595,7 +595,7 @@ def test_airtel_transaction_response_status_states() -> None:
         }
     )
     assert missing.is_successful() is False
-    assert missing.is_pending() is False
+    assert missing.is_pending() is True
     assert missing.is_failed() is False
 
     # AirtelDisbursementRequest must redact PIN in repr and str
@@ -759,3 +759,162 @@ def test_airtel_client_parity_injected_client_telemetry_and_errors(
     assert injected.is_closed is False
     injected.close()
     assert len(events) >= 5
+
+
+def test_airtel_protocol_auth_and_predicate_fixes_issue_84() -> None:
+    """Verify local MSISDN, HTTP 200 error envelope handling, OAuth guards, predicates, and packaging (#84)."""
+    import json
+
+    import httpx
+
+    from py_momo_sdk.airtel.models import (
+        AirtelTransactionResponse,
+        normalise_airtel_msisdn,
+    )
+    from py_momo_sdk.airtel.products import AirtelCollection, AirtelDisbursement
+    from py_momo_sdk.exceptions import BadRequestError, TransactionFailedError
+    from py_momo_sdk.providers import AirtelMoneyProvider, PaymentRequest
+
+    assert AirtelCollection is not None and AirtelDisbursement is not None
+
+    # 1. Local MSISDN normalization for Airtel countries
+    assert normalise_airtel_msisdn("+256701234567", "UG") == "701234567"
+    assert normalise_airtel_msisdn("0701234567", "UG") == "701234567"
+    assert normalise_airtel_msisdn("254731234567", "KE") == "731234567"
+    assert normalise_airtel_msisdn("701234567", "UG") == "701234567"
+
+    # 2. HTTP 200 business error envelopes raise instead of silently succeeding
+    captured_bodies: list[dict[str, object]] = []
+
+    def biz_err_handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/auth/oauth2/token":
+            return httpx.Response(
+                200, json={"access_token": "valid-tok", "expires_in": 180}
+            )
+        if req.url.path == "/standard/v1/disbursements/":
+            captured_bodies.append(json.loads(req.content))
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"transaction": {"id": "ref-tf", "status": "TF"}},
+                    "status": {
+                        "code": "400",
+                        "message": "Invalid PIN",
+                        "result_code": "DP00900001005",
+                        "success": False,
+                    },
+                },
+            )
+        if req.url.path == "/merchant/v2/wallets/balance/":
+            return httpx.Response(
+                200,
+                json={
+                    "status": {
+                        "code": "400",
+                        "message": "Forbidden",
+                        "result_code": None,
+                        "success": False,
+                    },
+                    "data": {
+                        "wallet": {
+                            "msisdn": "701234567",
+                            "balance": "0",
+                            "currency": "UGX",
+                            "status": "INACTIVE",
+                        }
+                    },
+                },
+            )
+        captured_bodies.append(json.loads(req.content))
+        return httpx.Response(
+            200,
+            json={
+                "data": {"transaction": {"id": "ref-ok", "status": "TIP"}},
+                "status": {
+                    "code": "200",
+                    "message": "Success",
+                    "result_code": "DP00800001006",
+                    "success": True,
+                },
+            },
+        )
+
+    cfg = AirtelConfig(
+        client_id="id", client_secret="sec", country="UG", currency="UGX", pin="1234"
+    )
+    # Also test injected httpx.Client() with NO base_url (resolves via config.base_url!)
+    with (
+        httpx.Client(transport=httpx.MockTransport(biz_err_handler)) as no_base_http,
+        AirtelClient(cfg, client=no_base_http) as client,
+    ):
+        with pytest.raises(TransactionFailedError, match="Invalid PIN"):
+            client.disbursement.transfer("1000", "+256701234567", reference_id="ref-tf")
+        assert captured_bodies[-1]["payee"] == {"msisdn": "701234567"}
+
+        with pytest.raises(BadRequestError, match="Forbidden"):
+            client.disbursement.get_balance()
+
+        # AirtelMoneyProvider preserves external_id in Airtel's reference field
+        provider = AirtelMoneyProvider(client)
+        result = provider.collect(
+            PaymentRequest(
+                amount="1000",
+                currency="UGX",
+                payer_msisdn="+256701234567",
+                external_id="MERCH-ORD-42",
+                reference_id="ref-ok",
+            )
+        )
+        assert result.reference_id == "ref-ok"
+        assert captured_bodies[-1]["reference"] == "MERCH-ORD-42"
+
+    # 3. OAuth rejects CRLF tokens, float('inf') expires_in, and 3xx redirects
+    for bad_oauth in (
+        httpx.Response(302, headers={"Location": "https://evil.example.com"}),
+        httpx.Response(
+            200, json={"access_token": "tok\r\nX-Bad: 1", "expires_in": 3600}
+        ),
+        httpx.Response(200, json={"access_token": "tok", "expires_in": 1.5}),
+    ):
+        with (
+            httpx.Client(
+                base_url=cfg.base_url,
+                transport=httpx.MockTransport(lambda _r, resp=bad_oauth: resp),
+            ) as raw,
+            AirtelClient(cfg, client=raw) as client,
+            pytest.raises(AuthenticationError),
+        ):
+            client.collection.get_payment_status("ref-1")
+
+    # 4. AirtelTransactionResponse clean predicate partition (including DP0000000000 and null result_code)
+    resp = AirtelTransactionResponse.model_validate(
+        {
+            "status": {
+                "code": "200",
+                "message": "Success",
+                "result_code": "DP0000000000",
+            },
+            "data": {"transaction": {"id": "ref-1", "status": None}},
+        }
+    )
+    assert (resp.is_successful(), resp.is_pending(), resp.is_failed()) == (
+        False,
+        True,
+        False,
+    )
+    resp_fail = AirtelTransactionResponse.model_validate(
+        {
+            "status": {
+                "code": "400",
+                "message": "Failed",
+                "result_code": None,
+                "success": False,
+            },
+            "data": {"transaction": {"id": "ref-2", "status": None}},
+        }
+    )
+    assert (
+        resp_fail.is_successful(),
+        resp_fail.is_pending(),
+        resp_fail.is_failed(),
+    ) == (False, False, True)
