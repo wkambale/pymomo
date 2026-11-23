@@ -351,7 +351,7 @@ async def test_phase3_async_providers_and_router(httpx_mock: HTTPXMock) -> None:
         ).available_balance == "900"
 
 
-def test_provider_config_and_input_validation_hardening() -> None:
+def test_provider_config_and_input_validation_rules() -> None:
     """Test HTTPS callback, base_url, environment, retry, and write-input checks."""
     from pydantic import ValidationError
 
@@ -512,7 +512,7 @@ def test_provider_config_and_input_validation_hardening() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_provider_input_validation_hardening() -> None:
+async def test_async_provider_input_validation_rules() -> None:
     """Test async provider client write-input and callback URL validation."""
     from py_momo_sdk import AsyncWaveClient, WaveConfig
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import pytest
 
 from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
 
@@ -21,43 +21,29 @@ def test_product_config_repr_redaction() -> None:
         assert "subscription_key=<redacted>" in rendered
 
 
-def test_momo_config_from_env() -> None:
+def test_momo_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify that PyMomoSDKConfig.from_env reads environment variables correctly."""
-    os.environ["PY_MOMO_SDK_ENVIRONMENT"] = "mtnuganda"
-    os.environ["PY_MOMO_SDK_BASE_URL"] = "https://custom.momo.com"
-    os.environ["PY_MOMO_SDK_TIMEOUT"] = "45.0"
-    os.environ["PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY"] = "coll-sub"
-    os.environ["PY_MOMO_SDK_COLLECTION_API_USER"] = "coll-user"
-    os.environ["PY_MOMO_SDK_COLLECTION_API_KEY"] = "coll-key"
+    monkeypatch.setenv("PY_MOMO_SDK_ENVIRONMENT", "mtnuganda")
+    monkeypatch.setenv("PY_MOMO_SDK_BASE_URL", "https://custom.momo.com")
+    monkeypatch.setenv("PY_MOMO_SDK_TIMEOUT", "45.0")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY", "coll-sub")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_API_USER", "coll-user")
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_API_KEY", "coll-key")
 
-    try:
-        config = PyMomoSDKConfig.from_env()
-        assert config.environment == "mtnuganda"
-        assert config.base_url == "https://custom.momo.com"
-        assert config.timeout == 45.0
-        assert config.collection is not None
-        assert config.collection.subscription_key == "coll-sub"
-        assert config.collection.api_user == "coll-user"
-        assert config.collection.api_key == "coll-key"
-        assert config.disbursement is None
-        assert config.remittance is None
-    finally:
-        # Clean up environment variables
-        for var in [
-            "PY_MOMO_SDK_ENVIRONMENT",
-            "PY_MOMO_SDK_BASE_URL",
-            "PY_MOMO_SDK_TIMEOUT",
-            "PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY",
-            "PY_MOMO_SDK_COLLECTION_API_USER",
-            "PY_MOMO_SDK_COLLECTION_API_KEY",
-        ]:
-            os.environ.pop(var, None)
+    config = PyMomoSDKConfig.from_env()
+    assert config.environment == "mtnuganda"
+    assert config.base_url == "https://custom.momo.com"
+    assert config.timeout == 45.0
+    assert config.collection is not None
+    assert config.collection.subscription_key == "coll-sub"
+    assert config.collection.api_user == "coll-user"
+    assert config.collection.api_key == "coll-key"
+    assert config.disbursement is None
+    assert config.remittance is None
 
 
-def test_config_validation_rules() -> None:
+def test_config_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify timeout, callback_url, environment, and AirtelConfig validations."""
-    import pytest
-
     from py_momo_sdk.airtel.config import AirtelConfig
     from py_momo_sdk.exceptions import MissingCredentialsError
 
@@ -108,19 +94,15 @@ def test_config_validation_rules() -> None:
         AirtelConfig(client_id="cid", client_secret="sec", country="UG", currency="U")
 
     # Partial environment credentials and invalid PY_MOMO_SDK_TIMEOUT rejected
-    os.environ["PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY"] = "only-sub"
-    try:
-        with pytest.raises(MissingCredentialsError, match="Incomplete collection"):
-            PyMomoSDKConfig.from_env()
-    finally:
-        os.environ.pop("PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY", None)
+    monkeypatch.setenv("PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY", "only-sub")
+    with pytest.raises(MissingCredentialsError, match="Incomplete collection"):
+        PyMomoSDKConfig.from_env()
+    monkeypatch.delenv("PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY", raising=False)
 
-    os.environ["PY_MOMO_SDK_TIMEOUT"] = "-10"
-    try:
-        with pytest.raises(ValueError, match="PY_MOMO_SDK_TIMEOUT"):
-            PyMomoSDKConfig.from_env()
-    finally:
-        os.environ.pop("PY_MOMO_SDK_TIMEOUT", None)
+    monkeypatch.setenv("PY_MOMO_SDK_TIMEOUT", "-10")
+    with pytest.raises(ValueError, match="PY_MOMO_SDK_TIMEOUT"):
+        PyMomoSDKConfig.from_env()
+    monkeypatch.delenv("PY_MOMO_SDK_TIMEOUT", raising=False)
 
     # Empty/blank ProductConfig fields, non-int max_retries, inf retry_backoff, bad base_url rejected
     for kwargs in (

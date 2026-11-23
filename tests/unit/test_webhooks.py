@@ -129,7 +129,7 @@ def test_webhook_verify_source_ip() -> None:
         WebhookHandler.verify_source_ip("196.201.214.42", "196.201.214.0/24")
 
 
-def test_webhook_non_ascii_and_timestamped_replay_hardening() -> None:
+def test_webhook_non_ascii_and_timestamped_replay_guards() -> None:
     """Verify non-ASCII signatures raise WebhookVerificationError and replay edge cases fail closed."""
     payload = b'{"status":"SUCCESSFUL"}'
     secret = "whsec_test"

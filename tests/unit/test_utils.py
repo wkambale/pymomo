@@ -129,8 +129,8 @@ def test_validate_reference_id() -> None:
             validate_reference_id(non_canonical)
 
 
-def test_url_path_numeric_and_polling_hardening() -> None:
-    """Verify hardened URL, path, ASCII-digit, header, and polling validators."""
+def test_url_path_numeric_and_polling_validation() -> None:
+    """Verify strict URL, path, ASCII-digit, header, and polling validators."""
     from py_momo_sdk.exceptions import PyMomoSDKError
     from py_momo_sdk.utils import (
         detect_carrier_from_msisdn,

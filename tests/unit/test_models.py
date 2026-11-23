@@ -127,7 +127,20 @@ def test_request_models_validate_amount_and_currency() -> None:
     import pytest
     from pydantic import ValidationError
 
-    from py_momo_sdk.airtel.models import AirtelDisbursementRequest
+    from py_momo_sdk.airtel.models import (
+        AirtelDisbursementPayee,
+        AirtelDisbursementRequest,
+        AirtelDisbursementTransaction,
+    )
+
+    # Verify a valid nested AirtelDisbursementRequest succeeds before testing invalid amounts
+    valid_airtel = AirtelDisbursementRequest(
+        payee=AirtelDisbursementPayee(msisdn="751234567"),
+        reference="ref-valid-1",
+        pin="1234",
+        transaction=AirtelDisbursementTransaction(amount="1000", id="tx-valid-1"),
+    )
+    assert valid_airtel.transaction.amount == "1000"
 
     for bad_amount in ("", "0", "0.00", "-10", "+10", "NaN", "Infinity", "1e5", "abc"):
         with pytest.raises(ValidationError):
@@ -137,12 +150,14 @@ def test_request_models_validate_amount_and_currency() -> None:
                 external_id="ext-1",
                 payer=Party(party_id_type="MSISDN", party_id="256771234567"),
             )
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match="Amount"):
             AirtelDisbursementRequest(
-                amount=bad_amount,
-                number="256771234567",
+                payee=AirtelDisbursementPayee(msisdn="751234567"),
                 reference="ref-1",
                 pin="1234",
+                transaction=AirtelDisbursementTransaction(
+                    amount=bad_amount, id="tx-bad-1"
+                ),
             )
 
     with pytest.raises(ValidationError):
