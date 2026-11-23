@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.exceptions import PyMomoSDKError
 from py_momo_sdk.frameworks import verify_constant_time_token
-from py_momo_sdk.http import HttpClient, parse_json_dict
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_json_dict
 from py_momo_sdk.providers.models import (
     BalanceResult,
     DisbursementRequest,
@@ -19,6 +20,7 @@ from py_momo_sdk.providers.models import (
     validate_email_address,
     validate_operation_kind,
 )
+from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
@@ -57,16 +59,20 @@ class FlutterwaveConfig:
     redirect_url: str | None = None
     default_customer_email: str | None = None
     default_account_bank: str | None = None
+    default_currency: str = "NGN"
     base_url: str = FLUTTERWAVE_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
     retry_backoff: float = 0.5
+    telemetry: TelemetryHook | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
             raise ValueError("secret_key must be a non-empty string")
         validate_header_value(self.secret_key, field_name="secret_key")
         if self.webhook_hash is not None:
+            if not isinstance(self.webhook_hash, str) or not self.webhook_hash.strip():
+                raise ValueError("webhook_hash must not be blank")
             validate_header_value(self.webhook_hash, field_name="webhook_hash")
         if self.redirect_url is not None:
             validate_callback_url(self.redirect_url)
@@ -80,6 +86,7 @@ class FlutterwaveConfig:
             self.default_account_bank = validate_header_value(
                 self.default_account_bank.strip(), field_name="default_account_bank"
             )
+        self.default_currency = validate_currency(self.default_currency)
         validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
@@ -99,9 +106,25 @@ def _map_flw_status(raw_status: str) -> NormalizedStatus:
     norm = raw_status.strip().lower()
     if norm in ("successful", "success", "completed"):
         return NormalizedStatus.SUCCEEDED
+    if norm in ("reversed",):
+        return NormalizedStatus.REVERSED
     if norm in ("failed", "cancelled", "canceled"):
         return NormalizedStatus.FAILED
     return NormalizedStatus.PENDING
+
+
+def _validate_flw_account_number(account_number: str) -> str:
+    """Validate a Flutterwave bank account, IBAN, or mobile account without stripping letters."""
+    if not isinstance(account_number, str) or not account_number.strip():
+        raise ValueError("account_number must be a non-empty string")
+    return validate_header_value(account_number.strip(), field_name="account_number")
+
+
+def _encode_flw_query_ref(tx_ref: str) -> str:
+    if not isinstance(tx_ref, str) or not tx_ref.strip():
+        raise ValueError("tx_ref must be a non-empty string")
+    cleaned = validate_header_value(tx_ref.strip(), field_name="tx_ref")
+    return quote(cleaned, safe="")
 
 
 def _unwrap_flw_data(res: dict[str, Any]) -> dict[str, Any]:
@@ -136,7 +159,12 @@ class FlutterwaveClient:
     """Synchronous Flutterwave v3 API client."""
 
     def __init__(
-        self, config: FlutterwaveConfig, *, client: httpx.Client | None = None
+        self,
+        config: FlutterwaveConfig,
+        *,
+        client: httpx.Client | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = HttpClient(
@@ -144,7 +172,9 @@ class FlutterwaveClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Flutterwave",
         )
 
@@ -199,7 +229,7 @@ class FlutterwaveClient:
 
     def verify_by_reference(self, tx_ref: str) -> dict[str, Any]:
         """Verify a Flutterwave transaction by ``tx_ref``."""
-        encoded = encode_path_segment(tx_ref, field_name="tx_ref")
+        encoded = _encode_flw_query_ref(tx_ref)
         response = self._http.request(
             "GET",
             f"/v3/transactions/verify_by_reference?tx_ref={encoded}",
@@ -216,6 +246,7 @@ class FlutterwaveClient:
         account_bank: str | None = None,
         reference: str | None = None,
         narration: str = "Payout",
+        callback_url: str | None = None,
     ) -> dict[str, Any]:
         """Initiate a Flutterwave transfer."""
         validated_amount = validate_amount(amount)
@@ -228,19 +259,25 @@ class FlutterwaveClient:
         validated_bank = validate_header_value(
             resolved_bank.strip(), field_name="account_bank"
         )
+        validated_account = _validate_flw_account_number(account_number)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
         ref = reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "account_bank": validated_bank,
+            "account_number": validated_account,
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "narration": narration,
+            "reference": ref,
+        }
+        if callback_url is not None:
+            payload["callback_url"] = callback_url
         response = self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
-            json={
-                "account_bank": validated_bank,
-                "account_number": normalise_msisdn(account_number),
-                "amount": validated_amount,
-                "currency": validated_currency,
-                "narration": narration,
-                "reference": ref,
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -254,9 +291,9 @@ class FlutterwaveClient:
         )
         return parse_json_dict(response)
 
-    def get_balance(self, currency: str = "NGN") -> dict[str, Any]:
+    def get_balance(self, currency: str | None = None) -> dict[str, Any]:
         """Retrieve Flutterwave wallet balance for a currency."""
-        iso = validate_currency(currency)
+        iso = validate_currency(currency or self._config.default_currency)
         response = self._http.request(
             "GET", f"/v3/balances/{iso}", headers=self._headers()
         )
@@ -280,7 +317,12 @@ class AsyncFlutterwaveClient:
     """Asynchronous Flutterwave v3 API client."""
 
     def __init__(
-        self, config: FlutterwaveConfig, *, client: httpx.AsyncClient | None = None
+        self,
+        config: FlutterwaveConfig,
+        *,
+        client: httpx.AsyncClient | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = AsyncHttpClient(
@@ -288,7 +330,9 @@ class AsyncFlutterwaveClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Flutterwave",
         )
 
@@ -341,7 +385,7 @@ class AsyncFlutterwaveClient:
         return parse_json_dict(response)
 
     async def verify_by_reference(self, tx_ref: str) -> dict[str, Any]:
-        encoded = encode_path_segment(tx_ref, field_name="tx_ref")
+        encoded = _encode_flw_query_ref(tx_ref)
         response = await self._http.request(
             "GET",
             f"/v3/transactions/verify_by_reference?tx_ref={encoded}",
@@ -358,6 +402,7 @@ class AsyncFlutterwaveClient:
         account_bank: str | None = None,
         reference: str | None = None,
         narration: str = "Payout",
+        callback_url: str | None = None,
     ) -> dict[str, Any]:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
@@ -369,19 +414,25 @@ class AsyncFlutterwaveClient:
         validated_bank = validate_header_value(
             resolved_bank.strip(), field_name="account_bank"
         )
+        validated_account = _validate_flw_account_number(account_number)
+        if callback_url is not None:
+            validate_callback_url(callback_url)
         ref = reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "account_bank": validated_bank,
+            "account_number": validated_account,
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "narration": narration,
+            "reference": ref,
+        }
+        if callback_url is not None:
+            payload["callback_url"] = callback_url
         response = await self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
-            json={
-                "account_bank": validated_bank,
-                "account_number": normalise_msisdn(account_number),
-                "amount": validated_amount,
-                "currency": validated_currency,
-                "narration": narration,
-                "reference": ref,
-            },
+            json=payload,
         )
         return parse_json_dict(response)
 
@@ -394,8 +445,8 @@ class AsyncFlutterwaveClient:
         )
         return parse_json_dict(response)
 
-    async def get_balance(self, currency: str = "NGN") -> dict[str, Any]:
-        iso = validate_currency(currency)
+    async def get_balance(self, currency: str | None = None) -> dict[str, Any]:
+        iso = validate_currency(currency or self._config.default_currency)
         response = await self._http.request(
             "GET", f"/v3/balances/{iso}", headers=self._headers()
         )
@@ -480,6 +531,7 @@ class FlutterwaveProvider:
             account_bank=request.payee_bank_code,
             reference=ref,
             narration=request.payer_message or "Payout",
+            callback_url=request.callback_url,
         )
         data = _unwrap_flw_data(res)
         return PaymentResult(
@@ -503,14 +555,16 @@ class FlutterwaveProvider:
         )
         return _map_flw_status_response(self.name, reference_id, res)
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
-        res = self._client.get_balance()
-        avail, currency = _unwrap_flw_balance(res)
+        res = self._client.get_balance(currency=currency)
+        avail, resolved_currency = _unwrap_flw_balance(res)
         return BalanceResult(
             provider=self.name,
             available_balance=avail,
-            currency=currency,
+            currency=resolved_currency,
             raw=res,
         )
 
@@ -560,6 +614,7 @@ class AsyncFlutterwaveProvider:
             account_bank=request.payee_bank_code,
             reference=ref,
             narration=request.payer_message or "Payout",
+            callback_url=request.callback_url,
         )
         data = _unwrap_flw_data(res)
         return PaymentResult(
@@ -583,13 +638,15 @@ class AsyncFlutterwaveProvider:
         )
         return _map_flw_status_response(self.name, reference_id, res)
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
-        res = await self._client.get_balance()
-        avail, currency = _unwrap_flw_balance(res)
+        res = await self._client.get_balance(currency=currency)
+        avail, resolved_currency = _unwrap_flw_balance(res)
         return BalanceResult(
             provider=self.name,
             available_balance=avail,
-            currency=currency,
+            currency=resolved_currency,
             raw=res,
         )

@@ -8,7 +8,7 @@ import httpx
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.exceptions import PyMomoSDKError
-from py_momo_sdk.http import HttpClient, parse_json_dict
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_json_dict
 from py_momo_sdk.providers.models import (
     BalanceResult,
     DisbursementRequest,
@@ -19,6 +19,7 @@ from py_momo_sdk.providers.models import (
     validate_email_address,
     validate_operation_kind,
 )
+from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
@@ -48,6 +49,9 @@ _PAYSTACK_CAPABILITIES = ProviderCapabilities(
 )
 
 
+_PAYSTACK_ZERO_DECIMAL_CURRENCIES = frozenset({"XOF", "XAF"})
+
+
 @dataclass
 class PaystackConfig:
     """Credentials and settings for Paystack API."""
@@ -55,21 +59,27 @@ class PaystackConfig:
     secret_key: str
     callback_url: str | None = None
     default_customer_email: str | None = None
+    default_currency: str | None = None
     base_url: str = PAYSTACK_BASE_URL
     timeout: float = 30.0
     max_retries: int = 0
     retry_backoff: float = 0.5
+    telemetry: TelemetryHook | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
             raise ValueError("secret_key must be a non-empty string")
-        validate_header_value(self.secret_key, field_name="secret_key")
+        self.secret_key = validate_header_value(
+            self.secret_key.strip(), field_name="secret_key"
+        )
         if self.callback_url is not None:
             validate_callback_url(self.callback_url)
         if self.default_customer_email is not None:
             self.default_customer_email = validate_email_address(
                 self.default_customer_email
             )
+        if self.default_currency is not None:
+            self.default_currency = validate_currency(self.default_currency)
         validate_base_url(self.base_url)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
@@ -85,9 +95,18 @@ class PaystackConfig:
         return self.__repr__()
 
 
-def _to_minor_units(amount: str) -> int:
+def _to_minor_units(amount: str, currency: str | None = None) -> int:
     validated = validate_amount(amount)
-    scaled = Decimal(validated) * Decimal(100)
+    dec = Decimal(validated)
+    if (
+        currency is not None
+        and currency.strip().upper() in _PAYSTACK_ZERO_DECIMAL_CURRENCIES
+        and dec != dec.to_integral_value()
+    ):
+        raise ValueError(
+            f"Currency {currency.strip().upper()} does not support fractional minor units"
+        )
+    scaled = dec * Decimal(100)
     if scaled != scaled.to_integral_value():
         raise ValueError(
             "Amount cannot have more than 2 decimal places for minor-unit conversion"
@@ -117,7 +136,9 @@ def _unwrap_paystack_data(res: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _unwrap_paystack_balance(res: dict[str, Any]) -> tuple[str, str]:
+def _unwrap_paystack_balance(
+    res: dict[str, Any], *, currency: str | None = None
+) -> tuple[str, str]:
     if res.get("status") is False:
         msg = res.get("message")
         raise PyMomoSDKError(
@@ -126,25 +147,49 @@ def _unwrap_paystack_balance(res: dict[str, Any]) -> tuple[str, str]:
     items = res.get("data")
     if not isinstance(items, list) or not items or not isinstance(items[0], dict):
         raise PyMomoSDKError("Malformed Paystack balance response")
-    first = items[0]
+    target = validate_currency(currency) if currency is not None else None
+    selected: dict[str, Any] | None = None
+    if target is not None:
+        for item in items:
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("currency"), str)
+                and item["currency"].strip().upper() == target
+            ):
+                selected = item
+                break
+        if selected is None:
+            raise PyMomoSDKError(f"Paystack balance for currency {target!r} not found")
+    else:
+        selected = items[0]
     if (
-        "balance" not in first
-        or not isinstance(first.get("currency"), str)
-        or not first["currency"]
+        "balance" not in selected
+        or not isinstance(selected.get("currency"), str)
+        or not selected["currency"]
     ):
         raise PyMomoSDKError("Malformed Paystack balance response")
-    return _from_minor_units(first["balance"]), first["currency"]
+    return _from_minor_units(selected["balance"]), selected["currency"]
 
 
 def _map_paystack_status(raw_status: str) -> NormalizedStatus:
     norm = raw_status.strip().lower()
     if norm in ("success", "succeeded"):
         return NormalizedStatus.SUCCEEDED
-    if norm in ("failed", "abandoned"):
+    if norm in ("failed", "abandoned", "rejected", "blocked"):
         return NormalizedStatus.FAILED
     if norm in ("reversed",):
         return NormalizedStatus.REVERSED
     return NormalizedStatus.PENDING
+
+
+def _validate_paystack_reference(reference: str | None) -> str:
+    if reference is None:
+        return generate_reference_id()
+    if not isinstance(reference, str) or not reference.strip():
+        raise ValueError("reference must be a non-empty string")
+    cleaned = reference.strip()
+    encode_path_segment(cleaned, field_name="reference")
+    return cleaned
 
 
 def _map_paystack_status_response(
@@ -173,7 +218,12 @@ class PaystackClient:
     """Synchronous Paystack API client."""
 
     def __init__(
-        self, config: PaystackConfig, *, client: httpx.Client | None = None
+        self,
+        config: PaystackConfig,
+        *,
+        client: httpx.Client | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = HttpClient(
@@ -181,9 +231,19 @@ class PaystackClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Paystack",
         )
+
+    @property
+    def default_customer_email(self) -> str | None:
+        return self._config.default_customer_email
+
+    @property
+    def default_currency(self) -> str | None:
+        return self._config.default_currency
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -202,12 +262,12 @@ class PaystackClient:
     ) -> dict[str, Any]:
         """Initialize a Paystack transaction (amounts converted to minor units)."""
         validated_email = validate_email_address(email)
-        minor_amount = _to_minor_units(amount)
         validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
         if callback_url is not None:
             validate_callback_url(callback_url)
         resolved_cb = callback_url or self._config.callback_url
-        ref = reference or generate_reference_id()
+        ref = _validate_paystack_reference(reference)
         payload: dict[str, Any] = {
             "email": validated_email,
             "amount": minor_amount,
@@ -221,6 +281,7 @@ class PaystackClient:
             "/transaction/initialize",
             headers=self._headers(),
             json=payload,
+            idempotent=True,
         )
         return parse_json_dict(response)
 
@@ -242,12 +303,12 @@ class PaystackClient:
         reason: str = "Payout",
     ) -> dict[str, Any]:
         """Initiate a Paystack transfer to a recipient code."""
-        minor_amount = _to_minor_units(amount)
         validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
         if not isinstance(recipient, str) or not recipient.strip():
             raise ValueError("recipient must be a non-empty recipient code")
         validate_header_value(recipient.strip(), field_name="recipient")
-        ref = reference or generate_reference_id()
+        ref = _validate_paystack_reference(reference)
         response = self._http.request(
             "POST",
             "/transfer",
@@ -260,6 +321,7 @@ class PaystackClient:
                 "reference": ref,
                 "reason": reason,
             },
+            idempotent=True,
         )
         return parse_json_dict(response)
 
@@ -296,7 +358,12 @@ class AsyncPaystackClient:
     """Asynchronous Paystack API client."""
 
     def __init__(
-        self, config: PaystackConfig, *, client: httpx.AsyncClient | None = None
+        self,
+        config: PaystackConfig,
+        *,
+        client: httpx.AsyncClient | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = AsyncHttpClient(
@@ -304,9 +371,19 @@ class AsyncPaystackClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Paystack",
         )
+
+    @property
+    def default_customer_email(self) -> str | None:
+        return self._config.default_customer_email
+
+    @property
+    def default_currency(self) -> str | None:
+        return self._config.default_currency
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -324,12 +401,12 @@ class AsyncPaystackClient:
         callback_url: str | None = None,
     ) -> dict[str, Any]:
         validated_email = validate_email_address(email)
-        minor_amount = _to_minor_units(amount)
         validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
         if callback_url is not None:
             validate_callback_url(callback_url)
         resolved_cb = callback_url or self._config.callback_url
-        ref = reference or generate_reference_id()
+        ref = _validate_paystack_reference(reference)
         payload: dict[str, Any] = {
             "email": validated_email,
             "amount": minor_amount,
@@ -343,6 +420,7 @@ class AsyncPaystackClient:
             "/transaction/initialize",
             headers=self._headers(),
             json=payload,
+            idempotent=True,
         )
         return parse_json_dict(response)
 
@@ -362,12 +440,12 @@ class AsyncPaystackClient:
         reference: str | None = None,
         reason: str = "Payout",
     ) -> dict[str, Any]:
-        minor_amount = _to_minor_units(amount)
         validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
         if not isinstance(recipient, str) or not recipient.strip():
             raise ValueError("recipient must be a non-empty recipient code")
         validate_header_value(recipient.strip(), field_name="recipient")
-        ref = reference or generate_reference_id()
+        ref = _validate_paystack_reference(reference)
         response = await self._http.request(
             "POST",
             "/transfer",
@@ -380,6 +458,7 @@ class AsyncPaystackClient:
                 "reference": ref,
                 "reason": reason,
             },
+            idempotent=True,
         )
         return parse_json_dict(response)
 
@@ -419,6 +498,13 @@ def _resolve_paystack_recipient(request: DisbursementRequest) -> str:
     return candidate
 
 
+def _resolve_paystack_ref(data: dict[str, Any], fallback: str) -> str:
+    raw = data.get("reference")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return fallback
+
+
 class PaystackProvider:
     """Synchronous unified provider adapter for Paystack."""
 
@@ -434,22 +520,23 @@ class PaystackProvider:
         return _PAYSTACK_CAPABILITIES
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
-        email = request.payer_email or self._client._config.default_customer_email
+        email = request.payer_email or self._client.default_customer_email
         if not email:
             raise ValueError(
                 "payer_email or PaystackConfig.default_customer_email is required for Paystack collections"
             )
+        ref = _validate_paystack_reference(request.reference_id)
         res = self._client.initialize_transaction(
             email=email,
             amount=request.amount,
             currency=request.currency,
-            reference=request.reference_id,
+            reference=ref,
             callback_url=request.callback_url,
         )
         data = _unwrap_paystack_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", request.reference_id or "")),
+            reference_id=_resolve_paystack_ref(data, ref),
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
@@ -460,17 +547,18 @@ class PaystackProvider:
 
     def disburse(self, request: DisbursementRequest) -> PaymentResult:
         recipient = _resolve_paystack_recipient(request)
+        ref = _validate_paystack_reference(request.reference_id)
         res = self._client.initiate_transfer(
             amount=request.amount,
             currency=request.currency,
             recipient=recipient,
-            reference=request.reference_id,
+            reference=ref,
             reason=request.payer_message or "Payout",
         )
         data = _unwrap_paystack_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", request.reference_id or "")),
+            reference_id=_resolve_paystack_ref(data, ref),
             status=_map_paystack_status(str(data.get("status", "pending"))),
             amount=request.amount,
             currency=request.currency,
@@ -489,14 +577,18 @@ class PaystackProvider:
         )
         return _map_paystack_status_response(self.name, reference_id, res)
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
         res = self._client.get_balance()
-        available, currency = _unwrap_paystack_balance(res)
+        available, resolved_currency = _unwrap_paystack_balance(
+            res, currency=currency or self._client.default_currency
+        )
         return BalanceResult(
             provider=self.name,
             available_balance=available,
-            currency=currency,
+            currency=resolved_currency,
             raw=res,
         )
 
@@ -516,22 +608,23 @@ class AsyncPaystackProvider:
         return _PAYSTACK_CAPABILITIES
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
-        email = request.payer_email or self._client._config.default_customer_email
+        email = request.payer_email or self._client.default_customer_email
         if not email:
             raise ValueError(
                 "payer_email or PaystackConfig.default_customer_email is required for Paystack collections"
             )
+        ref = _validate_paystack_reference(request.reference_id)
         res = await self._client.initialize_transaction(
             email=email,
             amount=request.amount,
             currency=request.currency,
-            reference=request.reference_id,
+            reference=ref,
             callback_url=request.callback_url,
         )
         data = _unwrap_paystack_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", request.reference_id or "")),
+            reference_id=_resolve_paystack_ref(data, ref),
             status=NormalizedStatus.PENDING,
             amount=request.amount,
             currency=request.currency,
@@ -542,17 +635,18 @@ class AsyncPaystackProvider:
 
     async def disburse(self, request: DisbursementRequest) -> PaymentResult:
         recipient = _resolve_paystack_recipient(request)
+        ref = _validate_paystack_reference(request.reference_id)
         res = await self._client.initiate_transfer(
             amount=request.amount,
             currency=request.currency,
             recipient=recipient,
-            reference=request.reference_id,
+            reference=ref,
             reason=request.payer_message or "Payout",
         )
         data = _unwrap_paystack_data(res)
         return PaymentResult(
             provider=self.name,
-            reference_id=str(data.get("reference", request.reference_id or "")),
+            reference_id=_resolve_paystack_ref(data, ref),
             status=_map_paystack_status(str(data.get("status", "pending"))),
             amount=request.amount,
             currency=request.currency,
@@ -571,13 +665,17 @@ class AsyncPaystackProvider:
         )
         return _map_paystack_status_response(self.name, reference_id, res)
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
         res = await self._client.get_balance()
-        available, currency = _unwrap_paystack_balance(res)
+        available, resolved_currency = _unwrap_paystack_balance(
+            res, currency=currency or self._client.default_currency
+        )
         return BalanceResult(
             provider=self.name,
             available_balance=available,
-            currency=currency,
+            currency=resolved_currency,
             raw=res,
         )

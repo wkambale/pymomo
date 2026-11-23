@@ -837,6 +837,8 @@ def test_provider_contracts_currency_schemas_and_status_mappings(
             client_secret="sec",
             merchant_key="mk",
             api_path_prefix="/orange-money-webpay/sn/v1/",
+            return_url="https://callback.example.test/orange/return",
+            cancel_url="https://callback.example.test/orange/cancel",
             notif_url="https://callback.example.test/orange",
         )
     ) as om_client:
@@ -855,6 +857,7 @@ def test_provider_contracts_currency_schemas_and_status_mappings(
         )
         st = om.get_status("om-sn-pay")
         assert st.status == NormalizedStatus.EXPIRED
+        assert st.currency == "XOF"
         status_req = next(
             r
             for r in httpx_mock.get_requests()
@@ -863,7 +866,7 @@ def test_provider_contracts_currency_schemas_and_status_mappings(
         sent_status = json.loads(status_req.read().decode("utf-8"))
         assert sent_status == {
             "order_id": "ord-sn-1",
-            "amount": "750",
+            "amount": 750,
             "pay_token": "om-sn-pay",
         }
 
@@ -1035,6 +1038,8 @@ async def test_async_provider_contracts_and_pin_encryption(
                 client_secret="sec",
                 merchant_key="mk",
                 api_path_prefix="/orange-money-webpay/ci/v1",
+                return_url="https://callback.example.test/om/return",
+                cancel_url="https://callback.example.test/om/cancel",
                 notif_url="https://callback.example.test/om",
             )
         ) as om_client,
@@ -1244,9 +1249,10 @@ async def test_phase3_negative_webhooks_path_traversal_payloads_and_not_implemen
             flw_no_hash.verify_webhook_hash("any-hash")
         for bad_seg in ("../tx", "a/b", "tx?inject=1"):
             with pytest.raises(ValueError, match="Invalid path segment"):
-                flw_no_hash.verify_by_reference(bad_seg)
-            with pytest.raises(ValueError, match="Invalid path segment"):
                 flw_no_hash.get_transfer(bad_seg)
+        for bad_q in ("   ", "bad\r\nref"):
+            with pytest.raises(ValueError, match="tx_ref"):
+                flw_no_hash.verify_by_reference(bad_q)
 
     # 2. Outbound payload & header assertions (Paystack minor units, Wave Idempotency-Key, M-Pesa Password)
     httpx_mock.add_response(
@@ -1645,3 +1651,298 @@ async def test_mpesa_daraja_protocol_fixes(httpx_mock: HTTPXMock) -> None:
     assert async_b2c_body["CommandID"] == "PromotionPayment"
     assert len(async_b2c_body["OriginatorConversationID"]) == 36
     assert async_b2c_body["Amount"] == 300
+
+
+@pytest.mark.asyncio
+async def test_paystack_flutterwave_orange_issue_87_fixes(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #87 fixes across Flutterwave, Paystack, and Orange Money."""
+    import json
+
+    from py_momo_sdk import NormalizedStatus, PyMomoSDKError
+    from py_momo_sdk.providers.flutterwave import _map_flw_status
+    from py_momo_sdk.providers.paystack import _map_paystack_status, _to_minor_units
+
+    # --- 1. Flutterwave fixes ---
+    with pytest.raises(ValueError, match="webhook_hash"):
+        FlutterwaveConfig(secret_key="FLWSECK-test", webhook_hash="   ")
+    assert _map_flw_status("reversed") == NormalizedStatus.REVERSED
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.flutterwave.com/v3/transfers",
+        json={
+            "status": "success",
+            "data": {"id": 881, "reference": "flw-iban-1", "status": "NEW"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=INV%2F2026%2F001",
+        json={"status": "success", "data": {"status": "reversed", "currency": "UGX"}},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/balances/UGX",
+        json={
+            "status": "success",
+            "data": {"available_balance": 75000, "currency": "UGX"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/balances/KES",
+        json={
+            "status": "success",
+            "data": {"available_balance": 1200, "currency": "KES"},
+        },
+        status_code=200,
+    )
+
+    with FlutterwaveClient(
+        FlutterwaveConfig(
+            secret_key="FLWSECK-test",
+            default_account_bank="BARCGB22",
+            default_currency="UGX",
+        )
+    ) as flw_client:
+        flw_prov = FlutterwaveProvider(flw_client)
+        flw_prov.disburse(
+            DisbursementRequest(
+                amount="500",
+                currency="USD",
+                payee_msisdn="GB29NWBK60161331926819",
+                reference_id="flw-iban-1",
+                callback_url="https://callback.example.test/flw-cb",
+            )
+        )
+        st = flw_prov.get_status("INV/2026/001")
+        assert st.status == NormalizedStatus.REVERSED
+        assert flw_prov.get_balance().currency == "UGX"
+        assert flw_prov.get_balance(currency="KES").currency == "KES"
+
+    reqs = httpx_mock.get_requests()
+    tr_req = next(r for r in reqs if r.url.path == "/v3/transfers")
+    tr_body = json.loads(tr_req.read().decode("utf-8"))
+    assert tr_body["account_number"] == "GB29NWBK60161331926819"
+    assert tr_body["callback_url"] == "https://callback.example.test/flw-cb"
+
+    # --- 2. Paystack fixes ---
+    assert _map_paystack_status("rejected") == NormalizedStatus.FAILED
+    assert _map_paystack_status("blocked") == NormalizedStatus.FAILED
+    with pytest.raises(ValueError, match="XOF"):
+        _to_minor_units("100.50", currency="XOF")
+    assert _to_minor_units("100", currency="XOF") == 10000
+
+    # Secret key whitespace stripped so HMAC-SHA512 succeeds
+    ps_cfg = PaystackConfig(
+        secret_key="  sk_test_strip  ",
+        default_customer_email="buyer@example.test",
+        default_currency="KES",
+    )
+    assert ps_cfg.secret_key == "sk_test_strip"
+    raw_body = b'{"event":"charge.success"}'
+    ps_sig = hmac.new(b"sk_test_strip", raw_body, hashlib.sha512).hexdigest()
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transaction/initialize",
+        json={
+            "status": True,
+            "data": {"reference": None, "authorization_url": "https://ps/1"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.paystack.co/balance",
+        json={
+            "status": True,
+            "data": [
+                {"balance": 100000, "currency": "NGN"},
+                {"balance": 45000, "currency": "KES"},
+            ],
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.paystack.co/balance",
+        json={
+            "status": True,
+            "data": [
+                {"balance": 100000, "currency": "NGN"},
+                {"balance": 45000, "currency": "KES"},
+            ],
+        },
+        status_code=200,
+    )
+    with PaystackClient(ps_cfg) as ps_client:
+        ps_client.verify_webhook(raw_body, ps_sig)
+        with pytest.raises(ValueError, match="Invalid path segment"):
+            ps_client.initialize_transaction(
+                email="buyer@example.test",
+                amount="10",
+                currency="NGN",
+                reference="bad/ref",
+            )
+        with pytest.raises(ValueError, match="XOF"):
+            ps_client.initialize_transaction(
+                email="buyer@example.test",
+                amount="100.50",
+                currency="XOF",
+            )
+        ps_prov = PaystackProvider(ps_client)
+        # "reference": None in response must fall back to our sent ref, not literal "None"
+        ps_col = ps_prov.collect(
+            PaymentRequest(
+                amount="100",
+                currency="KES",
+                payer_msisdn="254712345678",
+                reference_id="ps-clean-ref",
+            )
+        )
+        assert ps_col.reference_id == "ps-clean-ref"
+        # Multi-currency balance selection (default_currency="KES", then explicit "NGN")
+        assert ps_prov.get_balance().currency == "KES"
+        assert ps_prov.get_balance(currency="NGN").available_balance == "1000.00"
+
+    # --- 3. Orange Money fixes ---
+    with pytest.raises(ValueError, match="api_path_prefix"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="csec",
+            merchant_key="mk",
+            environment="production",
+        )
+    with pytest.raises(ValueError, match="sandbox"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="csec",
+            merchant_key="mk",
+            environment="production",
+            api_path_prefix="/orange-money-webpay/dev/v1",
+        )
+
+    # Never fall back return_url / cancel_url to notif_url
+    with (
+        OrangeMoneyClient(
+            OrangeMoneyConfig(
+                client_id="cid",
+                client_secret="csec",
+                merchant_key="mk",
+                notif_url="https://callback.example.test/webhook",
+            )
+        ) as om_missing_urls,
+        pytest.raises(ValueError, match="return_url, cancel_url, and notif_url"),
+    ):
+        om_missing_urls.create_web_payment(amount="500", currency="XOF")
+
+    # Pluggable context store, integer XOF validation, missing pay_token error, stateless get_status, retryable transactionstatus
+    shared_store: dict[str, tuple[str, str, str]] = {}
+
+    class _SharedStore:
+        def set(
+            self, pay_token: str, order_id: str, amount: str, currency: str
+        ) -> None:
+            shared_store[pay_token] = (order_id, amount, currency)
+
+        def get(self, pay_token: str) -> tuple[str, str, str] | None:
+            return shared_store.get(pay_token)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-87-tok", "expires_in": 3600},
+        status_code=200,
+    )
+    # Missing/null pay_token response
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/sn/v1/webpayment",
+        json={"pay_token": None, "message": "Invalid merchant"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/sn/v1/webpayment",
+        json={"pay_token": "pt-87", "payment_url": "https://webpay.orange.sn/87"},
+        status_code=201,
+    )
+    # Retryable 503 then 200 on transactionstatus
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/sn/v1/transactionstatus",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/sn/v1/transactionstatus",
+        json={"status": "SUCCESS"},
+        status_code=200,
+    )
+
+    om_prod_cfg = OrangeMoneyConfig(
+        client_id="cid",
+        client_secret="csec",
+        merchant_key="mk",
+        environment="production",
+        api_path_prefix="/orange-money-webpay/sn/v1",
+        return_url="https://callback.example.test/return",
+        cancel_url="https://callback.example.test/cancel",
+        notif_url="https://callback.example.test/notif",
+        lang="fr",
+        reference="MyShop",
+        max_retries=1,
+        retry_backoff=0.001,
+    )
+    with OrangeMoneyClient(om_prod_cfg, context_store=_SharedStore()) as om_worker_1:
+        om_prov_1 = OrangeMoneyProvider(om_worker_1)
+        with pytest.raises(ValueError, match="whole-integer"):
+            om_worker_1.create_web_payment(amount="100.50", currency="XOF")
+        with pytest.raises(PyMomoSDKError, match="missing 'pay_token'"):
+            om_prov_1.collect(
+                PaymentRequest(
+                    amount="500",
+                    currency="XOF",
+                    payer_msisdn="221771234567",
+                    reference_id="ord-bad",
+                )
+            )
+        col = om_prov_1.collect(
+            PaymentRequest(
+                amount="500",
+                currency="XOF",
+                payer_msisdn="221771234567",
+                reference_id="ord-87",
+            )
+        )
+        assert col.reference_id == "pt-87"
+
+    # Separate worker with empty local memory queries status statelessly (and retries 503)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-87-tok-2", "expires_in": 3600},
+        status_code=200,
+    )
+    async with AsyncOrangeMoneyClient(om_prod_cfg) as om_worker_2:
+        om_prov_2 = AsyncOrangeMoneyProvider(om_worker_2)
+        stateless_st = await om_prov_2.get_status(
+            "pt-87", order_id="ord-87", amount="500", currency="XOF"
+        )
+        assert stateless_st.is_successful()
+        assert stateless_st.currency == "XOF"
+
+    om_reqs = [
+        r for r in httpx_mock.get_requests() if r.url.path.endswith("/webpayment")
+    ]
+    om_body = json.loads(om_reqs[-1].read().decode("utf-8"))
+    assert om_body["amount"] == 500
+    assert isinstance(om_body["amount"], int)
+    assert om_body["lang"] == "fr"
+    assert om_body["reference"] == "MyShop"
