@@ -144,7 +144,7 @@ def handle_cli_exceptions(func: F) -> F:
         except OSError as e:
             typer.echo(f"Error: I/O failure ({type(e).__name__}).", err=True)
             raise typer.Exit(code=1) from None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             typer.echo(
                 f"Unexpected error ({type(e).__name__}). Check your inputs and try again.",
                 err=True,

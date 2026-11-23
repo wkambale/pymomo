@@ -295,7 +295,7 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
 
     assert _is_retryable_request("POST", {"X-Reference-Id": "   "}) is False
     assert _is_retryable_request("POST", {"x-reference-id": "req-1"}) is True
-    mtok = MpesaTokenResponse(access_token="sec-mpesa-tok", expires_in="3599")
+    mtok = MpesaTokenResponse(access_token="sec-mpesa-tok", expires_in="3599")  # type: ignore[arg-type]
     otok = OrangeTokenResponse(access_token="sec-orange-tok", expires_in="3600")  # type: ignore[arg-type]
     assert "sec-mpesa-tok" not in str(mtok)
     assert "sec-orange-tok" not in str(otok)

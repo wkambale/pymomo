@@ -223,7 +223,7 @@ def test_airtel_token_cache_thread_safety() -> None:
                 _ = cache.get()
                 if step % 10 == 0:
                     cache.invalidate()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]

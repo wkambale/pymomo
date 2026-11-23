@@ -45,8 +45,11 @@ htmlcov/
 .pdm/
 poetry.lock
 pdm.lock
+
+# Secrets, certificates, databases, and logs
 .env
 .env.*
+!.env.example
 .venv
 venv/
 ENV/
@@ -54,6 +57,16 @@ env/
 *.pem
 *.key
 *.p12
+*.pfx
+*.p8
+*.jks
+*.keystore
+*.crt
+*.der
+*.sqlite*
+*.db
+*.log
+
 .coverage
 .coverage.*
 coverage.xml
