@@ -1,16 +1,35 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from py_momo_sdk.utils import validate_amount, validate_currency, validate_header_value
+from py_momo_sdk.utils import (
+    _CONTROL_CHAR_RE,
+    validate_amount,
+    validate_currency,
+    validate_header_value,
+    validate_reference_id,
+)
+
+_MAX_NOTE_LENGTH = 160
 
 
 def _validate_external_id(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("external_id must be a non-empty string")
     return validate_header_value(value, field_name="external_id")
+
+
+def _validate_note_text(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    if _CONTROL_CHAR_RE.search(value):
+        raise ValueError(f"{field_name} must not contain control characters")
+    if len(value) > _MAX_NOTE_LENGTH:
+        raise ValueError(f"{field_name} must not exceed {_MAX_NOTE_LENGTH} characters")
+    return value
 
 
 def _validate_positive_expires_in(value: object) -> object:
@@ -22,6 +41,16 @@ def _validate_positive_expires_in(value: object) -> object:
             raise ValueError("expires_in must be a positive integer")
     if isinstance(value, int) and value <= 0:
         raise ValueError("expires_in must be a positive integer")
+    return value
+
+
+def _validate_optional_non_negative_int(value: object, *, field_name: str) -> object:
+    if value is None:
+        return None
+    if type(value) in (bool, float):
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    if isinstance(value, int) and value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
     return value
 
 
@@ -46,135 +75,87 @@ class Party(BaseModel):
     party_id_type: str = Field(alias="partyIdType")
     party_id: str = Field(alias="partyId")
 
+    @field_validator("party_id_type")
+    @classmethod
+    def _check_party_id_type(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("party_id_type must be a non-empty string")
+        return validate_header_value(value.strip(), field_name="party_id_type")
 
-class RequestToPayRequest(BaseModel):
+    @field_validator("party_id")
+    @classmethod
+    def _check_party_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("party_id must be a non-empty string")
+        return validate_header_value(value.strip(), field_name="party_id")
+
+
+class _BaseTransactionRequest(BaseModel):
+    """Shared request fields and validators for MTN MoMo transaction writes."""
+
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     amount: str
     currency: str
     external_id: str = Field(alias="externalId")
+    payer_message: str = Field(default="", alias="payerMessage")
+    payee_note: str = Field(default="", alias="payeeNote")
+
+    @field_validator("amount")
+    @classmethod
+    def _check_amount(cls, value: str) -> str:
+        return validate_amount(value)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
+    @field_validator("external_id")
+    @classmethod
+    def _check_external_id(cls, value: str) -> str:
+        return _validate_external_id(value)
+
+    @field_validator("payer_message")
+    @classmethod
+    def _check_payer_message(cls, value: str) -> str:
+        return _validate_note_text(value, field_name="payer_message")
+
+    @field_validator("payee_note")
+    @classmethod
+    def _check_payee_note(cls, value: str) -> str:
+        return _validate_note_text(value, field_name="payee_note")
+
+    @model_validator(mode="after")
+    def _check_currency_precision(self) -> _BaseTransactionRequest:
+        validate_amount(self.amount, currency=self.currency)
+        return self
+
+
+class RequestToPayRequest(_BaseTransactionRequest):
     payer: Party
-    payer_message: str = Field(default="", alias="payerMessage")
-    payee_note: str = Field(default="", alias="payeeNote")
-
-    @field_validator("amount")
-    @classmethod
-    def _check_amount(cls, value: str) -> str:
-        return validate_amount(value)
-
-    @field_validator("currency")
-    @classmethod
-    def _check_currency(cls, value: str) -> str:
-        return validate_currency(value)
-
-    @field_validator("external_id")
-    @classmethod
-    def _check_external_id(cls, value: str) -> str:
-        return _validate_external_id(value)
 
 
-class TransferRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    amount: str
-    currency: str
-    external_id: str = Field(alias="externalId")
+class TransferRequest(_BaseTransactionRequest):
     payee: Party
-    payer_message: str = Field(default="", alias="payerMessage")
-    payee_note: str = Field(default="", alias="payeeNote")
-
-    @field_validator("amount")
-    @classmethod
-    def _check_amount(cls, value: str) -> str:
-        return validate_amount(value)
-
-    @field_validator("currency")
-    @classmethod
-    def _check_currency(cls, value: str) -> str:
-        return validate_currency(value)
-
-    @field_validator("external_id")
-    @classmethod
-    def _check_external_id(cls, value: str) -> str:
-        return _validate_external_id(value)
 
 
-class DepositRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    amount: str
-    currency: str
-    external_id: str = Field(alias="externalId")
+class DepositRequest(_BaseTransactionRequest):
     payee: Party
-    payer_message: str = Field(default="", alias="payerMessage")
-    payee_note: str = Field(default="", alias="payeeNote")
-
-    @field_validator("amount")
-    @classmethod
-    def _check_amount(cls, value: str) -> str:
-        return validate_amount(value)
-
-    @field_validator("currency")
-    @classmethod
-    def _check_currency(cls, value: str) -> str:
-        return validate_currency(value)
-
-    @field_validator("external_id")
-    @classmethod
-    def _check_external_id(cls, value: str) -> str:
-        return _validate_external_id(value)
 
 
-class RefundRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    amount: str
-    currency: str
-    external_id: str = Field(alias="externalId")
+class RefundRequest(_BaseTransactionRequest):
     reference_id_to_refund: str = Field(alias="referenceIdToRefund")
-    payer_message: str = Field(default="", alias="payerMessage")
-    payee_note: str = Field(default="", alias="payeeNote")
 
-    @field_validator("amount")
+    @field_validator("reference_id_to_refund")
     @classmethod
-    def _check_amount(cls, value: str) -> str:
-        return validate_amount(value)
-
-    @field_validator("currency")
-    @classmethod
-    def _check_currency(cls, value: str) -> str:
-        return validate_currency(value)
-
-    @field_validator("external_id")
-    @classmethod
-    def _check_external_id(cls, value: str) -> str:
-        return _validate_external_id(value)
+    def _check_reference_id_to_refund(cls, value: str) -> str:
+        validate_reference_id(value)
+        return value
 
 
-class RequestToWithdrawRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    amount: str
-    currency: str
-    external_id: str = Field(alias="externalId")
+class RequestToWithdrawRequest(_BaseTransactionRequest):
     payer: Party
-    payer_message: str = Field(default="", alias="payerMessage")
-    payee_note: str = Field(default="", alias="payeeNote")
-
-    @field_validator("amount")
-    @classmethod
-    def _check_amount(cls, value: str) -> str:
-        return validate_amount(value)
-
-    @field_validator("currency")
-    @classmethod
-    def _check_currency(cls, value: str) -> str:
-        return validate_currency(value)
-
-    @field_validator("external_id")
-    @classmethod
-    def _check_external_id(cls, value: str) -> str:
-        return _validate_external_id(value)
 
 
 class BcAuthorizeRequest(BaseModel):
@@ -254,6 +235,13 @@ class OAuth2TokenResponse(BaseModel):
     def _check_expires_in(cls, value: object) -> object:
         return _validate_positive_expires_in(value)
 
+    @field_validator("refresh_token_expired_in", mode="before")
+    @classmethod
+    def _check_refresh_token_expired_in(cls, value: object) -> object:
+        return _validate_optional_non_negative_int(
+            value, field_name="refresh_token_expired_in"
+        )
+
     def __repr__(self) -> str:
         refresh_repr = "<redacted>" if self.refresh_token is not None else "None"
         return (
@@ -273,10 +261,24 @@ class BcAuthorizeResponse(BaseModel):
     expires_in: int = Field(gt=0, alias="expires_in")
     interval: int | None = Field(default=None, alias="interval")
 
+    @field_validator("auth_req_id")
+    @classmethod
+    def _check_auth_req_id(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("auth_req_id must not be empty")
+        return validate_header_value(
+            value, field_name="auth_req_id", allow_whitespace=False
+        )
+
     @field_validator("expires_in", mode="before")
     @classmethod
     def _check_expires_in(cls, value: object) -> object:
         return _validate_positive_expires_in(value)
+
+    @field_validator("interval", mode="before")
+    @classmethod
+    def _check_interval(cls, value: object) -> object:
+        return _validate_optional_non_negative_int(value, field_name="interval")
 
     def __repr__(self) -> str:
         return (
@@ -310,6 +312,28 @@ class TransactionResult(BaseModel):
     payee_note: str | None = Field(default=None, alias="payeeNote")
     status: TransactionStatus
     reason: str | None = None
+    reason_code: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_error_reason(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("reason"), dict):
+            reason_obj = data["reason"]
+            code = reason_obj.get("code")
+            msg = reason_obj.get("message")
+            code_str = code.strip() if isinstance(code, str) and code.strip() else None
+            msg_str = msg.strip() if isinstance(msg, str) and msg.strip() else None
+            updated = dict(data)
+            if code_str and msg_str:
+                updated["reason"] = f"{code_str}: {msg_str}"
+            elif code_str or msg_str:
+                updated["reason"] = code_str or msg_str
+            else:
+                updated["reason"] = None
+            if code_str and "reason_code" not in updated:
+                updated["reason_code"] = code_str
+            return updated
+        return data
 
     def is_successful(self) -> bool:
         return self.status == TransactionStatus.successful

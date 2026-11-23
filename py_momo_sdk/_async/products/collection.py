@@ -4,6 +4,7 @@ from py_momo_sdk._async.products.base import AsyncBaseProduct
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.models import (
     BasicUserInfo,
+    BcAuthorizeRequest,
     BcAuthorizeResponse,
     OAuth2TokenResponse,
     Party,
@@ -12,12 +13,15 @@ from py_momo_sdk.models import (
     TransactionResult,
 )
 from py_momo_sdk.utils import (
+    _MSISDN_ALLOWED_CHARS_RE,
     build_basic_auth_header,
     generate_reference_id,
     normalise_msisdn,
     validate_header_value,
     validate_reference_id,
 )
+
+_VALID_BC_ACCESS_TYPES = frozenset({"online", "offline"})
 
 
 class Collection(AsyncBaseProduct):
@@ -37,17 +41,20 @@ class Collection(AsyncBaseProduct):
         payee_note: str = "",
         reference_id: str | None = None,
         callback_url: str | None = None,
+        party_id_type: str = "MSISDN",
     ) -> str:
         """Initiate a Request to Pay.
 
         Args:
             amount: The transaction amount.
             currency: The transaction currency.
-            payer_msisdn: The MSISDN of the payer.
+            payer_msisdn: The MSISDN (or party identifier) of the payer.
             external_id: The external ID.
             payer_message: Message to the payer.
             payee_note: Note to the payee.
             reference_id: Optional client-supplied reference ID.
+            callback_url: Optional per-request webhook callback URL.
+            party_id_type: Party identifier type (``MSISDN``, ``EMAIL``, or ``PARTY_CODE``).
 
         Returns:
             The reference ID associated with the transaction.
@@ -55,14 +62,20 @@ class Collection(AsyncBaseProduct):
         if reference_id is not None:
             validate_reference_id(reference_id)
         ref = reference_id or generate_reference_id()
+        norm_party_type = party_id_type.strip().upper()
+        party_id = (
+            normalise_msisdn(payer_msisdn)
+            if norm_party_type == "MSISDN"
+            else payer_msisdn.strip()
+        )
 
         payload = RequestToPayRequest(
             amount=amount,
             currency=currency,
             externalId=external_id,
             payer=Party(
-                partyIdType="MSISDN",
-                partyId=normalise_msisdn(payer_msisdn),
+                partyIdType=norm_party_type,
+                partyId=party_id,
             ),
             payerMessage=payer_message,
             payeeNote=payee_note,
@@ -72,7 +85,10 @@ class Collection(AsyncBaseProduct):
             "POST",
             "/collection/v1_0/requesttopay",
             headers=await self._build_headers(
-                reference_id=ref, include_callback=True, callback_url=callback_url
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
             ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
@@ -115,17 +131,20 @@ class Collection(AsyncBaseProduct):
         payee_note: str = "",
         reference_id: str | None = None,
         callback_url: str | None = None,
+        party_id_type: str = "MSISDN",
     ) -> str:
         """Initiate a Request to Withdraw (v2).
 
         Args:
             amount: The transaction amount.
             currency: The transaction currency.
-            payer_msisdn: The MSISDN of the payer.
+            payer_msisdn: The MSISDN (or party identifier) of the payer.
             external_id: The external ID.
             payer_message: Message to the payer.
             payee_note: Note to the payee.
             reference_id: Optional client-supplied reference ID.
+            callback_url: Optional per-request webhook callback URL.
+            party_id_type: Party identifier type (``MSISDN``, ``EMAIL``, or ``PARTY_CODE``).
 
         Returns:
             The reference ID associated with the withdrawal.
@@ -133,14 +152,20 @@ class Collection(AsyncBaseProduct):
         if reference_id is not None:
             validate_reference_id(reference_id)
         ref = reference_id or generate_reference_id()
+        norm_party_type = party_id_type.strip().upper()
+        party_id = (
+            normalise_msisdn(payer_msisdn)
+            if norm_party_type == "MSISDN"
+            else payer_msisdn.strip()
+        )
 
         payload = RequestToWithdrawRequest(
             amount=amount,
             currency=currency,
             externalId=external_id,
             payer=Party(
-                partyIdType="MSISDN",
-                partyId=normalise_msisdn(payer_msisdn),
+                partyIdType=norm_party_type,
+                partyId=party_id,
             ),
             payerMessage=payer_message,
             payeeNote=payee_note,
@@ -150,7 +175,10 @@ class Collection(AsyncBaseProduct):
             "POST",
             "/collection/v2_0/requesttowithdraw",
             headers=await self._build_headers(
-                reference_id=ref, include_callback=True, callback_url=callback_url
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
             ),
             json=payload.model_dump(by_alias=True, mode="json"),
             product_name=self._product_name,
@@ -211,13 +239,16 @@ class Collection(AsyncBaseProduct):
         login_hint: str,
         scope: str = "profile",
         access_type: str = "offline",
+        *,
+        callback_url: str | None = None,
     ) -> BcAuthorizeResponse:
         """Initiate backchannel authorization request.
 
         Args:
             login_hint: A hint identifying the user (usually 'ID:<msisdn>/MSISDN' or phone number).
             scope: The scope of the request (defaults to 'profile').
-            access_type: The access type (defaults to 'offline').
+            access_type: The access type (``"online"`` or ``"offline"``).
+            callback_url: Optional webhook callback URL for async notification.
 
         Returns:
             A BcAuthorizeResponse containing auth_req_id and details.
@@ -231,21 +262,22 @@ class Collection(AsyncBaseProduct):
         if not isinstance(access_type, str) or not access_type.strip():
             raise ValueError("access_type must be a non-empty string")
         validate_header_value(access_type, field_name="access_type")
+        norm_access_type = access_type.strip().lower()
+        if norm_access_type not in _VALID_BC_ACCESS_TYPES:
+            raise ValueError("access_type must be 'online' or 'offline'")
 
-        if (login_hint.isascii() and login_hint.isdigit()) or login_hint.startswith(
-            "+"
-        ):
+        if _MSISDN_ALLOWED_CHARS_RE.fullmatch(login_hint.strip()):
             login_hint = f"ID:{normalise_msisdn(login_hint)}/MSISDN"
-
-        from py_momo_sdk.models import BcAuthorizeRequest
 
         payload = BcAuthorizeRequest(
             login_hint=login_hint,
             scope=scope,
-            access_type=access_type,
+            access_type=norm_access_type,
         )
 
-        headers = await self._build_headers()
+        headers = await self._build_headers(
+            include_callback=(callback_url is not None), callback_url=callback_url
+        )
         headers["Content-Type"] = "application/x-www-form-urlencoded"
 
         response = await self._http.request(
@@ -262,30 +294,44 @@ class Collection(AsyncBaseProduct):
 
     async def create_oauth2_token(
         self,
-        auth_req_id: str,
+        auth_req_id: str | None = None,
         *,
         grant_type: str = "urn:openid:params:grant-type:ciba",
+        refresh_token: str | None = None,
     ) -> OAuth2TokenResponse:
-        """Exchange a CIBA authorization request ID for an OAuth2 user token.
+        """Exchange a CIBA authorization request ID or refresh token for an OAuth2 user token.
 
         Args:
-            auth_req_id: The ``auth_req_id`` returned by ``bc_authorize()``.
-            grant_type: OAuth2 grant type (defaults to CIBA grant type).
+            auth_req_id: The ``auth_req_id`` returned by ``bc_authorize()`` (required for CIBA).
+            grant_type: OAuth2 grant type (defaults to CIBA; pass ``"refresh_token"`` to refresh).
+            refresh_token: Refresh token string when ``grant_type="refresh_token"``.
 
         Returns:
             An ``OAuth2TokenResponse`` containing the user access token and
             metadata.
 
         Raises:
-            ValueError: If ``auth_req_id`` or ``grant_type`` is empty or invalid.
+            ValueError: If required token grant fields are empty or invalid.
             AuthenticationError: If client credentials are rejected.
         """
-        if not isinstance(auth_req_id, str) or not auth_req_id.strip():
-            raise ValueError("auth_req_id must be a non-empty string")
-        validate_header_value(auth_req_id, field_name="auth_req_id")
         if not isinstance(grant_type, str) or not grant_type.strip():
             raise ValueError("grant_type must be a non-empty string")
         validate_header_value(grant_type, field_name="grant_type")
+
+        form_data: dict[str, str] = {"grant_type": grant_type}
+        if grant_type == "refresh_token":
+            token_val = refresh_token if refresh_token is not None else auth_req_id
+            if not isinstance(token_val, str) or not token_val.strip():
+                raise ValueError("refresh_token must be a non-empty string")
+            validate_header_value(
+                token_val, field_name="refresh_token", allow_whitespace=False
+            )
+            form_data["refresh_token"] = token_val
+        else:
+            if not isinstance(auth_req_id, str) or not auth_req_id.strip():
+                raise ValueError("auth_req_id must be a non-empty string")
+            validate_header_value(auth_req_id, field_name="auth_req_id")
+            form_data["auth_req_id"] = auth_req_id
 
         auth_header = build_basic_auth_header(
             self._product_config.api_user,
@@ -301,9 +347,6 @@ class Collection(AsyncBaseProduct):
             "POST",
             "/collection/v1_0/oauth2/token/",
             headers=headers,
-            data={
-                "grant_type": grant_type,
-                "auth_req_id": auth_req_id,
-            },
+            data=form_data,
         )
         return parse_model(response, OAuth2TokenResponse)

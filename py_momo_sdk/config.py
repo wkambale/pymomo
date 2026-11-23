@@ -28,6 +28,7 @@ MTN_SWAZILAND = "mtnswaziland"
 MTN_GUINEA_CONAKRY = "mtnguineaconakry"
 MTN_SOUTH_AFRICA = "mtnsouthafrica"
 MTN_LIBERIA = "mtnliberia"
+MTN_RWANDA = "mtnrwanda"
 
 SANDBOX_BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 PRODUCTION_BASE_URL = "https://proxy.momoapi.mtn.com"
@@ -107,11 +108,19 @@ class PyMomoSDKConfig:
                 )
 
     @staticmethod
-    def _product_from_env(prefix: str, product_label: str) -> ProductConfig | None:
-        sub = os.environ.get(f"{prefix}_SUBSCRIPTION_KEY") or None
-        user = os.environ.get(f"{prefix}_API_USER") or None
-        key = os.environ.get(f"{prefix}_API_KEY") or None
-        cb = os.environ.get(f"{prefix}_CALLBACK_URL") or None
+    def _env_stripped(name: str) -> str | None:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        stripped = raw.strip()
+        return stripped or None
+
+    @classmethod
+    def _product_from_env(cls, prefix: str, product_label: str) -> ProductConfig | None:
+        sub = cls._env_stripped(f"{prefix}_SUBSCRIPTION_KEY")
+        user = cls._env_stripped(f"{prefix}_API_USER")
+        key = cls._env_stripped(f"{prefix}_API_KEY")
+        cb = cls._env_stripped(f"{prefix}_CALLBACK_URL")
         if not (sub or user or key):
             return None
         if not (sub and user and key):
@@ -129,16 +138,20 @@ class PyMomoSDKConfig:
     def from_env(cls) -> PyMomoSDKConfig:
         """Create a PyMomoSDKConfig instance by reading environment variables.
 
+        Reads ``PY_MOMO_SDK_ENVIRONMENT``, ``PY_MOMO_SDK_BASE_URL``,
+        ``PY_MOMO_SDK_TIMEOUT``, ``PY_MOMO_SDK_MAX_RETRIES``,
+        ``PY_MOMO_SDK_RETRY_BACKOFF``, and per-product credentials.
+
         Returns:
             A PyMomoSDKConfig instance populated with environment variable values.
 
         Raises:
-            ValueError: If ``PY_MOMO_SDK_TIMEOUT`` is not a positive finite number.
+            ValueError: If numeric env vars are invalid.
             MissingCredentialsError: If a product is only partially configured.
         """
-        env = os.environ.get("PY_MOMO_SDK_ENVIRONMENT") or SANDBOX
-        base_url = os.environ.get("PY_MOMO_SDK_BASE_URL") or None
-        timeout_str = os.environ.get("PY_MOMO_SDK_TIMEOUT")
+        env = cls._env_stripped("PY_MOMO_SDK_ENVIRONMENT") or SANDBOX
+        base_url = cls._env_stripped("PY_MOMO_SDK_BASE_URL")
+        timeout_str = cls._env_stripped("PY_MOMO_SDK_TIMEOUT")
         if timeout_str:
             try:
                 timeout = validate_timeout(float(timeout_str))
@@ -149,6 +162,28 @@ class PyMomoSDKConfig:
         else:
             timeout = 30.0
 
+        retries_str = cls._env_stripped("PY_MOMO_SDK_MAX_RETRIES")
+        if retries_str:
+            try:
+                max_retries = validate_max_retries(int(retries_str))
+            except ValueError as exc:
+                raise ValueError(
+                    "PY_MOMO_SDK_MAX_RETRIES must be a non-negative integer"
+                ) from exc
+        else:
+            max_retries = 0
+
+        backoff_str = cls._env_stripped("PY_MOMO_SDK_RETRY_BACKOFF")
+        if backoff_str:
+            try:
+                retry_backoff = validate_retry_backoff(float(backoff_str))
+            except ValueError as exc:
+                raise ValueError(
+                    "PY_MOMO_SDK_RETRY_BACKOFF must be a positive finite number"
+                ) from exc
+        else:
+            retry_backoff = 0.5
+
         collection = cls._product_from_env("PY_MOMO_SDK_COLLECTION", "collection")
         disbursement = cls._product_from_env("PY_MOMO_SDK_DISBURSEMENT", "disbursement")
         remittance = cls._product_from_env("PY_MOMO_SDK_REMITTANCE", "remittance")
@@ -157,6 +192,8 @@ class PyMomoSDKConfig:
             environment=env,
             base_url=base_url,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
             collection=collection,
             disbursement=disbursement,
             remittance=remittance,

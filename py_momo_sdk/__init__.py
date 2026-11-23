@@ -11,7 +11,7 @@ from py_momo_sdk.airtel.client import AirtelClient
 from py_momo_sdk.airtel.config import AirtelConfig, encrypt_airtel_pin
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.client import PyMomoSDK
-from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
+from py_momo_sdk.config import MTN_RWANDA, ProductConfig, PyMomoSDKConfig
 from py_momo_sdk.exceptions import (
     AuthenticationError,
     BadRequestError,
@@ -96,6 +96,7 @@ from py_momo_sdk.telemetry import (
     TelemetryHook,
     WebhookTelemetryEvent,
 )
+from py_momo_sdk.utils import async_wait_for_settlement, wait_for_settlement
 from py_momo_sdk.webhooks import WebhookHandler
 
 try:
@@ -104,6 +105,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "MTN_RWANDA",
     "AccountHolderIdType",
     "AirtelClient",
     "AirtelConfig",
@@ -184,6 +186,7 @@ __all__ = [
     "WebhookTelemetryEvent",
     "WebhookVerificationError",
     "__version__",
+    "async_wait_for_settlement",
     "create_asgi_webhook_verifier",
     "create_mock_server",
     "encrypt_airtel_pin",
@@ -191,4 +194,5 @@ __all__ = [
     "verify_constant_time_token",
     "verify_django_webhook_request",
     "verify_raw_webhook_request",
+    "wait_for_settlement",
 ]
