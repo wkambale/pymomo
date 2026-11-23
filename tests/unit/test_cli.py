@@ -478,3 +478,184 @@ def test_cli_env_vars_security_rejections_carrier_and_mock(
     assert bad_mock_host.exit_code == 1
     bad_mock_status = runner.invoke(app, ["mock", "--status", "INVALID"])
     assert bad_mock_status.exit_code == 1
+
+
+def test_cli_issue_90_exits_validation_secret_files_and_commands(
+    httpx_mock: HTTPXMock, tmp_path
+) -> None:
+    """Verify Issue #90: typer.Exit(0) preserved, ValidationError sanitized, blank env/opts, secret files, and expanded commands."""
+    import hashlib
+    import hmac
+    import stat
+
+    import pytest
+    import typer
+    from pydantic import BaseModel, Field
+
+    from py_momo_sdk._cli import handle_cli_exceptions
+
+    # 1. handle_cli_exceptions preserves typer.Exit(code=0) and typer.Abort
+    @handle_cli_exceptions
+    def _clean_exit() -> None:
+        raise typer.Exit(code=0)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        _clean_exit()
+    assert exc_info.value.exit_code == 0
+
+    @handle_cli_exceptions
+    def _abort_cmd() -> None:
+        raise typer.Abort()
+
+    with pytest.raises(typer.Abort):
+        _abort_cmd()
+
+    # 2. Pydantic ValidationError sanitized (does not leak raw secret input_value)
+    class _SecretModel(BaseModel):
+        count: int = Field(gt=0)
+
+    @handle_cli_exceptions
+    def _bad_model() -> None:
+        _SecretModel(count="SECRET_INPUT_DO_NOT_LEAK")  # type: ignore[arg-type]
+
+    with pytest.raises(typer.Exit) as val_exc:
+        _bad_model()
+    assert val_exc.value.exit_code == 1
+
+    # 3. Secret files (--subscription-key-file, --api-key-file) + blank --base-url "" / whitespace env var
+    sub_file = tmp_path / "sub.key"
+    api_file = tmp_path / "api.key"
+    sub_file.write_text("file-sub-key\n", encoding="utf-8")
+    api_file.write_text("file-api-key\n", encoding="utf-8")
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/disbursement/token/",
+        json={"access_token": "tok", "token_type": "access_token", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/disbursement/v1_0/transfer",
+        status_code=202,
+    )
+    res_tr = runner.invoke(
+        app,
+        [
+            "disbursement",
+            "transfer",
+            "256771234567",
+            "100",
+            "EUR",
+            "ext-d1",
+            "--subscription-key-file",
+            str(sub_file),
+            "--api-user",
+            "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "--api-key-file",
+            str(api_file),
+            "--base-url",
+            "",
+        ],
+        env={"PY_MOMO_SDK_BASE_URL": "   ", "PY_MOMO_SDK_ENVIRONMENT": "  "},
+    )
+    assert res_tr.exit_code == 0
+    assert "reference_id" in json.loads(res_tr.stdout)
+
+    # 4. sandbox provision --output-file writes mode-0600 file and redacts stdout
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/v1_0/apiuser",
+        status_code=201,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/v1_0/apiuser/e4d6934c-6fa1-49b4-9c59-bf558661b17c/apikey",
+        json={"apiKey": "secret-prov-key"},
+        status_code=201,
+    )
+    out_file = tmp_path / "creds.json"
+    with patch(
+        "py_momo_sdk.sandbox.generate_reference_id",
+        return_value="e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+    ):
+        prov_res = runner.invoke(
+            app,
+            [
+                "sandbox",
+                "provision",
+                "--subscription-key-file",
+                str(sub_file),
+                "--output-file",
+                str(out_file),
+            ],
+        )
+    assert prov_res.exit_code == 0
+    assert "secret-prov-key" not in prov_res.stdout
+    assert (
+        json.loads(out_file.read_text(encoding="utf-8"))["api_key"] == "secret-prov-key"
+    )
+    assert stat.S_IMODE(out_file.stat().st_mode) == 0o600
+
+    # 5. webhook verify CLI subcommand
+    payload_file = tmp_path / "wh.json"
+    sec_file = tmp_path / "wh.sec"
+    raw_wh = b'{"status":"SUCCESSFUL"}'
+    payload_file.write_bytes(raw_wh)
+    sec_file.write_text("cli-wh-secret\n", encoding="utf-8")
+    sig = hmac.new(b"cli-wh-secret", raw_wh, hashlib.sha256).hexdigest()
+
+    wh_ok = runner.invoke(
+        app,
+        [
+            "webhook",
+            "verify",
+            "--signature",
+            sig,
+            "--payload-file",
+            str(payload_file),
+            "--secret-file",
+            str(sec_file),
+        ],
+    )
+    assert wh_ok.exit_code == 0
+    assert json.loads(wh_ok.stdout) == {"verified": True}
+
+    # 6. airtel balance CLI subcommand
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "air-cli-tok", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        json={
+            "status": {"code": "200", "message": "OK", "result_code": "00"},
+            "data": {
+                "wallet": {
+                    "msisdn": "256750000000",
+                    "balance": "9900",
+                    "currency": "UGX",
+                    "status": "ACTIVE",
+                }
+            },
+        },
+        status_code=200,
+    )
+    air_sec_file = tmp_path / "airtel.sec"
+    air_sec_file.write_text("air-secret\n", encoding="utf-8")
+    air_res = runner.invoke(
+        app,
+        [
+            "airtel",
+            "balance",
+            "--client-id",
+            "air-id",
+            "--client-secret-file",
+            str(air_sec_file),
+        ],
+    )
+    assert air_res.exit_code == 0
+    assert json.loads(air_res.stdout)["data"]["wallet"]["balance"] == "9900"
