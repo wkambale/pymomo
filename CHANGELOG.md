@@ -2,6 +2,24 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## 1.3.0 - 2026-11-23
+
+### Added
+- Exported all 13 MTN environment constants (`SANDBOX`, `MTN_UGANDA`, `MTN_GHANA`, `MTN_RWANDA`, `MTN_CONGO`, `MTN_IVORY_COAST`, `MTN_CAMEROON`, `MTN_ZAMBIA`, `MTN_BENIN`, `MTN_SWAZILAND`, `MTN_GUINEA_CONAKRY`, `MTN_SOUTH_AFRICA`, `MTN_LIBERIA`), `detect_carrier_from_msisdn`, `wait_for_settlement`, `async_wait_for_settlement`, and `verify_static_token_webhook_request` from top-level `py_momo_sdk`.
+- Added optional packaging extras in `pyproject.toml`: `[cli]`, `[airtel]`, `[fastapi]`, `[django]`, and `[all]`, PEP 639 SPDX license metadata, and build provenance attestation + SHA-256 checksums in release publishing.
+- Added `OrangePaymentContextStore` pluggable store support and stateless `get_status(..., order_id, amount, currency)` on `OrangeMoneyProvider` / `AsyncOrangeMoneyProvider`, `PaymentRouter` / `AsyncPaymentRouter` `threading.RLock` safety, failover reconciliation (`prior_failed_attempts`), 18-market pan-African carrier prefix mapping with `custom_carrier_prefixes`, and context-managed lifecycle `close()` / `aclose()` across all providers and routers.
+- Expanded CLI with `disbursement transfer`/`status`, `remittance transfer`/`status`, `airtel encrypt-pin`/`balance`, `webhook verify`, `--*-file` / stdin secret loading, `--output-file` (`0600`), `--redact-secret`, and resilience flags (`--timeout`, `--max-retries`, `--retry-backoff`); expanded `mock_server` with IPv6 `::1`, chunked decoding, bounded concurrency semaphore, MTN `409 Conflict`, and multi-provider routes.
+
+### Security
+- Blocked SSRF private/metadata/obfuscated IP hosts, percent-encoded path traversal, non-ASCII header injection, mismatched injected client origins, and localhost URLs in production environments; froze configuration dataclasses against post-init mutation.
+- Extended secret redaction across telemetry paths (`/v1_0/apiuser/<redacted>`), `ProductConfig`, `BcAuthorizeResponse`, `ProvisionResult`, reference ID validators, and sanitized `BadRequestError` messages.
+- Protected webhook and ASGI/Django verifiers against oversized header/timestamp/`Content-Length` DoS, duplicate multi-dict headers, non-short-circuiting multi-`v1` comparisons, replay delivery (`replay_check`), IPv6 zone IDs, and stream-consumption issues via Starlette `request._body` caching.
+
+### Fixed
+- Aligned provider contracts with live API specifications: MTN `ErrorReason` object parsing, strict E.164 MSISDN and zero-decimal currency amount validation, CIBA OAuth2 `refresh_token` grant, `wait_for_settlement` deadline accuracy, Airtel country-aware MSISDN and HTTP 200 business-error inspection, M-Pesa Daraja EAT (`UTC+3`) timestamps / whole-integer KES amounts / B2C v3 `OriginatorConversationID`, Wave live `receive_amount` and no-dot `Wave-Signature` (`timestamp_separator=""`), Flutterwave alphanumeric bank/IBAN preservation and currency balances, Paystack multi-currency balance selection and zero-decimal guards, and core transport explicit `idempotent` retry safety with CAS 401 token refresh and per-loop async locks.
+- Fixed false-positive Airtel amount and webhook telemetry isolation tests, added genuine chunked-stream, real `cryptography`/`FastAPI`/`Django`, and multi-threaded/asyncio concurrency and stress tests (lifting total coverage to **95%**).
+- Fixed MkDocs duplicate scroll-to-top button and `docs/javascripts/scroll.js` instant-navigation `scroll` listener leak, cleaned editorial wording, and updated all guides and `README.md`.
+
 ## 1.2.0 - 2026-11-21
 
 ### Added
