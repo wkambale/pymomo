@@ -51,7 +51,7 @@ cli = [
     "typer>=0.29.1,<1",
 ]
 airtel = [
-    "cryptography>=42,<47",
+    "cryptography>=50.0.2,<51",
 ]
 fastapi = [
     "starlette>=1.7.0,<2",
@@ -62,7 +62,7 @@ django = [
 ]
 all = [
     "typer>=0.29.1,<1",
-    "cryptography>=42,<47",
+    "cryptography>=50.0.2,<51",
     "starlette>=1.7.0,<2",
     "fastapi>=0.111,<1",
     "django>=4.2,<7",
