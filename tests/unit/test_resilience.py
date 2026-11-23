@@ -118,8 +118,16 @@ def test_config_retry_validation() -> None:
         PyMomoSDKConfig(retry_backoff=0.0)
 
 
-def test_wait_for_settlement_sync_and_timeout() -> None:
-    """Test wait_for_settlement resolves when status leaves pending and times out."""
+def test_wait_for_settlement_sync_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test wait_for_settlement resolves when status leaves pending and times out deterministically."""
+    import time
+
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+
+    def _advance_sleep(delay: float) -> None:
+        now[0] += delay
+
     states = iter(
         [
             SimpleNamespace(is_pending=lambda: True, status="PENDING"),
@@ -129,16 +137,18 @@ def test_wait_for_settlement_sync_and_timeout() -> None:
     settled = wait_for_settlement(
         lambda: next(states),
         timeout=5.0,
-        interval=0.001,
-        sleep_fn=lambda _: None,
+        interval=0.5,
+        sleep_fn=_advance_sleep,
     )
     assert settled.status == "SUCCESSFUL"
 
+    now[0] = 200.0
     with pytest.raises(PyMomoSDKError, match="timed out"):
         wait_for_settlement(
             lambda: SimpleNamespace(is_pending=lambda: True, status="PENDING"),
-            timeout=0.01,
-            interval=0.005,
+            timeout=1.0,
+            interval=0.4,
+            sleep_fn=_advance_sleep,
         )
 
 

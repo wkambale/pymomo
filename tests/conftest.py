@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 
 import pytest
 
@@ -57,9 +57,10 @@ def momo_config(
 
 
 @pytest.fixture
-def client(momo_config: PyMomoSDKConfig) -> PyMomoSDK:
+def client(momo_config: PyMomoSDKConfig) -> Generator[PyMomoSDK, None, None]:
     """Fixture for a configured synchronous PyMomoSDK."""
-    return PyMomoSDK(momo_config)
+    with PyMomoSDK(momo_config) as sdk_client:
+        yield sdk_client
 
 
 @pytest.fixture

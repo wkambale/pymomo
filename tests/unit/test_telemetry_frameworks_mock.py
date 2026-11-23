@@ -337,6 +337,40 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
     )
     assert len(wh_hook.webhooks) == 4
 
+    class _ExplodingWebhookHook:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            del event
+
+        def on_webhook(self, event: WebhookTelemetryEvent) -> None:
+            del event
+            self.calls += 1
+            raise RuntimeError("webhook telemetry sink down")
+
+    exploding_wh = _ExplodingWebhookHook()
+    assert (
+        await create_asgi_webhook_verifier(
+            secret=secret,
+            signature_header_name="X-Momo-Sig",
+            telemetry=exploding_wh,
+            provider="asgi_exploding",
+        )(_FakeRequest(body, {"x-momo-sig": sig}, "10.0.0.1"))
+        == body
+    )
+    assert (
+        verify_django_webhook_request(
+            django_req,
+            secret=secret,
+            signature_header_name="X-Momo-Sig",
+            telemetry=exploding_wh,
+            provider="django_exploding",
+        )
+        == body
+    )
+    assert exploding_wh.calls == 2
+
 
 def test_local_mock_server_and_cli_carrier() -> None:
     """Test local mock gateway server end-to-end and CLI carrier command."""

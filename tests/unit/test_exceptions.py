@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from py_momo_sdk.exceptions import (
     AuthenticationError,
     BadRequestError,
     ConflictError,
+    MissingCredentialsError,
     PyMomoSDKError,
     PyMomoSDKServerError,
     ResourceNotFoundError,
@@ -15,12 +18,36 @@ from py_momo_sdk.exceptions import (
 def test_exception_inheritance() -> None:
     """Verify that all exceptions inherit from PyMomoSDKError."""
     assert issubclass(AuthenticationError, PyMomoSDKError)
+    assert issubclass(MissingCredentialsError, PyMomoSDKError)
     assert issubclass(BadRequestError, PyMomoSDKError)
     assert issubclass(ResourceNotFoundError, PyMomoSDKError)
     assert issubclass(ConflictError, PyMomoSDKError)
     assert issubclass(PyMomoSDKServerError, PyMomoSDKError)
     assert issubclass(TransactionFailedError, PyMomoSDKError)
     assert issubclass(WebhookVerificationError, PyMomoSDKError)
+
+
+@pytest.mark.asyncio
+async def test_missing_credentials_error_raised_on_unconfigured_products() -> None:
+    """Verify sync and async clients raise MissingCredentialsError for unconfigured products."""
+    from py_momo_sdk import AsyncPyMomoSDK, PyMomoSDK, PyMomoSDKConfig
+
+    empty_cfg = PyMomoSDKConfig()
+    with PyMomoSDK(empty_cfg) as sync_client:
+        with pytest.raises(MissingCredentialsError, match="Collection credentials"):
+            _ = sync_client.collection
+        with pytest.raises(MissingCredentialsError, match="Disbursement credentials"):
+            _ = sync_client.disbursement
+        with pytest.raises(MissingCredentialsError, match="Remittance credentials"):
+            _ = sync_client.remittance
+
+    async with AsyncPyMomoSDK(empty_cfg) as async_client:
+        with pytest.raises(MissingCredentialsError, match="Collection credentials"):
+            _ = async_client.collection
+        with pytest.raises(MissingCredentialsError, match="Disbursement credentials"):
+            _ = async_client.disbursement
+        with pytest.raises(MissingCredentialsError, match="Remittance credentials"):
+            _ = async_client.remittance
 
 
 def test_bad_request_error_properties() -> None:
