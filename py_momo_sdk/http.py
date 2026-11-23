@@ -22,6 +22,7 @@ from py_momo_sdk.exceptions import (
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
 from py_momo_sdk.utils import (
     validate_base_url,
+    validate_matching_origin,
     validate_max_retries,
     validate_request_path,
     validate_retry_backoff,
@@ -108,6 +109,7 @@ class HttpClient:
             injected_base = str(client.base_url)
             if injected_base:
                 validate_base_url(injected_base)
+                validate_matching_origin(validated_url, injected_base)
             self._client = client
         else:
             self._client = httpx.Client(

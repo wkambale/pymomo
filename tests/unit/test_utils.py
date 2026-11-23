@@ -235,3 +235,127 @@ def test_core_parity_cleanups_issue_63(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.base_url == "https://sandbox.momodeveloper.mtn.com"
     assert cfg.collection is not None
     assert cfg.collection.callback_url is None
+
+
+def test_issue_80_ssrf_traversal_ports_headers_and_immutability() -> None:
+    """Verify SSRF blocking, standard ports, encoded traversal, ASCII headers, and frozen configs (#80)."""
+    from dataclasses import FrozenInstanceError
+
+    import httpx
+
+    from py_momo_sdk.config import (
+        MTN_GHANA,
+        SANDBOX,
+        ProductConfig,
+        PyMomoSDKConfig,
+    )
+    from py_momo_sdk.exceptions import PyMomoSDKError
+    from py_momo_sdk.http import HttpClient
+    from py_momo_sdk.models import TokenResponse
+    from py_momo_sdk.providers.mpesa import MpesaConfig
+    from py_momo_sdk.providers.orange import OrangeMoneyConfig
+    from py_momo_sdk.utils import (
+        validate_base_url,
+        validate_callback_host,
+        validate_callback_url,
+        validate_header_value,
+        validate_request_path,
+    )
+
+    # Valid explicit default ports and IPv6 localhost accepted in sandbox/local mode
+    assert (
+        validate_base_url("https://sandbox.momodeveloper.mtn.com:443")
+        == "https://sandbox.momodeveloper.mtn.com:443"
+    )
+    assert (
+        validate_callback_url("https://merchant.example.com:443/cb")
+        == "https://merchant.example.com:443/cb"
+    )
+    assert validate_base_url("http://localhost:80") == "http://localhost:80"
+    assert validate_base_url("http://[::1]:8000") == "http://[::1]:8000"
+
+    # SSRF private/metadata/obfuscated IPs & malformed authorities rejected
+    for bad_url in (
+        "https://169.254.169.254",
+        "https://10.0.0.1",
+        "https://192.168.1.10",
+        "https://172.16.0.1",
+        "https://100.64.0.1",
+        "https://[fe80::1]",
+        "https://0x7f000001",
+        "https://2130706433",
+        "https://127.1",
+        "https://sandbox.momodeveloper.mtn.com:",
+        "https://sandbox.momodeveloper.mtn.com;a=b",
+    ):
+        with pytest.raises(PyMomoSDKError):
+            validate_base_url(bad_url)
+        with pytest.raises(ValueError):
+            validate_callback_url(f"{bad_url}/cb")
+
+    # Bare metadata/private IPs and >253-char hostnames rejected in validate_callback_host
+    for bad_host in ("169.254.169.254", "10.0.0.1", "0x7f000001", "a." * 130 + "com"):
+        with pytest.raises(ValueError):
+            validate_callback_host(bad_host)
+
+    # Production environments reject localhost / plaintext loopback
+    with pytest.raises(PyMomoSDKError):
+        PyMomoSDKConfig(
+            environment=MTN_GHANA,
+            base_url="http://127.0.0.1:8000",
+        )
+    with pytest.raises(ValueError):
+        PyMomoSDKConfig(
+            environment=MTN_GHANA,
+            collection=ProductConfig(
+                "sub", "user", "key", callback_url="http://127.0.0.1/cb"
+            ),
+        )
+
+    # Encoded path traversal & disallowed query strings rejected
+    for bad_path in (
+        "/collection/%2e%2e/disbursement/v1_0/transfer",
+        "/collection/%2E%2E/disbursement/v1_0/transfer",
+        "/collection/%2f../token/",
+        "/collection/%5c/token/",
+        "/collection/%252e%252e/token/",
+    ):
+        with pytest.raises(PyMomoSDKError):
+            validate_request_path(bad_path)
+    with pytest.raises(PyMomoSDKError):
+        validate_request_path(
+            "/collection/v1_0/account/balance?admin=true", allow_query=False
+        )
+
+    # Non-ASCII headers, token whitespace, and ':' in Basic-auth usernames rejected
+    with pytest.raises(ValueError, match="printable ASCII"):
+        validate_header_value("sub\u0100key", field_name="subscription_key")
+    with pytest.raises(ValueError, match="whitespace"):
+        TokenResponse(access_token="tok1 tok2", token_type="Bearer", expires_in=60)
+    with pytest.raises(ValueError, match="':'"):
+        ProductConfig("sub", "user:colon", "key")
+    with pytest.raises(ValueError, match="':'"):
+        MpesaConfig(
+            consumer_key="bad:key",
+            consumer_secret="sec",
+            short_code="174379",
+            passkey="pk",
+        )
+    with pytest.raises(ValueError, match="':'"):
+        OrangeMoneyConfig(client_id="bad:id", client_secret="sec", merchant_key="mk")
+
+    # Configs are frozen against post-init mutation
+    pc = ProductConfig("sub", "user", "key")
+    cfg = PyMomoSDKConfig(environment=SANDBOX, collection=pc)
+    with pytest.raises(FrozenInstanceError):
+        pc.callback_url = "http://169.254.169.254/meta"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        cfg.environment = "mtnghana\r\nX-Injected: evil"  # type: ignore[misc]
+
+    # Injected httpx.Client with mismatched base_url origin is rejected
+    evil = httpx.Client(base_url="https://evil.example.com")
+    try:
+        with pytest.raises(PyMomoSDKError, match="match configured base_url"):
+            HttpClient("https://sandbox.momodeveloper.mtn.com", 30.0, client=evil)
+    finally:
+        evil.close()

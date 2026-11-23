@@ -200,7 +200,9 @@ class TokenResponse(BaseModel):
     def _check_access_token(cls, value: str) -> str:
         if not value or not value.strip():
             raise ValueError("access_token must not be empty")
-        return validate_header_value(value, field_name="access_token")
+        return validate_header_value(
+            value, field_name="access_token", allow_whitespace=False
+        )
 
     @field_validator("expires_in", mode="before")
     @classmethod
@@ -232,7 +234,9 @@ class OAuth2TokenResponse(BaseModel):
     def _check_access_token(cls, value: str) -> str:
         if not value or not value.strip():
             raise ValueError("access_token must not be empty")
-        return validate_header_value(value, field_name="access_token")
+        return validate_header_value(
+            value, field_name="access_token", allow_whitespace=False
+        )
 
     @field_validator("refresh_token")
     @classmethod
@@ -241,7 +245,9 @@ class OAuth2TokenResponse(BaseModel):
             return None
         if not value.strip():
             raise ValueError("refresh_token must not be empty")
-        return validate_header_value(value, field_name="refresh_token")
+        return validate_header_value(
+            value, field_name="refresh_token", allow_whitespace=False
+        )
 
     @field_validator("expires_in", mode="before")
     @classmethod
@@ -338,7 +344,9 @@ class ApiKeyResult(BaseModel):
     def _check_api_key(cls, value: str) -> str:
         if not value or not value.strip():
             raise ValueError("api_key must not be empty")
-        return validate_header_value(value, field_name="api_key")
+        return validate_header_value(
+            value, field_name="api_key", allow_whitespace=False
+        )
 
     def __repr__(self) -> str:
         return "ApiKeyResult(api_key=<redacted>)"

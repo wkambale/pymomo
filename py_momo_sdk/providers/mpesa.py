@@ -80,10 +80,13 @@ class MpesaConfig:
             if not isinstance(fval, str) or not fval.strip():
                 raise ValueError(f"{fname} must be a non-empty string")
             validate_header_value(fval, field_name=fname)
-        if self.callback_url is not None:
-            validate_callback_url(self.callback_url)
+        if ":" in self.consumer_key:
+            raise ValueError("consumer_key must not contain ':'")
         if self.environment not in _VALID_MPESA_ENVIRONMENTS:
             raise ValueError("environment must be 'sandbox' or 'production'")
+        allow_localhost = self.environment == "sandbox"
+        if self.callback_url is not None:
+            validate_callback_url(self.callback_url, allow_localhost=allow_localhost)
         if self.initiator_name is None and self.environment == "sandbox":
             self.initiator_name = "testapi"
         if self.initiator_name is not None:
@@ -106,7 +109,7 @@ class MpesaConfig:
                 else MPESA_PRODUCTION_BASE_URL
             )
         else:
-            validate_base_url(self.base_url)
+            validate_base_url(self.base_url, allow_localhost=allow_localhost)
 
     def __repr__(self) -> str:
         return (

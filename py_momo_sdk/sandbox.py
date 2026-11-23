@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from py_momo_sdk.config import PRODUCTION_BASE_URL, SANDBOX, PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
 from py_momo_sdk.http import HttpClient, parse_model
@@ -10,6 +12,8 @@ from py_momo_sdk.utils import (
     validate_header_value,
     validate_reference_id,
 )
+
+_PRODUCTION_HOST = (urlsplit(PRODUCTION_BASE_URL).hostname or "").lower()
 
 
 class SandboxProvisioner:
@@ -33,9 +37,11 @@ class SandboxProvisioner:
         from typing import cast
 
         if isinstance(subscription_key, PyMomoSDKConfig):
-            # Property-based invocation: SandboxProvisioner(config, http)
+            # Property-based or mixed invocation: SandboxProvisioner(config, http) or SandboxProvisioner(config, http=http)
             self._config = subscription_key
-            self._http = cast(HttpClient, config)
+            self._http = cast(
+                HttpClient, config if isinstance(config, HttpClient) else http
+            )
             self._subscription_key = self._extract_sub_key(self._config)
         elif subscription_key is None and isinstance(config, PyMomoSDKConfig):
             # Keyword-based invocation: SandboxProvisioner(config=config, http=http)
@@ -68,10 +74,17 @@ class SandboxProvisioner:
                 raise PyMomoSDKError(
                     "SandboxProvisioner can only be used with the sandbox environment"
                 )
-        elif str(self._http._client.base_url).rstrip("/") == PRODUCTION_BASE_URL:
-            raise PyMomoSDKError(
-                "SandboxProvisioner can only be used with the sandbox environment"
-            )
+        for target_url in (
+            self._http._validated_base_url,
+            str(self._http._client.base_url),
+        ):
+            if (
+                target_url
+                and (urlsplit(target_url).hostname or "").lower() == _PRODUCTION_HOST
+            ):
+                raise PyMomoSDKError(
+                    "SandboxProvisioner can only be used with the sandbox environment"
+                )
         if not self._subscription_key or not self._subscription_key.strip():
             raise MissingCredentialsError(
                 "Subscription key is required for sandbox provisioning"
@@ -96,7 +109,7 @@ class SandboxProvisioner:
         self,
         api_user: str | None = None,
         *,
-        callback_host: str = "https://example.com",
+        callback_host: str = "example.com",
     ) -> str:
         """Create a sandbox API user. Returns the api_user UUID."""
         validate_callback_host(callback_host)
@@ -150,7 +163,7 @@ class SandboxProvisioner:
     def provision(
         self,
         *,
-        callback_host: str = "https://example.com",
+        callback_host: str = "example.com",
     ) -> dict[str, str]:
         """Create a user and key in a single call. Returns both values.
 

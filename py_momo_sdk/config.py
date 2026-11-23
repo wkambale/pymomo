@@ -33,7 +33,7 @@ SANDBOX_BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 PRODUCTION_BASE_URL = "https://proxy.momoapi.mtn.com"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProductConfig:
     """Credentials and settings for a single MoMo product."""
 
@@ -51,6 +51,8 @@ class ProductConfig:
             if not isinstance(val, str) or not val.strip():
                 raise ValueError(f"{field_name} must be a non-empty string")
             validate_header_value(val, field_name=field_name)
+        if ":" in self.api_user:
+            raise ValueError("api_user must not contain ':'")
         if self.callback_url is not None:
             validate_callback_url(self.callback_url)
 
@@ -61,7 +63,7 @@ class ProductConfig:
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class PyMomoSDKConfig:
     """Top-level configuration for a PyMomoSDK instance."""
 
@@ -77,15 +79,29 @@ class PyMomoSDKConfig:
 
     def __post_init__(self) -> None:
         validate_environment_name(self.environment)
-        self.timeout = validate_timeout(self.timeout)
-        self.max_retries = validate_max_retries(self.max_retries)
-        self.retry_backoff = validate_retry_backoff(self.retry_backoff)
+        allow_localhost = self.environment == SANDBOX
+        object.__setattr__(self, "timeout", validate_timeout(self.timeout))
+        object.__setattr__(self, "max_retries", validate_max_retries(self.max_retries))
+        object.__setattr__(
+            self, "retry_backoff", validate_retry_backoff(self.retry_backoff)
+        )
         if self.base_url is None:
-            self.base_url = (
-                SANDBOX_BASE_URL if self.environment == SANDBOX else PRODUCTION_BASE_URL
+            object.__setattr__(
+                self,
+                "base_url",
+                (
+                    SANDBOX_BASE_URL
+                    if self.environment == SANDBOX
+                    else PRODUCTION_BASE_URL
+                ),
             )
         else:
-            validate_base_url(self.base_url)
+            validate_base_url(self.base_url, allow_localhost=allow_localhost)
+        for product_cfg in (self.collection, self.disbursement, self.remittance):
+            if product_cfg is not None and product_cfg.callback_url is not None:
+                validate_callback_url(
+                    product_cfg.callback_url, allow_localhost=allow_localhost
+                )
 
     @staticmethod
     def _product_from_env(prefix: str, product_label: str) -> ProductConfig | None:
