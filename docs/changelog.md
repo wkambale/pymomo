@@ -11,9 +11,9 @@ All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documente
 ### Security
 - Prevented automatic `PaymentRouter` and `AsyncPaymentRouter` failover on ambiguous `5xx` or network write failures unless `allow_ambiguous_write_fallback=True` is explicitly set, while keeping safe pre-flight failover on authentication and missing-credential errors; enforced capability and currency filtering during candidate resolution.
 - Rejected HTTP `3xx` redirects in `_raise_for_status` and Airtel clients, validated injected `httpx` client base URLs and per-request `follow_redirects=False`, and enforced a streaming `max_response_bytes` cap (`1 MiB` default) across sync and async HTTP clients.
-- Hardened `WebhookHandler`, `create_asgi_webhook_verifier`, `verify_django_webhook_request`, and `verify_constant_time_token` against non-ASCII `compare_digest` errors, oversized request bodies, spoofed or IPv4-mapped IPv6 addresses, duplicate `t=` or signature headers, non-finite `tolerance_seconds`, and future timestamp skew.
+- Protected `WebhookHandler`, `create_asgi_webhook_verifier`, `verify_django_webhook_request`, and `verify_constant_time_token` against non-ASCII `compare_digest` errors, oversized request bodies, spoofed or IPv4-mapped IPv6 addresses, duplicate `t=` or signature headers, non-finite `tolerance_seconds`, and future timestamp skew.
 - Validated per-request callback/redirect URLs, `base_url`, `max_retries`, `retry_backoff`, and `"sandbox"` vs `"production"` environment names across all provider configurations and direct client write methods; removed `example.com` default callback URLs and production `"testapi"` initiator defaults; guarded Airtel production configurations against plaintext numeric PINs.
-- Added `allowed_plugins` allowlisting and protocol validation to `discover_provider_plugins()`, hardened `mock_server` with body-size and state-entry caps, socket timeouts, thread locking, and non-loopback bind protection, redacted `/accountholder/{type}/{id}` PII in logs and telemetry events, and isolated GitHub Actions `verify`, `build`, and `publish` / `deploy-pages` jobs without `contents: write`.
+- Added `allowed_plugins` allowlisting and protocol validation to `discover_provider_plugins()`, secured `mock_server` with body-size and state-entry caps, socket timeouts, thread locking, and non-loopback bind protection, redacted `/accountholder/{type}/{id}` PII in logs and telemetry events, and isolated GitHub Actions `verify`, `build`, and `publish` / `deploy-pages` jobs without `contents: write`.
 
 ### Fixed
 - Fixed Airtel disbursement payload schema (`{payee, transaction, reference, pin}`), Airtel currency validation, Orange Money country `api_path_prefix` and `(order_id, amount)` status tracking, Paystack minor-unit precision and envelope checks, Flutterwave explicit `email` and `account_bank` handling, `kind` validation across all 7 providers, status mappings (`REVERSED`, `EXPIRED`, `CANCELLED`, indeterminate `PENDING`), and documentation/CLI credential guidance.
@@ -67,10 +67,10 @@ All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documente
 
 ### Changed
 - Enforced strict HTTPS base URL and relative request path validation, disabled automatic HTTP redirects (`follow_redirects=False`), and validated canonical UUID v4 reference IDs, ISO currency/country codes, positive finite amounts, timeouts, callback URLs, and header control characters.
-- Hardened response JSON and Pydantic model parsing across all MTN MoMo and Airtel endpoints via shared `parse_model` and `parse_json_dict` helpers.
+- Validated response JSON and Pydantic model parsing across all MTN MoMo and Airtel endpoints via shared `parse_model` and `parse_json_dict` helpers.
 - Added thread-safe and async-safe double-checked token refresh locking with conditional cache invalidation (`expected_token`) to prevent concurrent token storms and stale invalidations.
-- Hardened secret redaction across configs, models, token caches, sandbox provisioners, HTTP error chains, and CLI error handling.
-- Hardened GitHub Actions workflows with SHA-pinned actions, least-privilege permissions, strict Hatch sdist/wheel packaging allowlists, and full Bandit scanning without global rule skips.
+- Enforced secret redaction across configs, models, token caches, sandbox provisioners, HTTP error chains, and CLI error handling.
+- Secured GitHub Actions workflows with SHA-pinned actions, least-privilege permissions, strict Hatch sdist/wheel packaging allowlists, and full Bandit scanning without global rule skips.
 
 ### Fixed
 - Fixed `AirtelTransactionResponse.is_successful()`, `is_pending()`, and `is_failed()` to evaluate `data.transaction.status` rather than outer envelope result codes, and fixed the Airtel disbursement status endpoint path (`/standard/v1/disbursements/{id}`).

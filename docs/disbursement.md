@@ -4,7 +4,7 @@ The Disbursement product enables you to send transfers, deposits, and refunds to
 
 ## Initializing the disbursement client
 
-Access disbursement methods via the `.disbursement` property of a `PyMomoSDK` instance:
+Always manage `PyMomoSDK` with a `with` statement (or call `client.close()`) so HTTP connection pools are closed cleanly:
 
 ```python
 from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
@@ -15,29 +15,33 @@ config = PyMomoSDKConfig(
         subscription_key="your-subscription-key",
         api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
+        callback_url="https://your-app.example.com/webhooks/disbursement",
     ),
 )
 
-client = PyMomoSDK(config)
-disbursement_client = client.disbursement
+with PyMomoSDK(config) as client:
+    balance = client.disbursement.get_balance()
+    print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
 
 ## Transfer
 
-Transfer funds directly to a subscriber:
+Transfer funds directly to a subscriber, with optional per-request `callback_url` override:
 
 ```python
-reference_id = client.disbursement.transfer(
-    amount="100.00",
-    currency="UGX",
-    payee_msisdn="256771234567",
-    external_id="transfer-111",
-    payer_message="Refund payment",
-    payee_note="Refund processed",
-    # Optional canonical UUID v4; omit to auto-generate
-    reference_id="550e8400-e29b-41d4-a716-446655440000",
-)
-print(f"Transfer reference: {reference_id}")
+with PyMomoSDK(config) as client:
+    reference_id = client.disbursement.transfer(
+        amount="100",
+        currency="UGX",
+        payee_msisdn="256771234567",
+        external_id="transfer-111",
+        payer_message="Refund payment",
+        payee_note="Refund processed",
+        # Optional canonical UUID v4; omit to auto-generate
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        callback_url="https://your-app.example.com/webhooks/transfer-111",
+    )
+    print(f"Transfer reference: {reference_id}")
 ```
 
 ## Get transfer status
@@ -45,8 +49,9 @@ print(f"Transfer reference: {reference_id}")
 Check the outcome of a transfer transaction:
 
 ```python
-result = client.disbursement.get_transfer_status(reference_id)
-print(f"Transfer status: {result.status}")
+with PyMomoSDK(config) as client:
+    result = client.disbursement.get_transfer_status(reference_id)
+    print(f"Transfer status: {result.status}")
 ```
 
 ## Deposit
@@ -54,17 +59,18 @@ print(f"Transfer status: {result.status}")
 Deposit funds into a subscriber account (disbursement v2):
 
 ```python
-reference_id = client.disbursement.deposit(
-    amount="500.00",
-    currency="UGX",
-    payee_msisdn="256771234567",
-    external_id="deposit-202",
-    payer_message="Salary deposit",
-    payee_note="June salary",
-    # Optional canonical UUID v4; omit to auto-generate
-    reference_id="550e8400-e29b-41d4-a716-446655440000",
-)
-print(f"Deposit reference: {reference_id}")
+with PyMomoSDK(config) as client:
+    reference_id = client.disbursement.deposit(
+        amount="500",
+        currency="UGX",
+        payee_msisdn="256771234567",
+        external_id="deposit-202",
+        payer_message="Salary deposit",
+        payee_note="June salary",
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        callback_url="https://your-app.example.com/webhooks/deposit-202",
+    )
+    print(f"Deposit reference: {reference_id}")
 ```
 
 ## Get deposit status
@@ -72,8 +78,9 @@ print(f"Deposit reference: {reference_id}")
 Check the outcome of a deposit transaction:
 
 ```python
-result = client.disbursement.get_deposit_status(reference_id)
-print(f"Deposit status: {result.status}")
+with PyMomoSDK(config) as client:
+    result = client.disbursement.get_deposit_status(reference_id)
+    print(f"Deposit status: {result.status}")
 ```
 
 ## Refund
@@ -81,17 +88,18 @@ print(f"Deposit status: {result.status}")
 Issue a refund for a previously settled transaction (disbursement v2):
 
 ```python
-reference_id = client.disbursement.refund(
-    amount="50.00",
-    currency="UGX",
-    reference_id_to_refund="6ba7b810-9dad-41d1-80b4-00c04fd430c8",
-    external_id="refund-303",
-    payer_message="Return refund",
-    payee_note="Product returned",
-    # Optional canonical UUID v4; omit to auto-generate
-    reference_id="550e8400-e29b-41d4-a716-446655440000",
-)
-print(f"Refund reference: {reference_id}")
+with PyMomoSDK(config) as client:
+    reference_id = client.disbursement.refund(
+        amount="50",
+        currency="UGX",
+        reference_id_to_refund="6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+        external_id="refund-303",
+        payer_message="Return refund",
+        payee_note="Product returned",
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        callback_url="https://your-app.example.com/webhooks/refund-303",
+    )
+    print(f"Refund reference: {reference_id}")
 ```
 
 ## Get refund status
@@ -99,26 +107,28 @@ print(f"Refund reference: {reference_id}")
 Check the outcome of a refund transaction:
 
 ```python
-result = client.disbursement.get_refund_status(reference_id)
-print(f"Refund status: {result.status}")
+with PyMomoSDK(config) as client:
+    result = client.disbursement.get_refund_status(reference_id)
+    print(f"Refund status: {result.status}")
 ```
 
-## Get account balance
+## Account balance and account holder queries
 
-Retrieve the disbursement account balance:
-
-```python
-balance = client.disbursement.get_balance()
-print(f"Available balance: {balance.available_balance} {balance.currency}")
-```
-
-## Check if account holder is active
-
-Validate whether a payee account is registered and active:
+`Disbursement` inherits all shared `BaseProduct` balance and account-holder validation methods:
 
 ```python
-is_active = client.disbursement.is_account_holder_active("256771234567")
-print(f"Payee active: {is_active}")
+with PyMomoSDK(config) as client:
+    balance = client.disbursement.get_balance()
+    print(f"Available balance: {balance.available_balance} {balance.currency}")
+
+    ugx_balance = client.disbursement.get_balance_for_currency("UGX")
+    print(f"UGX balance: {ugx_balance.available_balance} {ugx_balance.currency}")
+
+    is_active = client.disbursement.is_account_holder_active("256771234567")
+    print(f"Payee active: {is_active}")
+
+    info = client.disbursement.get_basic_user_info("256771234567")
+    print(f"Payee name: {info.name}")
 ```
 
 Next step: [Explore Remittance](remittance.md).

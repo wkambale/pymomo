@@ -1,13 +1,31 @@
 # Quickstart
 
-This guide walks through installing `py-momo-sdk`, provisioning sandbox credentials, submitting a payment request, and polling for completion.
+This guide walks through installing `py-momo-sdk`, provisioning sandbox credentials, submitting a payment request, and polling for settlement.
 
 ## Installation
 
-Install the package via pip:
+Install the core library from PyPI:
 
 ```bash
 pip install py-momo-sdk
+```
+
+Install optional extras when you need the CLI, Airtel RSA PIN encryption, or web framework integrations:
+
+```bash
+pip install "py-momo-sdk[cli]"      # Typer CLI tool
+pip install "py-momo-sdk[airtel]"   # cryptography for encrypt_airtel_pin()
+pip install "py-momo-sdk[fastapi]"  # FastAPI and Starlette ASGI webhook verifier
+pip install "py-momo-sdk[django]"   # Django webhook verifier
+pip install "py-momo-sdk[all]"      # All optional extras
+```
+
+Inspect the installed library version programmatically via `py_momo_sdk.__version__`:
+
+```python
+import py_momo_sdk
+
+print(py_momo_sdk.__version__)
 ```
 
 ## Setting up sandbox credentials
@@ -31,7 +49,6 @@ with PyMomoSDK(config) as client:
 Configure `PyMomoSDKConfig` with your credentials and request a payment from a mobile subscriber:
 
 ```python
-import time
 from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
 from py_momo_sdk.exceptions import PyMomoSDKError
 
@@ -59,29 +76,31 @@ with PyMomoSDK(config) as client:
         print(f"Failed to initiate payment: {e}")
 ```
 
-## Polling for the transaction status
+## Polling for transaction settlement
 
-Transactions on the MTN MoMo network are processed asynchronously. Poll the returned `reference_id` to obtain the final settlement outcome:
+Transactions on mobile money networks settle asynchronously. Use `wait_for_settlement()` (or `async_wait_for_settlement()` in async services) to poll with bounded exponential backoff and jitter until the transaction leaves the pending state:
 
 ```python
+from py_momo_sdk import (
+    PyMomoSDK,
+    TransactionFailedError,
+    wait_for_settlement,
+)
+
 with PyMomoSDK(config) as client:
     reference_id = "550e8400-e29b-41d4-a716-446655440000"
 
-    for _ in range(10):
-        try:
-            result = client.collection.get_payment_status(reference_id)
-            print(f"Status: {result.status}")
-
-            if result.is_successful():
-                print(f"Transaction completed. Transaction ID: {result.financial_transaction_id}")
-                break
-            elif result.is_failed():
-                print(f"Transaction failed. Reason: {result.reason}")
-                break
-        except PyMomoSDKError as e:
-            print(f"Status check failed: {e}")
-
-        time.sleep(3)
+    try:
+        result = wait_for_settlement(
+            lambda: client.collection.get_payment_status(reference_id),
+            timeout=60.0,
+            interval=2.0,
+            backoff=1.5,
+            raise_on_failed=True,
+        )
+        print(f"Settled: {result.status} (ID: {result.financial_transaction_id})")
+    except TransactionFailedError as e:
+        print(f"Transaction {e.reference_id} failed: {e.reason}")
 ```
 
 ## Handling errors
