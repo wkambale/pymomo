@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.http import HttpClient, parse_model
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_model
 from py_momo_sdk.providers.models import (
     BalanceResult,
     DisbursementRequest,
@@ -17,6 +17,7 @@ from py_momo_sdk.providers.models import (
     ProviderCapabilities,
     validate_operation_kind,
 )
+from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
@@ -59,12 +60,18 @@ class WaveConfig:
     timeout: float = 30.0
     max_retries: int = 0
     retry_backoff: float = 0.5
+    telemetry: TelemetryHook | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.api_key, str) or not self.api_key.strip():
             raise ValueError("api_key must be a non-empty string")
         validate_header_value(self.api_key, field_name="api_key")
         if self.webhook_secret is not None:
+            if (
+                not isinstance(self.webhook_secret, str)
+                or not self.webhook_secret.strip()
+            ):
+                raise ValueError("webhook_secret must not be blank")
             validate_header_value(self.webhook_secret, field_name="webhook_secret")
         if self.success_url is not None:
             validate_callback_url(self.success_url)
@@ -95,16 +102,46 @@ class WaveCheckoutSession(BaseModel):
     payment_status: str = "processing"
     wave_launch_url: str | None = None
     client_reference: str | None = None
+    transaction_id: str | None = None
+    when_completed: str | None = None
+    last_payment_error: dict[str, Any] | str | None = None
 
 
 class WavePayoutResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str
-    amount: str
+    receive_amount: str = Field(
+        validation_alias=AliasChoices("receive_amount", "amount")
+    )
     currency: str
     status: str = "processing"
     client_reference: str | None = None
+    transaction_id: str | None = None
+    when_completed: str | None = None
+    payout_error: dict[str, Any] | str | None = None
+
+    @property
+    def amount(self) -> str:
+        """Backward-compatible alias for ``receive_amount``."""
+        return self.receive_amount
+
+
+def _extract_wave_error(err: dict[str, Any] | str | None) -> str | None:
+    if err is None:
+        return None
+    if isinstance(err, str):
+        return err.strip() or None
+    if isinstance(err, dict):
+        code = err.get("code")
+        msg = err.get("message")
+        if code and msg:
+            return f"{code}: {msg}"
+        if msg:
+            return str(msg)
+        if code:
+            return str(code)
+    return None
 
 
 class WaveBalanceResponse(BaseModel):
@@ -140,7 +177,12 @@ class WaveClient:
     """Synchronous Wave Mobile Money client."""
 
     def __init__(
-        self, config: WaveConfig, *, client: httpx.Client | None = None
+        self,
+        config: WaveConfig,
+        *,
+        client: httpx.Client | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = HttpClient(
@@ -148,7 +190,9 @@ class WaveClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Wave",
         )
 
@@ -160,7 +204,6 @@ class WaveClient:
         if idempotency_key:
             validate_header_value(idempotency_key, field_name="client_reference")
             headers["Idempotency-Key"] = idempotency_key
-            headers["X-Reference-Id"] = idempotency_key
         return headers
 
     def create_checkout_session(
@@ -198,6 +241,7 @@ class WaveClient:
             "/v1/checkout/sessions",
             headers=self._headers(idempotency_key=ref),
             json=payload,
+            idempotent=True,
         )
         return parse_model(response, WaveCheckoutSession)
 
@@ -218,21 +262,37 @@ class WaveClient:
         mobile: str,
         *,
         client_reference: str | None = None,
+        name: str | None = None,
+        payment_reason: str | None = None,
+        national_id: str | None = None,
+        aggregated_merchant_id: str | None = None,
     ) -> WavePayoutResponse:
         """Send a Wave payout to a subscriber mobile number."""
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
         ref = client_reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "receive_amount": validated_amount,
+            "currency": validated_currency,
+            "mobile": f"+{normalise_msisdn(mobile)}",
+            "client_reference": ref,
+        }
+        for key, val in (
+            ("name", name),
+            ("payment_reason", payment_reason),
+            ("national_id", national_id),
+            ("aggregated_merchant_id", aggregated_merchant_id),
+        ):
+            if val is not None:
+                if not isinstance(val, str) or not val.strip():
+                    raise ValueError(f"{key} must not be blank")
+                payload[key] = val.strip()
         response = self._http.request(
             "POST",
             "/v1/payout",
             headers=self._headers(idempotency_key=ref),
-            json={
-                "amount": validated_amount,
-                "currency": validated_currency,
-                "mobile": f"+{normalise_msisdn(mobile)}",
-                "client_reference": ref,
-            },
+            json=payload,
+            idempotent=True,
         )
         return parse_model(response, WavePayoutResponse)
 
@@ -264,6 +324,7 @@ class WaveClient:
             signature_header,
             self._config.webhook_secret or "",
             tolerance_seconds=tolerance_seconds,
+            timestamp_separator="",
         )
 
     def close(self) -> None:
@@ -280,7 +341,12 @@ class AsyncWaveClient:
     """Asynchronous Wave Mobile Money client."""
 
     def __init__(
-        self, config: WaveConfig, *, client: httpx.AsyncClient | None = None
+        self,
+        config: WaveConfig,
+        *,
+        client: httpx.AsyncClient | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        telemetry: TelemetryHook | None = None,
     ) -> None:
         self._config = config
         self._http = AsyncHttpClient(
@@ -288,7 +354,9 @@ class AsyncWaveClient:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
             client=client,
+            telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Wave",
         )
 
@@ -300,7 +368,6 @@ class AsyncWaveClient:
         if idempotency_key:
             validate_header_value(idempotency_key, field_name="client_reference")
             headers["Idempotency-Key"] = idempotency_key
-            headers["X-Reference-Id"] = idempotency_key
         return headers
 
     async def create_checkout_session(
@@ -336,6 +403,7 @@ class AsyncWaveClient:
                 "error_url": resolved_error,
                 "client_reference": ref,
             },
+            idempotent=True,
         )
         return parse_model(response, WaveCheckoutSession)
 
@@ -355,20 +423,36 @@ class AsyncWaveClient:
         mobile: str,
         *,
         client_reference: str | None = None,
+        name: str | None = None,
+        payment_reason: str | None = None,
+        national_id: str | None = None,
+        aggregated_merchant_id: str | None = None,
     ) -> WavePayoutResponse:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
         ref = client_reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "receive_amount": validated_amount,
+            "currency": validated_currency,
+            "mobile": f"+{normalise_msisdn(mobile)}",
+            "client_reference": ref,
+        }
+        for key, val in (
+            ("name", name),
+            ("payment_reason", payment_reason),
+            ("national_id", national_id),
+            ("aggregated_merchant_id", aggregated_merchant_id),
+        ):
+            if val is not None:
+                if not isinstance(val, str) or not val.strip():
+                    raise ValueError(f"{key} must not be blank")
+                payload[key] = val.strip()
         response = await self._http.request(
             "POST",
             "/v1/payout",
             headers=self._headers(idempotency_key=ref),
-            json={
-                "amount": validated_amount,
-                "currency": validated_currency,
-                "mobile": f"+{normalise_msisdn(mobile)}",
-                "client_reference": ref,
-            },
+            json=payload,
+            idempotent=True,
         )
         return parse_model(response, WavePayoutResponse)
 
@@ -398,6 +482,7 @@ class AsyncWaveClient:
             signature_header,
             self._config.webhook_secret or "",
             tolerance_seconds=tolerance_seconds,
+            timestamp_separator="",
         )
 
     async def close(self) -> None:
@@ -430,7 +515,7 @@ class WaveProvider:
             currency=request.currency,
             client_reference=request.reference_id or request.external_id or None,
             success_url=request.callback_url,
-            error_url=self._client._config.error_url or request.callback_url,
+            error_url=None,
         )
         return PaymentResult(
             provider=self.name,
@@ -439,7 +524,9 @@ class WaveProvider:
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
+            provider_transaction_id=session.transaction_id,
             checkout_url=session.wave_launch_url,
+            reason=_extract_wave_error(session.last_payment_error),
             raw=session.model_dump(mode="json"),
         )
 
@@ -449,14 +536,17 @@ class WaveProvider:
             currency=request.currency,
             mobile=request.payee_msisdn,
             client_reference=request.reference_id or request.external_id or None,
+            payment_reason=request.payer_message or None,
         )
         return PaymentResult(
             provider=self.name,
             reference_id=payout.id,
             status=_map_wave_status(payout.status),
-            amount=payout.amount,
+            amount=payout.receive_amount,
             currency=payout.currency,
             external_id=payout.client_reference,
+            provider_transaction_id=payout.transaction_id,
+            reason=_extract_wave_error(payout.payout_error),
             raw=payout.model_dump(mode="json"),
         )
 
@@ -470,9 +560,11 @@ class WaveProvider:
                 provider=self.name,
                 reference_id=payout.id,
                 status=_map_wave_status(payout.status),
-                amount=payout.amount,
+                amount=payout.receive_amount,
                 currency=payout.currency,
                 external_id=payout.client_reference,
+                provider_transaction_id=payout.transaction_id,
+                reason=_extract_wave_error(payout.payout_error),
                 raw=payout.model_dump(mode="json"),
             )
         session = self._client.get_checkout_session(reference_id)
@@ -483,7 +575,9 @@ class WaveProvider:
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
+            provider_transaction_id=session.transaction_id,
             checkout_url=session.wave_launch_url,
+            reason=_extract_wave_error(session.last_payment_error),
             raw=session.model_dump(mode="json"),
         )
 
@@ -518,7 +612,7 @@ class AsyncWaveProvider:
             currency=request.currency,
             client_reference=request.reference_id or request.external_id or None,
             success_url=request.callback_url,
-            error_url=self._client._config.error_url or request.callback_url,
+            error_url=None,
         )
         return PaymentResult(
             provider=self.name,
@@ -527,7 +621,9 @@ class AsyncWaveProvider:
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
+            provider_transaction_id=session.transaction_id,
             checkout_url=session.wave_launch_url,
+            reason=_extract_wave_error(session.last_payment_error),
             raw=session.model_dump(mode="json"),
         )
 
@@ -537,14 +633,17 @@ class AsyncWaveProvider:
             currency=request.currency,
             mobile=request.payee_msisdn,
             client_reference=request.reference_id or request.external_id or None,
+            payment_reason=request.payer_message or None,
         )
         return PaymentResult(
             provider=self.name,
             reference_id=payout.id,
             status=_map_wave_status(payout.status),
-            amount=payout.amount,
+            amount=payout.receive_amount,
             currency=payout.currency,
             external_id=payout.client_reference,
+            provider_transaction_id=payout.transaction_id,
+            reason=_extract_wave_error(payout.payout_error),
             raw=payout.model_dump(mode="json"),
         )
 
@@ -558,9 +657,11 @@ class AsyncWaveProvider:
                 provider=self.name,
                 reference_id=payout.id,
                 status=_map_wave_status(payout.status),
-                amount=payout.amount,
+                amount=payout.receive_amount,
                 currency=payout.currency,
                 external_id=payout.client_reference,
+                provider_transaction_id=payout.transaction_id,
+                reason=_extract_wave_error(payout.payout_error),
                 raw=payout.model_dump(mode="json"),
             )
         session = await self._client.get_checkout_session(reference_id)
@@ -571,7 +672,9 @@ class AsyncWaveProvider:
             amount=session.amount,
             currency=session.currency,
             external_id=session.client_reference,
+            provider_transaction_id=session.transaction_id,
             checkout_url=session.wave_launch_url,
+            reason=_extract_wave_error(session.last_payment_error),
             raw=session.model_dump(mode="json"),
         )
 

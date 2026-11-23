@@ -94,14 +94,25 @@ class WebhookHandler:
         tolerance_seconds: float = 300,
         max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
         algorithm: str = "sha256",
+        timestamp_separator: str = ".",
         now: float | None = None,
     ) -> None:
         """Verify a timestamped HMAC signature header (``t=<unix_ts>,v1=<hex>``).
 
-        Used by gateways such as Wave (``Wave-Signature``) and Stripe to prevent
-        replay attacks by signing ``f"{timestamp}.{payload}"``.
+        Signs ``f"{timestamp}{timestamp_separator}{payload}"``. Use
+        ``timestamp_separator=""`` for gateways such as Wave (``Wave-Signature``)
+        that concatenate the timestamp directly with the raw body, or ``"."``
+        (default) for dot-delimited timestamped signatures.
         """
         import time
+
+        if (
+            not isinstance(timestamp_separator, str)
+            or not timestamp_separator.isascii()
+        ):
+            raise WebhookVerificationError(
+                "Webhook timestamp separator must be an ASCII string"
+            )
 
         if not isinstance(algorithm, str):
             raise WebhookVerificationError(
@@ -192,7 +203,9 @@ class WebhookHandler:
                 "Webhook signature timestamp is in the future"
             )
 
-        signed_payload = f"{timestamp_str}.".encode("ascii") + bytes(payload)
+        signed_payload = f"{timestamp_str}{timestamp_separator}".encode(
+            "ascii"
+        ) + bytes(payload)
         expected_bytes = (
             hmac.new(
                 secret.encode("utf-8"),
