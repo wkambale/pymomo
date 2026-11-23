@@ -465,7 +465,7 @@ def test_provider_config_and_input_validation_hardening() -> None:
             wave_client.create_payout(
                 amount="-10", currency="XOF", mobile="221771234567"
             )
-        with pytest.raises(ValueError, match="(?i)currency"):
+        with pytest.raises(ValueError, match=r"(?i)currency"):
             wave_client.create_payout(
                 amount="10", currency="BAD!", mobile="221771234567"
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hmac
 import importlib
 import logging
@@ -345,10 +346,8 @@ def create_asgi_webhook_verifier(
                 raw_body = bytes(buf)
                 # Cache verified body on Starlette/FastAPI Request so downstream
                 # handlers can safely call await request.body() / request.json()
-                try:
+                with contextlib.suppress(AttributeError, TypeError):
                     request._body = raw_body
-                except (AttributeError, TypeError):
-                    pass
             else:
                 try:
                     raw_body = bytes(await request.body())

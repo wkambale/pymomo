@@ -211,9 +211,9 @@ def test_status_code_mappings_sync(httpx_mock: HTTPXMock) -> None:
         url="https://example.com/test-418",
         status_code=418,
     )
-    with pytest.raises(PyMomoSDKError) as excinfo:
+    with pytest.raises(PyMomoSDKError) as exc418:
         client.request("GET", "/test-418", headers={})
-    assert "Unexpected HTTP status: 418" in str(excinfo.value)
+    assert "Unexpected HTTP status: 418" in str(exc418.value)
 
 
 @pytest.mark.asyncio
@@ -516,7 +516,7 @@ def test_http_retry_safety_401_retry_after_and_attribution_issue_82() -> None:
             headers={"Authorization": "bearer stale_T1"},
             product_name="collection",
             token_cache=tc,
-            token_refresher=lambda: (seen_cached.append(tc.get("collection")), "T3")[1],
+            token_refresher=lambda: seen_cached.append(tc.get("collection")) or "T3",  # type: ignore[func-returns-value]
         )
     assert seen_cached == ["fresh_T2"]
 
@@ -627,6 +627,9 @@ def test_http_retry_safety_401_retry_after_and_attribution_issue_82() -> None:
     class _Hook(TelemetryHook):
         def on_request(self, event: RequestTelemetryEvent) -> None:
             events.append(event)
+
+        def on_webhook(self, event: object) -> None:
+            return None
 
     with (
         httpx.Client(

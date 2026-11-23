@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import ipaddress
 import json
@@ -134,7 +135,7 @@ def _make_server_class(
 
         def process_request(self, request: Any, client_address: Any) -> None:
             if not semaphore.acquire(blocking=False):
-                try:
+                with contextlib.suppress(OSError):
                     request.sendall(
                         b"HTTP/1.1 503 Service Unavailable\r\n"
                         b"Content-Type: application/json\r\n"
@@ -142,8 +143,6 @@ def _make_server_class(
                         b"Connection: close\r\n\r\n"
                         b'{"message":"Server overloaded"}'
                     )
-                except OSError:
-                    pass
                 self.shutdown_request(request)
                 return
             try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 from pytest_httpx import HTTPXMock
@@ -481,7 +482,7 @@ def test_cli_env_vars_security_rejections_carrier_and_mock(
 
 
 def test_cli_issue_90_exits_validation_secret_files_and_commands(
-    httpx_mock: HTTPXMock, tmp_path
+    httpx_mock: HTTPXMock, tmp_path: Path
 ) -> None:
     """Verify Issue #90: typer.Exit(0) preserved, ValidationError sanitized, blank env/opts, secret files, and expanded commands."""
     import hashlib

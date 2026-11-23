@@ -534,9 +534,9 @@ def test_airtel_client_status_code_mappings(httpx_mock: HTTPXMock) -> None:
             url="https://openapiuat.airtel.africa/teapot",
             status_code=418,
         )
-        with pytest.raises(PyMomoSDKError) as excinfo:
+        with pytest.raises(PyMomoSDKError) as exc418:
             client.request("GET", "/teapot")
-        assert "Unexpected Airtel HTTP status: 418" in str(excinfo.value)
+        assert "Unexpected Airtel HTTP status: 418" in str(exc418.value)
 
 
 def test_airtel_transaction_response_status_states() -> None:
@@ -675,6 +675,9 @@ def test_airtel_client_parity_injected_client_telemetry_and_errors(
     class _Recorder(TelemetryHook):
         def on_request(self, event: RequestTelemetryEvent) -> None:
             events.append(event)
+
+        def on_webhook(self, event: object) -> None:
+            return None
 
     mock_airtel_token(httpx_mock)
     httpx_mock.add_response(
@@ -878,7 +881,7 @@ def test_airtel_protocol_auth_and_predicate_fixes_issue_84() -> None:
     ):
         with (
             httpx.Client(
-                base_url=cfg.base_url,
+                base_url=cfg.base_url or "https://openapiuat.airtel.africa",
                 transport=httpx.MockTransport(lambda _r, resp=bad_oauth: resp),
             ) as raw,
             AirtelClient(cfg, client=raw) as client,

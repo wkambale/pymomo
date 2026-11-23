@@ -249,14 +249,23 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
         verify_constant_time_token("", "tok")
     with pytest.raises(WebhookVerificationError):
         verify_constant_time_token("tok", "")
+    import importlib
+
     err_verifier = create_asgi_webhook_verifier(
         secret=secret, signature_header_name="X-Momo-Sig", http_error_status=401
     )
-    with pytest.raises(WebhookVerificationError):
+    try:
+        starlette_exc_mod = importlib.import_module("starlette.exceptions")
+        expected_err_cls: type[Exception] = starlette_exc_mod.HTTPException
+    except ImportError:
+        expected_err_cls = WebhookVerificationError
+    with pytest.raises(expected_err_cls) as err_exc:
         await err_verifier(
             _FakeRequest(body, {"content-length": "99999999"}, "10.0.0.1")
         )
-    with pytest.raises(WebhookVerificationError):
+    if expected_err_cls is not WebhookVerificationError:
+        assert getattr(err_exc.value, "status_code", None) == 401
+    with pytest.raises(expected_err_cls):
         await err_verifier(
             _FakeRequest(body, {"content-length": "invalid"}, "10.0.0.1")
         )
@@ -295,7 +304,7 @@ async def test_framework_webhook_helpers_asgi_and_django() -> None:
 
     assert _is_retryable_request("POST", {"X-Reference-Id": "   "}) is False
     assert _is_retryable_request("POST", {"x-reference-id": "req-1"}) is True
-    mtok = MpesaTokenResponse(access_token="sec-mpesa-tok", expires_in="3599")
+    mtok = MpesaTokenResponse(access_token="sec-mpesa-tok", expires_in="3599")  # type: ignore[arg-type]
     otok = OrangeTokenResponse(access_token="sec-orange-tok", expires_in="3600")  # type: ignore[arg-type]
     assert "sec-mpesa-tok" not in str(mtok)
     assert "sec-orange-tok" not in str(otok)

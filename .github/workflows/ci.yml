@@ -1,13 +1,51 @@
 name: Ci
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[cli,dev]"
+      - run: ruff check .
+      - run: black --check .
+      - run: isort --check .
+      - run: mypy py_momo_sdk/ tests/
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[cli,dev]"
+      - run: bandit -r py_momo_sdk/ -ll
+      - run: pip-audit --skip-editable --desc
+
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -19,23 +57,58 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: black --check .
-      - run: isort --check .
-      - run: mypy py_momo_sdk/
-      - run: bandit -r py_momo_sdk/
+      - run: pip install -e ".[cli,dev]"
       - run: pytest --cov=py_momo_sdk --cov-report=term-missing
+
+  integrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[all,dev]"
+      - run: pytest
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install ".[docs]"
+      - run: mkdocs build --strict
+
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install ".[release]"
       - run: python -m build
-      - name: Check distribution metadata with twine
-        if: matrix.python-version == '3.12'
+      - run: twine check --strict dist/*
+      - name: Smoke-test core wheel without optional CLI extra
         run: |
-          pip install ".[release]"
-          twine check --strict dist/*
-      - name: Smoke-test built wheel in isolated environment
-        run: |
-          python -m venv /tmp/wheel-smoke
-          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          python -m venv /tmp/wheel-core
+          /tmp/wheel-core/bin/pip install dist/*.whl
           cd /tmp
-          /tmp/wheel-smoke/bin/python -c "import py_momo_sdk; assert py_momo_sdk.__version__ != '0.0.0'"
-          /tmp/wheel-smoke/bin/py-momo-sdk --version
+          /tmp/wheel-core/bin/python -c "import py_momo_sdk; assert py_momo_sdk.__version__ != '0.0.0'"
+      - name: Smoke-test wheel with CLI extra
+        run: |
+          python -m venv /tmp/wheel-cli
+          WHEEL=$(ls dist/*.whl | head -n 1)
+          /tmp/wheel-cli/bin/pip install "${WHEEL}[cli]"
+          cd /tmp
+          /tmp/wheel-cli/bin/py-momo-sdk --version
