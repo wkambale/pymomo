@@ -28,6 +28,7 @@ from py_momo_sdk.frameworks import (
     verify_constant_time_token,
     verify_django_webhook_request,
     verify_raw_webhook_request,
+    verify_static_token_webhook_request,
 )
 from py_momo_sdk.mock_server import create_mock_server, start_mock_server_thread
 from py_momo_sdk.models import (
@@ -194,5 +195,6 @@ __all__ = [
     "verify_constant_time_token",
     "verify_django_webhook_request",
     "verify_raw_webhook_request",
+    "verify_static_token_webhook_request",
     "wait_for_settlement",
 ]

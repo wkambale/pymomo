@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import ipaddress
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pydantic import ValidationError
@@ -18,6 +18,9 @@ _SUPPORTED_HMAC_ALGORITHMS = {
 }
 _MAX_SIGNATURE_PARTS = 32
 _MAX_V1_SIGNATURES = 16
+_MAX_SIGNATURE_HEADER_LENGTH = 4096
+_MAX_TIMESTAMP_DIGITS = 15
+_IPV4_MAPPED_V6_NET = ipaddress.IPv6Network("::ffff:0:0/96")
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 60.0
 
 
@@ -95,6 +98,7 @@ class WebhookHandler:
         max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
         algorithm: str = "sha256",
         timestamp_separator: str = ".",
+        replay_check: Callable[[str, bytes, int], bool] | None = None,
         now: float | None = None,
     ) -> None:
         """Verify a timestamped HMAC signature header (``t=<unix_ts>,v1=<hex>``).
@@ -103,6 +107,11 @@ class WebhookHandler:
         ``timestamp_separator=""`` for gateways such as Wave (``Wave-Signature``)
         that concatenate the timestamp directly with the raw body, or ``"."``
         (default) for dot-delimited timestamped signatures.
+
+        Args:
+            replay_check: Optional callback ``(signature_header, payload, timestamp) -> bool``
+                invoked after cryptographic signature verification. Returning
+                ``False`` rejects the delivery as a replay.
         """
         import time
 
@@ -132,6 +141,10 @@ class WebhookHandler:
             )
         if not isinstance(signature_header, str) or not signature_header.strip():
             raise WebhookVerificationError("Webhook signature header must not be empty")
+        if len(signature_header) > _MAX_SIGNATURE_HEADER_LENGTH:
+            raise WebhookVerificationError(
+                "Webhook signature header exceeds maximum allowed length"
+            )
         if (
             type(tolerance_seconds) is bool
             or not isinstance(tolerance_seconds, (int, float))
@@ -164,9 +177,17 @@ class WebhookHandler:
         timestamp_str: str | None = None
         signatures: list[str] = []
         for part in parts:
-            key, sep, val = part.strip().partition("=")
-            if not sep:
-                continue
+            stripped_part = part.strip()
+            if not stripped_part:
+                raise WebhookVerificationError(
+                    "Malformed timestamped webhook signature"
+                )
+            key, sep, val = stripped_part.partition("=")
+            if not sep or not key.strip():
+                raise WebhookVerificationError(
+                    "Malformed timestamped webhook signature"
+                )
+            key = key.strip()
             if key == "t":
                 if timestamp_str is not None:
                     raise WebhookVerificationError(
@@ -179,14 +200,19 @@ class WebhookHandler:
                         "Too many signature values in webhook header"
                     )
                 sig_val = val.strip().lower()
-                if sig_val:
-                    signatures.append(sig_val)
+                if not sig_val:
+                    raise WebhookVerificationError(
+                        "Malformed timestamped webhook signature"
+                    )
+                signatures.append(sig_val)
 
         if timestamp_str is None or not signatures:
             raise WebhookVerificationError("Malformed timestamped webhook signature")
 
         if (
-            not timestamp_str.isascii()
+            not timestamp_str
+            or len(timestamp_str) > _MAX_TIMESTAMP_DIGITS
+            or not timestamp_str.isascii()
             or not timestamp_str.isdigit()
             or (len(timestamp_str) > 1 and timestamp_str.startswith("0"))
         ):
@@ -203,9 +229,10 @@ class WebhookHandler:
                 "Webhook signature timestamp is in the future"
             )
 
-        signed_payload = f"{timestamp_str}{timestamp_separator}".encode(
-            "ascii"
-        ) + bytes(payload)
+        raw_bytes = bytes(payload)
+        signed_payload = (
+            f"{timestamp_str}{timestamp_separator}".encode("ascii") + raw_bytes
+        )
         expected_bytes = (
             hmac.new(
                 secret.encode("utf-8"),
@@ -216,11 +243,17 @@ class WebhookHandler:
             .encode("ascii")
         )
 
-        if not any(
-            hmac.compare_digest(expected_bytes, sig.encode("utf-8"))
-            for sig in signatures
-        ):
+        matched = False
+        for sig in signatures:
+            if hmac.compare_digest(expected_bytes, sig.encode("utf-8")):
+                matched = True
+        if not matched:
             raise WebhookVerificationError("Webhook signature verification failed")
+
+        if replay_check is not None and not replay_check(
+            signature_header, raw_bytes, ts
+        ):
+            raise WebhookVerificationError("Webhook signature replay detected")
 
     @staticmethod
     def verify_source_ip(
@@ -230,21 +263,14 @@ class WebhookHandler:
         """Verify that a webhook request originates from an allowed IP or CIDR range.
 
         Fails closed when ``allowed_networks`` is empty or any IP/CIDR entry is
-        invalid.
-
-        Args:
-            remote_ip: Source IPv4 or IPv6 address of the incoming request.
-            allowed_networks: Sequence of allowed IP addresses or CIDR ranges.
-
-        Raises:
-            WebhookVerificationError: If the allowlist is empty, an IP/CIDR is
-                malformed, or ``remote_ip`` is not contained in any allowed network.
+        invalid. Rejects IPv6 zone identifiers (``%...``) and normalizes
+        IPv4-mapped IPv6 addresses and CIDRs (``::ffff:0:0/96``) to IPv4.
         """
         if isinstance(allowed_networks, (str, bytes)) or not allowed_networks:
             raise WebhookVerificationError(
                 "Allowed webhook IP networks list must not be empty"
             )
-        if not isinstance(remote_ip, str):
+        if not isinstance(remote_ip, str) or "%" in remote_ip:
             raise WebhookVerificationError("Invalid webhook source IP address")
         try:
             addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(
@@ -258,16 +284,25 @@ class WebhookHandler:
 
         parsed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
         for entry in allowed_networks:
-            if not isinstance(entry, str) or not entry.strip():
+            if not isinstance(entry, str) or not entry.strip() or "%" in entry:
                 raise WebhookVerificationError(
                     "Invalid CIDR entry in allowed webhook networks"
                 )
             try:
-                parsed_networks.append(ipaddress.ip_network(entry.strip(), strict=True))
+                net = ipaddress.ip_network(entry.strip(), strict=True)
             except ValueError as exc:
                 raise WebhookVerificationError(
                     "Invalid CIDR entry in allowed webhook networks"
                 ) from exc
+            if isinstance(net, ipaddress.IPv6Network) and net.subnet_of(
+                _IPV4_MAPPED_V6_NET
+            ):
+                v4_addr = net.network_address.ipv4_mapped
+                if v4_addr is not None:
+                    net = ipaddress.IPv4Network(
+                        (v4_addr, net.prefixlen - 96), strict=True
+                    )
+            parsed_networks.append(net)
 
         for network in parsed_networks:
             if addr.version == network.version and addr in network:
@@ -276,32 +311,47 @@ class WebhookHandler:
         raise WebhookVerificationError("Webhook source IP is not in allowed networks")
 
     @staticmethod
-    def parse_transaction_notification(body: dict[str, Any]) -> TransactionResult:
+    def parse_transaction_notification(
+        body: dict[str, Any], *, require_identifier: bool = False
+    ) -> TransactionResult:
         """Parse and validate a webhook callback body into a TransactionResult model.
 
         Args:
             body: Decoded JSON dictionary from the webhook request body.
+            require_identifier: When ``True``, require at least one transaction
+                identifier (``financial_transaction_id`` or ``external_id``).
 
         Returns:
             A validated ``TransactionResult`` instance.
 
         Raises:
-            WebhookVerificationError: If ``body`` is not a dictionary or fails
-                model validation.
+            WebhookVerificationError: If ``body`` is not a dictionary, fails
+                model validation, or lacks a required transaction identifier.
         """
         if not isinstance(body, dict):
             raise WebhookVerificationError(
                 "Webhook notification body must be a JSON object"
             )
         try:
-            return TransactionResult.model_validate(body)
+            result = TransactionResult.model_validate(body)
         except ValidationError as exc:
             raise WebhookVerificationError(
                 "Invalid webhook transaction notification payload"
             ) from exc
+        if require_identifier and not (
+            result.financial_transaction_id or result.external_id
+        ):
+            raise WebhookVerificationError(
+                "Webhook transaction notification is missing a transaction identifier"
+            )
+        return result
 
     @staticmethod
-    def is_successful(body: dict[str, Any]) -> bool:
+    def is_successful(
+        body: dict[str, Any], *, require_identifier: bool = False
+    ) -> bool:
         """Check if a webhook callback body indicates a successful transaction."""
-        result = WebhookHandler.parse_transaction_notification(body)
+        result = WebhookHandler.parse_transaction_notification(
+            body, require_identifier=require_identifier
+        )
         return result.is_successful()
