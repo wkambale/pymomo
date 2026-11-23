@@ -123,7 +123,9 @@ class AirtelConfig:
                 else AIRTEL_PRODUCTION_BASE_URL
             )
         else:
-            validate_base_url(self.base_url)
+            validate_base_url(
+                self.base_url, allow_localhost=(self.environment == "sandbox")
+            )
 
     def __repr__(self) -> str:
         return (

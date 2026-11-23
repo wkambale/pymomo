@@ -4,7 +4,7 @@ import asyncio
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
-from py_momo_sdk.config import ProductConfig, PyMomoSDKConfig
+from py_momo_sdk.config import SANDBOX, ProductConfig, PyMomoSDKConfig
 from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
 from py_momo_sdk.http import parse_json_dict, parse_model
 from py_momo_sdk.models import (
@@ -101,8 +101,9 @@ class AsyncBaseProduct:
         if reference_id:
             headers["X-Reference-Id"] = reference_id
         if include_callback:
+            allow_localhost = self._config.environment == SANDBOX
             resolved_cb = (
-                validate_callback_url(callback_url)
+                validate_callback_url(callback_url, allow_localhost=allow_localhost)
                 if callback_url is not None
                 else self._product_config.callback_url
             )

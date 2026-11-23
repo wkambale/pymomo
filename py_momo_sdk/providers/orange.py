@@ -77,6 +77,8 @@ class OrangeMoneyConfig:
             if not isinstance(fval, str) or not fval.strip():
                 raise ValueError(f"{fname} must be a non-empty string")
             validate_header_value(fval, field_name=fname)
+        if ":" in self.client_id:
+            raise ValueError("client_id must not contain ':'")
         if self.return_url is not None:
             validate_callback_url(self.return_url)
         if self.cancel_url is not None:

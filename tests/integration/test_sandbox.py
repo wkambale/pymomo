@@ -263,3 +263,68 @@ async def test_async_sandbox_provisioner_security_guards() -> None:
     async with AsyncHttpClient("https://proxy.momoapi.mtn.com", 30.0) as prod_ahttp:
         with pytest.raises(PyMomoSDKError, match="sandbox environment"):
             AsyncSandboxProvisioner("sub-key", prod_ahttp)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_production_guard_bypasses_and_mixed_init_issue_80() -> None:
+    """Verify all 3 sandbox production-guard bypasses and mixed (cfg, http=...) init (#80)."""
+    import httpx
+
+    from py_momo_sdk import AsyncSandboxProvisioner, PyMomoSDK, SandboxProvisioner
+    from py_momo_sdk._async.http import AsyncHttpClient
+    from py_momo_sdk.config import (
+        PRODUCTION_BASE_URL,
+        SANDBOX,
+        ProductConfig,
+        PyMomoSDKConfig,
+    )
+    from py_momo_sdk.exceptions import PyMomoSDKError
+    from py_momo_sdk.http import HttpClient
+
+    # Bypass 1: environment=SANDBOX + base_url=PRODUCTION_BASE_URL
+    cfg_prod_url = PyMomoSDKConfig(
+        environment=SANDBOX,
+        base_url=PRODUCTION_BASE_URL,
+        collection=ProductConfig("sub", "user", "key"),
+    )
+    with (
+        PyMomoSDK(cfg_prod_url) as sdk,
+        pytest.raises(PyMomoSDKError, match="sandbox environment"),
+    ):
+        _ = sdk.sandbox
+
+    # Bypass 2: injected httpx.Client() with empty base_url targeting production
+    empty_sync = httpx.Client()
+    try:
+        hc_empty = HttpClient(PRODUCTION_BASE_URL, 30.0, client=empty_sync)
+        with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+            SandboxProvisioner("sub-key", hc_empty)
+    finally:
+        empty_sync.close()
+
+    empty_async = httpx.AsyncClient()
+    try:
+        ahc_empty = AsyncHttpClient(PRODUCTION_BASE_URL, 30.0, client=empty_async)
+        with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+            AsyncSandboxProvisioner("sub-key", ahc_empty)
+    finally:
+        await empty_async.aclose()
+
+    # Bypass 3: production URL with path suffix
+    with (
+        HttpClient(f"{PRODUCTION_BASE_URL}/v1", 30.0) as hc_suffix,
+        pytest.raises(PyMomoSDKError, match="sandbox environment"),
+    ):
+        SandboxProvisioner("sub-key", hc_suffix)
+
+    # Mixed positional config + keyword http=... works for sync & async
+    valid_cfg = PyMomoSDKConfig(
+        environment=SANDBOX,
+        collection=ProductConfig("sub", "user", "key"),
+    )
+    with HttpClient("https://sandbox.momodeveloper.mtn.com", 30.0) as hc_ok:
+        sp = SandboxProvisioner(valid_cfg, http=hc_ok)
+        assert sp._http is hc_ok
+    async with AsyncHttpClient("https://sandbox.momodeveloper.mtn.com", 30.0) as ahc_ok:
+        asp = AsyncSandboxProvisioner(valid_cfg, http=ahc_ok)
+        assert asp._http is ahc_ok

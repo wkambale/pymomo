@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -15,7 +16,9 @@ if TYPE_CHECKING:
     from py_momo_sdk.models import AccountHolderIdType
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
+_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_ENCODED_TRAVERSAL_RE = re.compile(r"%(?:2e|2f|5c|25(?:2e|2f|5c))", re.IGNORECASE)
+_CGNAT_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 _CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 _COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
 _AMOUNT_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
@@ -31,21 +34,126 @@ _FORBIDDEN_SEGMENT_CHARS = frozenset({"/", "\\", "?", "#"})
 _VALID_ACCOUNT_HOLDER_ID_TYPES = frozenset({"msisdn", "email", "party_code"})
 
 
-def validate_base_url(base_url: str) -> str:
-    """Validate that a base URL uses HTTPS (except localhost/127.0.0.1).
+def _normalize_port(scheme: str, port: int | None) -> int | None:
+    """Normalize explicit default ports (443 for https, 80 for http) to None."""
+    if scheme == "https" and port == 443:
+        return None
+    if scheme == "http" and port == 80:
+        return None
+    return port
+
+
+def _has_malformed_authority(netloc: str) -> bool:
+    """Detect malformed URL authorities (semicolons or empty trailing port colons)."""
+    if ";" in netloc:
+        return True
+    host_port = netloc.rsplit("@", 1)[-1]
+    if host_port.startswith("["):
+        end = host_port.find("]")
+        if end == -1:
+            return True
+        remainder = host_port[end + 1 :]
+        return bool(
+            remainder and (not remainder.startswith(":") or not remainder[1:].isdigit())
+        )
+    if ":" in host_port:
+        _, port_part = host_port.rsplit(":", 1)
+        if not port_part or not port_part.isdigit():
+            return True
+    return False
+
+
+def _is_numeric_obfuscated_ip(host: str) -> bool:
+    """Return True if host is an integer, hex, octal, or short-form IPv4 literal."""
+    if not host or ":" in host:
+        return False
+    labels = host.split(".")
+    if len(labels) > 4:
+        return False
+    for label in labels:
+        if not label:
+            return True
+        if label.startswith(("0x", "0X")):
+            if len(label) <= 2 or not all(
+                c in "0123456789abcdefABCDEF" for c in label[2:]
+            ):
+                return False
+        elif label.isascii() and label.isdigit():
+            continue
+        else:
+            return False
+    return True
+
+
+def _is_disallowed_ip_host(host: str, *, allow_localhost: bool) -> bool:
+    """Return True if host resolves to a disallowed IP literal (private/metadata/obfuscated)."""
+    normalized = host.strip().lower().rstrip(".")
+    if not normalized:
+        return True
+    if normalized == "localhost":
+        return not allow_localhost
+    try:
+        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(
+            normalized
+        )
+    except ValueError:
+        return _is_numeric_obfuscated_ip(normalized)
+
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+
+    if addr.is_loopback:
+        return not allow_localhost
+    if isinstance(addr, ipaddress.IPv4Address) and addr in _CGNAT_NETWORK:
+        return True
+    return bool(
+        addr.is_private
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
+def validate_matching_origin(configured_url: str, injected_url: str) -> None:
+    """Verify that an injected HTTP client's base_url matches the configured origin."""
+    cfg_split = urlsplit(configured_url)
+    inj_split = urlsplit(injected_url)
+    cfg_scheme = cfg_split.scheme.lower()
+    inj_scheme = inj_split.scheme.lower()
+    cfg_origin = (
+        cfg_scheme,
+        (cfg_split.hostname or "").lower(),
+        _normalize_port(cfg_scheme, cfg_split.port),
+    )
+    inj_origin = (
+        inj_scheme,
+        (inj_split.hostname or "").lower(),
+        _normalize_port(inj_scheme, inj_split.port),
+    )
+    if cfg_origin != inj_origin:
+        raise PyMomoSDKError(
+            "Injected HTTP client base_url must match configured base_url"
+        )
+
+
+def validate_base_url(base_url: str, *, allow_localhost: bool = True) -> str:
+    """Validate that a base URL uses HTTPS (or localhost/127.0.0.1/::1 when permitted).
 
     Rejects parser-differential tricks such as userinfo credentials, leading or
     trailing whitespace, backslashes, control characters, query strings,
-    fragments, and non-HTTP(S) schemes.
+    fragments, private/link-local/metadata IP literals, and non-HTTP(S) schemes.
 
     Args:
         base_url: The base URL configured for an HTTP client.
+        allow_localhost: Whether loopback hosts (``localhost``, ``127.0.0.1``, ``::1``)
+            and plaintext HTTP on loopback are permitted. Set ``False`` in production.
 
     Returns:
         The validated base URL string.
 
     Raises:
-        PyMomoSDKError: If the base URL is invalid or does not use HTTPS.
+        PyMomoSDKError: If the base URL is invalid or unsafe.
     """
     if (
         not isinstance(base_url, str)
@@ -53,6 +161,7 @@ def validate_base_url(base_url: str) -> str:
         or base_url != base_url.strip()
         or any(ch.isspace() for ch in base_url)
         or _CONTROL_CHAR_RE.search(base_url)
+        or not base_url.isascii()
         or "\\" in base_url
     ):
         raise PyMomoSDKError("Base URL must use HTTPS")
@@ -67,6 +176,9 @@ def validate_base_url(base_url: str) -> str:
     except (ValueError, httpx.InvalidURL) as exc:
         raise PyMomoSDKError("Base URL must use HTTPS") from exc
 
+    if _has_malformed_authority(split.netloc):
+        raise PyMomoSDKError("Base URL must use HTTPS")
+
     scheme = split.scheme.lower()
     host = (split.hostname or "").lower()
     httpx_scheme = httpx_url.scheme.lower()
@@ -76,12 +188,19 @@ def validate_base_url(base_url: str) -> str:
         not host
         or scheme != httpx_scheme
         or host != httpx_host
-        or split_port != httpx_url.port
+        or _normalize_port(scheme, split_port)
+        != _normalize_port(httpx_scheme, httpx_url.port)
     ):
         raise PyMomoSDKError("Base URL must use HTTPS")
 
-    if not (scheme == "https" or (scheme == "http" and host in _LOCALHOST_HOSTS)):
+    if not (
+        scheme == "https"
+        or (allow_localhost and scheme == "http" and host in _LOCALHOST_HOSTS)
+    ):
         raise PyMomoSDKError("Base URL must use HTTPS")
+
+    if _is_disallowed_ip_host(host, allow_localhost=allow_localhost):
+        raise PyMomoSDKError("Base URL host is not allowed")
 
     if (
         split.username is not None
@@ -92,39 +211,47 @@ def validate_base_url(base_url: str) -> str:
     ):
         raise PyMomoSDKError("Base URL must not contain embedded credentials")
 
-    if split.query or split.fragment:
-        raise PyMomoSDKError("Base URL must not contain a query string or fragment")
-
     return base_url
 
 
-def validate_request_path(path: str) -> str:
+def validate_request_path(path: str, *, allow_query: bool = True) -> str:
     """Validate that a request path is strictly relative to the client base URL.
 
-    Prevents absolute URLs or protocol-relative paths from overriding the
-    configured ``base_url`` in ``httpx``.
+    Prevents absolute URLs, protocol-relative paths, or raw/percent-encoded
+    dot-segment traversal from overriding the configured ``base_url`` or target
+    endpoint in ``httpx``.
 
     Args:
         path: The relative request path.
+        allow_query: Whether a query string (``?key=val``) is permitted.
 
     Returns:
         The validated relative request path.
 
     Raises:
         PyMomoSDKError: If the path is empty, absolute, protocol-relative, or
-            contains control characters, whitespace, dot-segments, query/fragment,
-            or backslashes.
+            contains control characters, whitespace, raw/encoded traversal
+            segments, fragments, disallowed query strings, or backslashes.
     """
-    raw_path = path.split("?", 1)[0] if isinstance(path, str) else ""
+    if not isinstance(path, str):
+        raise PyMomoSDKError("Request path must be a relative path starting with '/'")
+    if not allow_query and "?" in path:
+        raise PyMomoSDKError("Request path must not contain a query string")
+
+    raw_path = path.split("?", 1)[0]
+    decoded_path = unquote(raw_path)
     if (
-        not isinstance(path, str)
-        or not path.startswith("/")
+        not path.startswith("/")
         or path.startswith("//")
         or "\\" in path
+        or "\\" in decoded_path
         or "#" in path
+        or not path.isascii()
         or any(ch.isspace() for ch in path)
         or _CONTROL_CHAR_RE.search(path)
+        or _ENCODED_TRAVERSAL_RE.search(raw_path)
         or any(seg in {".", ".."} for seg in raw_path.split("/"))
+        or any(seg in {".", ".."} for seg in decoded_path.split("/"))
     ):
         raise PyMomoSDKError("Request path must be a relative path starting with '/'")
 
@@ -261,10 +388,16 @@ def validate_country_code(country: str) -> str:
     return country.upper()
 
 
-def validate_header_value(value: str, *, field_name: str) -> str:
-    """Validate that an HTTP header value contains no ASCII control characters."""
+def validate_header_value(
+    value: str, *, field_name: str, allow_whitespace: bool = True
+) -> str:
+    """Validate that an HTTP header value contains only safe printable ASCII."""
     if not isinstance(value, str) or _CONTROL_CHAR_RE.search(value):
         raise ValueError(f"{field_name} must not contain control characters")
+    if not value.isascii():
+        raise ValueError(f"{field_name} must contain only printable ASCII characters")
+    if not allow_whitespace and any(ch.isspace() for ch in value):
+        raise ValueError(f"{field_name} must not contain whitespace")
     return value
 
 
@@ -294,12 +427,13 @@ def validate_retry_backoff(retry_backoff: float) -> float:
     return backoff_float
 
 
-def validate_callback_url(callback_url: str) -> str:
-    """Validate that a callback URL uses HTTPS (or localhost/127.0.0.1 for testing).
+def validate_callback_url(callback_url: str, *, allow_localhost: bool = True) -> str:
+    """Validate that a callback URL uses HTTPS (or localhost when permitted).
 
     Raises:
         ValueError: If the callback URL is not a valid HTTPS/localhost URL or
-            contains embedded credentials, fragments, whitespace, or control characters.
+            contains embedded credentials, fragments, private/metadata IPs,
+            whitespace, or control characters.
     """
     if (
         not isinstance(callback_url, str)
@@ -307,6 +441,7 @@ def validate_callback_url(callback_url: str) -> str:
         or callback_url != callback_url.strip()
         or any(ch.isspace() for ch in callback_url)
         or _CONTROL_CHAR_RE.search(callback_url)
+        or not callback_url.isascii()
         or "\\" in callback_url
     ):
         raise ValueError("Callback URL must use HTTPS")
@@ -319,16 +454,26 @@ def validate_callback_url(callback_url: str) -> str:
     except (ValueError, httpx.InvalidURL) as exc:
         raise ValueError("Callback URL must use HTTPS") from exc
 
+    if _has_malformed_authority(split.netloc):
+        raise ValueError("Callback URL must use HTTPS")
+
     scheme = split.scheme.lower()
     host = (split.hostname or "").lower()
+    httpx_scheme = httpx_url.scheme.lower()
     if (
         not host
-        or scheme != httpx_url.scheme.lower()
+        or scheme != httpx_scheme
         or host != httpx_url.host.lower()
-        or split_port != httpx_url.port
-        or not (scheme == "https" or (scheme == "http" and host in _LOCALHOST_HOSTS))
+        or _normalize_port(scheme, split_port)
+        != _normalize_port(httpx_scheme, httpx_url.port)
+        or not (
+            scheme == "https"
+            or (allow_localhost and scheme == "http" and host in _LOCALHOST_HOSTS)
+        )
     ):
         raise ValueError("Callback URL must use HTTPS")
+    if _is_disallowed_ip_host(host, allow_localhost=allow_localhost):
+        raise ValueError("Callback URL host is not allowed")
     if (
         split.username is not None
         or split.password is not None
@@ -337,29 +482,31 @@ def validate_callback_url(callback_url: str) -> str:
         or httpx_url.password
     ):
         raise ValueError("Callback URL must not contain embedded credentials")
-    if split.fragment:
-        raise ValueError("Callback URL must not contain a fragment")
     return callback_url
 
 
-def validate_callback_host(callback_host: str) -> str:
+def validate_callback_host(callback_host: str, *, allow_localhost: bool = True) -> str:
     """Validate a sandbox provider callback host (bare hostname or HTTPS URL).
 
     Raises:
         ValueError: If ``callback_host`` contains control characters, uses
-            non-HTTPS external URLs, or is not a valid host/URL.
+            non-HTTPS external URLs, private/metadata IP literals, or is not a
+            valid host/URL.
     """
     if (
         not isinstance(callback_host, str)
         or not callback_host
         or callback_host != callback_host.strip()
         or _CONTROL_CHAR_RE.search(callback_host)
+        or not callback_host.isascii()
     ):
         raise ValueError("Callback host must be a valid hostname or HTTPS URL")
     if "://" in callback_host:
-        return validate_callback_url(callback_host)
-    if not _BARE_HOST_RE.fullmatch(callback_host):
+        return validate_callback_url(callback_host, allow_localhost=allow_localhost)
+    if len(callback_host) > 253 or not _BARE_HOST_RE.fullmatch(callback_host):
         raise ValueError("Callback host must be a valid hostname or HTTPS URL")
+    if _is_disallowed_ip_host(callback_host, allow_localhost=allow_localhost):
+        raise ValueError("Callback host is not allowed")
     return callback_host
 
 

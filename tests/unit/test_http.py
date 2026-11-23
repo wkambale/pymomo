@@ -102,7 +102,7 @@ def test_clients_reject_missing_base_url_without_assert() -> None:
     from py_momo_sdk.config import PyMomoSDKConfig
 
     config = PyMomoSDKConfig()
-    config.base_url = ""
+    object.__setattr__(config, "base_url", "")
     with pytest.raises(PyMomoSDKError, match="Base URL must use HTTPS"):
         PyMomoSDK(config)
     with pytest.raises(PyMomoSDKError, match="Base URL must use HTTPS"):

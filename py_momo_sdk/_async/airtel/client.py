@@ -22,7 +22,11 @@ from py_momo_sdk.http import (
     _sanitize_telemetry_path,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
-from py_momo_sdk.utils import validate_base_url, validate_request_path
+from py_momo_sdk.utils import (
+    validate_base_url,
+    validate_matching_origin,
+    validate_request_path,
+)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -63,6 +67,7 @@ class AsyncAirtelClient:
             injected_base = str(client.base_url)
             if injected_base:
                 validate_base_url(injected_base)
+                validate_matching_origin(base_url, injected_base)
             self._http = client
         else:
             self._http = httpx.AsyncClient(
