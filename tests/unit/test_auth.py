@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from py_momo_sdk.auth import TokenCache
 
 
@@ -19,17 +21,47 @@ def test_token_cache_get_set_invalidate() -> None:
     assert cache.get("collection") is None
 
 
-def test_token_cache_safety_margin_expiry() -> None:
-    """Verify that token expires prematurely based on the 30 seconds safety margin."""
+def test_token_cache_safety_margin_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify proportional safety margin for short TTLs, 30s cap for long TTLs, and overflow/namespace guards (#82)."""
+    import py_momo_sdk.auth as auth_mod
+
+    now = [1000.0]
+    monkeypatch.setattr(auth_mod.time, "monotonic", lambda: now[0])
+
     cache = TokenCache()
-
-    # If token expires in 31 seconds, the cache safety margin of 30 seconds leaves 1 second of validity
-    cache.set("collection", "token-2", 31)
-    assert cache.get("collection") == "token-2"
-
-    # If token expires in 29 seconds, it is immediately treated as expired
-    cache.set("collection", "token-3", 29)
+    # Short TTL (30s): 20% margin -> valid for 24s (not evicted immediately!)
+    cache.set("collection", "short-tok", 30)
+    assert cache.get("collection") == "short-tok"
+    now[0] = 1023.9
+    assert cache.get("collection") == "short-tok"
+    now[0] = 1024.0
     assert cache.get("collection") is None
+
+    # Long TTL (3600s): capped at 30s safety margin -> expires at 3570s
+    now[0] = 2000.0
+    cache.set("collection", "long-tok", 3600)
+    now[0] = 5569.9
+    assert cache.get("collection") == "long-tok"
+    now[0] = 5570.0
+    assert cache.get("collection") is None
+
+    # Huge expires_in does not raise OverflowError
+    cache.set("collection", "huge-tok", 10**400)
+    assert cache.get("collection") == "huge-tok"
+
+    # Namespace isolation prevents cross-tenant/cross-environment token reuse
+    cache.set("collection", "sandbox-tok", 3600, namespace="sandbox:https://sb")
+    cache.set("collection", "prod-tok", 3600, namespace="prod:https://pr")
+    assert cache.get("collection", namespace="sandbox:https://sb") == "sandbox-tok"
+    assert cache.get("collection", namespace="prod:https://pr") == "prod-tok"
+
+    # Invalid inputs rejected
+    with pytest.raises(ValueError, match="access_token"):
+        cache.set("collection", "   ", 60)
+    with pytest.raises(ValueError, match="expires_in"):
+        cache.set("collection", "tok", 0)
+    with pytest.raises(ValueError, match="expires_in"):
+        cache.set("collection", "tok", True)  # type: ignore[arg-type]
 
 
 def test_token_cache_and_airtel_auth_redaction() -> None:

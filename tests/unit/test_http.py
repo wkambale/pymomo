@@ -126,7 +126,7 @@ def test_http_exceptions_handling_sync() -> None:
 
     # Timeout
     with patch.object(
-        client._client, "request", side_effect=httpx.TimeoutException("timeout")
+        client._client, "send", side_effect=httpx.TimeoutException("timeout")
     ):
         with pytest.raises(PyMomoSDKError) as excinfo:
             client.request("GET", "/test", headers={})
@@ -134,7 +134,7 @@ def test_http_exceptions_handling_sync() -> None:
 
     # Connection Error
     with patch.object(
-        client._client, "request", side_effect=httpx.RequestError("connect")
+        client._client, "send", side_effect=httpx.RequestError("connect")
     ):
         with pytest.raises(PyMomoSDKError) as excinfo:
             client.request("GET", "/test", headers={})
@@ -148,7 +148,7 @@ async def test_http_exceptions_handling_async() -> None:
 
     # Timeout
     with patch.object(
-        client._client, "request", side_effect=httpx.TimeoutException("timeout")
+        client._client, "send", side_effect=httpx.TimeoutException("timeout")
     ):
         with pytest.raises(PyMomoSDKError) as excinfo:
             await client.request("GET", "/test", headers={})
@@ -156,7 +156,7 @@ async def test_http_exceptions_handling_async() -> None:
 
     # Connection Error
     with patch.object(
-        client._client, "request", side_effect=httpx.RequestError("connect")
+        client._client, "send", side_effect=httpx.RequestError("connect")
     ):
         with pytest.raises(PyMomoSDKError) as excinfo:
             await client.request("GET", "/test", headers={})
@@ -273,7 +273,7 @@ def test_http_exceptions_do_not_chain_raw_httpx_request_headers() -> None:
     )
     with patch.object(
         client._client,
-        "request",
+        "send",
         side_effect=httpx.ReadTimeout("timed out", request=req),
     ):
         with pytest.raises(PyMomoSDKError) as excinfo:
@@ -439,7 +439,7 @@ async def test_async_http_no_cause_chain_and_non_idempotent_post_no_retry(
         )
         with patch.object(
             client._client,
-            "request",
+            "send",
             side_effect=httpx.ReadTimeout("timed out", request=req),
         ):
             with pytest.raises(PyMomoSDKError) as excinfo:
@@ -455,3 +455,195 @@ async def test_async_http_no_cause_chain_and_non_idempotent_post_no_retry(
         with pytest.raises(PyMomoSDKServerError):
             await client.request("POST", "/write", headers={"X-Reference-Id": "   "})
         assert len(httpx_mock.get_requests()) == 1
+
+
+def test_http_retry_safety_401_retry_after_and_attribution_issue_82() -> None:
+    """Verify Retry-After clamping/HTTP-date, 401 error preservation, budget cap, lowercase bearer, telemetry, and MTN write safety (#82)."""
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from py_momo_sdk import PyMomoSDK
+    from py_momo_sdk.auth import TokenCache
+    from py_momo_sdk.config import SANDBOX, ProductConfig, PyMomoSDKConfig
+    from py_momo_sdk.exceptions import AuthenticationError
+    from py_momo_sdk.http import _compute_retry_delay, _raise_for_status
+    from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
+
+    # 1. Retry-After > 30s clamped to 30.0 (not discarded), 0 -> 0.0, HTTP-date parsed
+    assert _compute_retry_delay(
+        0, 0.5, httpx.Response(429, headers={"Retry-After": "60"})
+    ) == pytest.approx(30.0)
+    assert (
+        _compute_retry_delay(0, 0.5, httpx.Response(429, headers={"Retry-After": "0"}))
+        == 0.0
+    )
+    future_http_date = format_datetime(
+        datetime.now(timezone.utc) + timedelta(seconds=10), usegmt=True
+    )
+    date_delay = _compute_retry_delay(
+        0, 0.5, httpx.Response(429, headers={"Retry-After": future_http_date})
+    )
+    assert 5.0 <= date_delay <= 12.0
+
+    # 2. Provider-neutral error attribution & Daraja errorMessage / ConflictError.reference_id
+    with pytest.raises(PyMomoSDKServerError, match="Wave server error: 502"):
+        _raise_for_status(httpx.Response(502), provider_name="Wave")
+    with pytest.raises(BadRequestError, match="Invalid Amount"):
+        _raise_for_status(
+            httpx.Response(
+                400, json={"errorCode": "400.002", "errorMessage": "Invalid Amount"}
+            )
+        )
+    with pytest.raises(ConflictError) as exc_409:
+        _raise_for_status(httpx.Response(409), reference_id="ref-dup-1")
+    assert exc_409.value.reference_id == "ref-dup-1"
+
+    # 3. Lowercase 'bearer ' scheme preserves fresh token during 401 CAS invalidation
+    tc = TokenCache()
+    tc.set("collection", "fresh_T2", 3600)
+    seen_cached: list[str | None] = []
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(401)),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_c,
+        HttpClient("https://sandbox.momodeveloper.mtn.com", 10.0, client=raw_c) as hc,
+        pytest.raises(AuthenticationError),
+    ):
+        hc.request(
+            "GET",
+            "/collection/v1_0/account/balance",
+            headers={"Authorization": "bearer stale_T1"},
+            product_name="collection",
+            token_cache=tc,
+            token_refresher=lambda: (seen_cached.append(tc.get("collection")), "T3")[1],
+        )
+    assert seen_cached == ["fresh_T2"]
+
+    # 4. 401 refresh preserves upstream 503 PyMomoSDKServerError (does not mask as AuthenticationError)
+    def refresh_503_handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/collection/token/":
+            return httpx.Response(503)
+        return httpx.Response(401)
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(refresh_503_handler),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_c,
+        HttpClient("https://sandbox.momodeveloper.mtn.com", 10.0, client=raw_c) as hc,
+        pytest.raises(PyMomoSDKServerError, match="503"),
+    ):
+        hc.request(
+            "GET",
+            "/collection/v1_0/account/balance",
+            headers={"Authorization": "Bearer old"},
+            product_name="collection",
+            token_cache=TokenCache(),
+            token_refresher=lambda: (
+                hc.request("POST", "/collection/token/", headers={}),
+                "never",
+            )[1],
+        )
+
+    # 5. 401 retry does not double transient retry budget
+    call_count = 0
+
+    def budget_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return httpx.Response(503)
+        if call_count == 3:
+            return httpx.Response(401)
+        return httpx.Response(503)
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(budget_handler),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_c,
+        HttpClient(
+            "https://sandbox.momodeveloper.mtn.com",
+            10.0,
+            max_retries=2,
+            retry_backoff=0.001,
+            client=raw_c,
+        ) as hc,
+        pytest.raises(PyMomoSDKServerError),
+    ):
+        hc.request(
+            "GET",
+            "/collection/v1_0/account/balance",
+            headers={"Authorization": "Bearer old"},
+            product_name="collection",
+            token_cache=TokenCache(),
+            token_refresher=lambda: "new_tok",
+        )
+    assert call_count == 4
+
+    # 6. Auto-generated MTN write does NOT silently retry on timeout; /token/ DOES retry on 503
+    token_calls = 0
+    write_calls = 0
+
+    def mtn_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, write_calls
+        if req.url.path == "/collection/token/":
+            token_calls += 1
+            if token_calls == 1:
+                return httpx.Response(503)
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "tok",
+                    "token_type": "access_token",
+                    "expires_in": 3600,
+                },
+            )
+        write_calls += 1
+        raise httpx.ReadTimeout("timeout after MTN accepted")
+
+    cfg = PyMomoSDKConfig(
+        environment=SANDBOX,
+        max_retries=2,
+        retry_backoff=0.001,
+        collection=ProductConfig("sub", "user", "key"),
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(mtn_handler),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as injected,
+        PyMomoSDK(cfg, client=injected, max_response_bytes=4096) as sdk,
+        pytest.raises(PyMomoSDKError, match="timed out"),
+    ):
+        sdk.collection.request_to_pay("100", "EUR", "256771234567", "ord-1")
+    assert token_calls == 2
+    assert write_calls == 1
+
+    # 7. Telemetry emitted on oversized-response rejection
+    events: list[RequestTelemetryEvent] = []
+
+    class _Hook(TelemetryHook):
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            events.append(event)
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, content=b"x" * 200)
+            ),
+            base_url="https://example.com",
+        ) as raw_c,
+        HttpClient(
+            "https://example.com",
+            10.0,
+            max_response_bytes=64,
+            client=raw_c,
+            telemetry=_Hook(),
+        ) as hc,
+        pytest.raises(PyMomoSDKError, match="maximum allowed size"),
+    ):
+        hc.request("GET", "/big", headers={})
+    assert len(events) == 1
+    assert events[0].error_type == "ResponseTooLargeError"

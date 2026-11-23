@@ -78,6 +78,8 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            idempotent=(reference_id is not None),
         )
         return ref
 
@@ -98,6 +100,7 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, TransactionResult)
 
@@ -153,6 +156,8 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            idempotent=(reference_id is not None),
         )
         return ref
 
@@ -173,6 +178,7 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, TransactionResult)
 
@@ -196,6 +202,7 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, BasicUserInfo)
 
@@ -249,6 +256,7 @@ class Collection(BaseProduct):
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, BcAuthorizeResponse)
 

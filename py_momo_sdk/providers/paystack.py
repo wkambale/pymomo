@@ -182,6 +182,7 @@ class PaystackClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Paystack",
         )
 
     def _headers(self) -> dict[str, str]:
@@ -304,6 +305,7 @@ class AsyncPaystackClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Paystack",
         )
 
     def _headers(self) -> dict[str, str]:

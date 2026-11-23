@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import httpx
@@ -55,11 +58,49 @@ def _sanitize_telemetry_path(path: str) -> str:
     return _APIUSER_PATH_RE.sub(r"\1<redacted>", sanitized)
 
 
-def _is_retryable_request(method: str, headers: dict[str, str]) -> bool:
+def _extract_bearer_token(headers: Mapping[str, str]) -> str | None:
+    """Extract Bearer token from Authorization header case-insensitively."""
+    auth_val = _get_header_ci(headers, "Authorization") or ""
+    scheme, sep, token = auth_val.partition(" ")
+    if sep and scheme.lower() == "bearer" and token:
+        return token
+    return None
+
+
+def _is_retryable_request(
+    method: str, headers: dict[str, str], *, idempotent: bool | None = None
+) -> bool:
+    if idempotent is not None:
+        return idempotent
     if method.upper() in _IDEMPOTENT_METHODS:
         return True
-    ref_val = _get_header_ci(headers, "X-Reference-Id")
-    return bool(ref_val and ref_val.strip())
+    for header_name in ("Idempotency-Key", "X-Reference-Id"):
+        val = _get_header_ci(headers, header_name)
+        if val and val.strip():
+            return True
+    return False
+
+
+def _parse_retry_after(raw_value: str) -> float | None:
+    """Parse RFC 9110 Retry-After delay-seconds or HTTP-date into clamped seconds."""
+    stripped = raw_value.strip()
+    if not stripped:
+        return None
+    try:
+        parsed = float(stripped)
+        if math.isfinite(parsed) and parsed >= 0.0:
+            return min(parsed, 30.0)
+        return None
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(stripped)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = (dt - datetime.now(timezone.utc)).total_seconds()
+        return min(max(delta, 0.0), 30.0)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _compute_retry_delay(
@@ -68,15 +109,24 @@ def _compute_retry_delay(
     if response is not None:
         retry_after = response.headers.get("Retry-After")
         if retry_after is not None:
-            try:
-                parsed = float(retry_after)
-                if 0 < parsed <= 30.0:
-                    return parsed
-            except ValueError:
-                pass
+            parsed = _parse_retry_after(retry_after)
+            if parsed is not None:
+                if parsed == 0.0:
+                    return 0.0
+                max_jitter_ms = int(min(250.0, parsed * 100.0))
+                jitter = (
+                    secrets.randbelow(max_jitter_ms) / 1000.0
+                    if max_jitter_ms > 0
+                    else 0.0
+                )
+                return float(min(parsed + jitter, 30.0))
     jitter = secrets.randbelow(250) / 1000.0
     exp = min(max(attempt, 0), 30)
     return float(min(base_backoff * (2**exp) + jitter, 30.0))
+
+
+class _ResponseTooLargeError(PyMomoSDKError):
+    """Internal marker for responses exceeding max_response_bytes."""
 
 
 class HttpClient:
@@ -85,16 +135,20 @@ class HttpClient:
     def __init__(
         self,
         base_url: str,
-        timeout: float,
+        timeout: float | httpx.Timeout,
         *,
         max_retries: int = 0,
         retry_backoff: float = 0.5,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         client: httpx.Client | None = None,
+        limits: httpx.Limits | None = None,
         telemetry: TelemetryHook | None = None,
+        provider_name: str | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
-        validated_timeout = validate_timeout(timeout)
+        validated_timeout: float | httpx.Timeout = (
+            timeout if isinstance(timeout, httpx.Timeout) else validate_timeout(timeout)
+        )
         if (
             isinstance(max_response_bytes, bool)
             or not isinstance(max_response_bytes, int)
@@ -106,6 +160,7 @@ class HttpClient:
         self._retry_backoff = validate_retry_backoff(retry_backoff)
         self._max_response_bytes = max_response_bytes
         self._telemetry = telemetry
+        self._provider_name = provider_name
         self._owns_client = client is None
         if client is not None:
             injected_base = str(client.base_url)
@@ -114,11 +169,14 @@ class HttpClient:
                 validate_matching_origin(validated_url, injected_base)
             self._client = client
         else:
-            self._client = httpx.Client(
-                base_url=validated_url,
-                timeout=validated_timeout,
-                follow_redirects=False,
-            )
+            client_kwargs: dict[str, Any] = {
+                "base_url": validated_url,
+                "timeout": validated_timeout,
+                "follow_redirects": False,
+            }
+            if limits is not None:
+                client_kwargs["limits"] = limits
+            self._client = httpx.Client(**client_kwargs)
 
     def _emit_telemetry(
         self,
@@ -161,21 +219,6 @@ class HttpClient:
         target = (
             path if str(self._client.base_url) else f"{self._validated_base_url}{path}"
         )
-        if "request" in self._client.__dict__:
-            response = self._client.request(
-                method,
-                target,
-                headers=headers,
-                json=json,
-                data=data,
-                follow_redirects=False,
-            )
-            if len(response.content) > self._max_response_bytes:
-                raise PyMomoSDKError(
-                    f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
-                )
-            return response
-
         req = self._client.build_request(
             method, target, headers=headers, json=json, data=data
         )
@@ -185,18 +228,18 @@ class HttpClient:
             if cl_header is not None:
                 try:
                     if int(cl_header) > self._max_response_bytes:
-                        raise PyMomoSDKError(
+                        raise _ResponseTooLargeError(
                             f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                         )
                 except ValueError:
                     pass
             buf = bytearray()
             for chunk in response.iter_bytes():
-                buf.extend(chunk)
-                if len(buf) > self._max_response_bytes:
-                    raise PyMomoSDKError(
+                if len(buf) + len(chunk) > self._max_response_bytes:
+                    raise _ResponseTooLargeError(
                         f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                     )
+                buf.extend(chunk)
             response._content = bytes(buf)
         finally:
             response.close()
@@ -212,10 +255,19 @@ class HttpClient:
         data: Any,
         timeout_msg: str,
         conn_msg: str,
-    ) -> httpx.Response:
-        can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
-        attempts = (self._max_retries + 1) if can_retry else 1
-        correlation_id = _get_header_ci(headers, "X-Reference-Id")
+        idempotent: bool | None = None,
+        max_retries_override: int | None = None,
+    ) -> tuple[httpx.Response, int]:
+        effective_retries = (
+            self._max_retries if max_retries_override is None else max_retries_override
+        )
+        can_retry = effective_retries > 0 and _is_retryable_request(
+            method, headers, idempotent=idempotent
+        )
+        attempts = (effective_retries + 1) if can_retry else 1
+        correlation_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
+            headers, "Idempotency-Key"
+        )
 
         for attempt in range(attempts):
             started = time.monotonic()
@@ -223,6 +275,17 @@ class HttpClient:
                 response = self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
+            except _ResponseTooLargeError:
+                self._emit_telemetry(
+                    method,
+                    path,
+                    None,
+                    started,
+                    attempt + 1,
+                    correlation_id,
+                    "ResponseTooLargeError",
+                )
+                raise
             except httpx.TimeoutException:
                 self._emit_telemetry(
                     method,
@@ -274,9 +337,9 @@ class HttpClient:
                 )
                 time.sleep(delay)
                 continue
-            return response
+            return response, attempt + 1
 
-        raise PyMomoSDKError(conn_msg)
+        raise AssertionError("Unreachable retry loop exit")
 
     def request(
         self,
@@ -289,12 +352,14 @@ class HttpClient:
         product_name: str | None = None,
         token_cache: TokenCache | None = None,
         token_refresher: Callable[[], str] | None = None,
+        token_namespace: str = "",
+        idempotent: bool | None = None,
     ) -> httpx.Response:
         """Execute HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
         safe_path = _sanitize_telemetry_path(path)
         logger.debug("%s %s", method, safe_path)
-        response = self._send_with_transient_retries(
+        response, attempts_used = self._send_with_transient_retries(
             method,
             path,
             headers=headers,
@@ -302,6 +367,7 @@ class HttpClient:
             data=data,
             timeout_msg=f"Request timed out: {method} {safe_path}",
             conn_msg=f"Connection error: {method} {safe_path}",
+            idempotent=idempotent,
         )
 
         if (
@@ -311,26 +377,30 @@ class HttpClient:
             and product_name
         ):
             # Only invalidate if cache still holds the token that just failed
-            auth_val = _get_header_ci(headers, "Authorization") or ""
-            failed_token = auth_val[7:] if auth_val.startswith("Bearer ") else None
-            token_cache.invalidate(product_name, expected_token=failed_token)
+            failed_token = _extract_bearer_token(headers)
+            token_cache.invalidate(
+                product_name,
+                expected_token=failed_token,
+                namespace=token_namespace,
+            )
 
-            # Re-fetch a token
+            # Re-fetch a token (preserving upstream 5xx / timeout errors)
             try:
                 new_token = token_refresher()
-            except (PyMomoSDKError, ValueError):
+            except (AuthenticationError, ValueError):
                 raise AuthenticationError(
                     "Authentication failed during token refresh"
                 ) from None
 
-            # Retry original request exactly once
+            # Retry original request once with remaining transient retry budget
             retry_headers = {
                 k: v for k, v in headers.items() if k.lower() != "authorization"
             }
             retry_headers["Authorization"] = f"Bearer {new_token}"
+            remaining_retries = max(0, self._max_retries - (attempts_used - 1))
 
             logger.debug("Retrying %s %s with new token", method, safe_path)
-            response = self._send_with_transient_retries(
+            response, _ = self._send_with_transient_retries(
                 method,
                 path,
                 headers=retry_headers,
@@ -338,9 +408,18 @@ class HttpClient:
                 data=data,
                 timeout_msg=f"Request timed out on retry: {method} {safe_path}",
                 conn_msg=f"Connection error on retry: {method} {safe_path}",
+                idempotent=idempotent,
+                max_retries_override=remaining_retries,
             )
 
-        _raise_for_status(response)
+        ref_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
+            headers, "Idempotency-Key"
+        )
+        _raise_for_status(
+            response,
+            provider_name=self._provider_name,
+            reference_id=ref_id,
+        )
         return response
 
     def close(self) -> None:
@@ -389,7 +468,21 @@ def parse_model(response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
         ) from None
 
 
-def _raise_for_status(response: httpx.Response) -> None:
+def _extract_error_message(body: dict[str, Any], default: str) -> str:
+    """Extract a human-readable error message from gateway-specific JSON bodies."""
+    for key in ("message", "errorMessage", "error_description", "description"):
+        raw = body.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw
+    return default
+
+
+def _raise_for_status(
+    response: httpx.Response,
+    *,
+    provider_name: str | None = None,
+    reference_id: str | None = None,
+) -> None:
     """Map HTTP status codes to custom exception classes."""
     if 200 <= response.status_code < 300:
         return
@@ -404,15 +497,18 @@ def _raise_for_status(response: httpx.Response) -> None:
         body = {}
 
     if response.status_code == 400:
-        raw_msg = body.get("message")
-        msg = raw_msg if isinstance(raw_msg, str) and raw_msg else "Bad request"
+        msg = _extract_error_message(body, "Bad request")
         raise BadRequestError(msg, response_body=body)
     if response.status_code == 401:
         raise AuthenticationError("Invalid or expired credentials")
     if response.status_code == 404:
         raise ResourceNotFoundError("Resource not found")
     if response.status_code == 409:
-        raise ConflictError("Duplicate X-Reference-Id")
+        conflict_msg = _extract_error_message(
+            body, "Conflict: duplicate request reference"
+        )
+        raise ConflictError(conflict_msg, reference_id=reference_id)
     if response.status_code >= 500:
-        raise PyMomoSDKServerError(f"MTN server error: {response.status_code}")
+        label = provider_name or "Upstream API"
+        raise PyMomoSDKServerError(f"{label} server error: {response.status_code}")
     raise PyMomoSDKError(f"Unexpected HTTP status: {response.status_code}")

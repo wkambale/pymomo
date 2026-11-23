@@ -170,6 +170,7 @@ class OrangeMoneyClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Orange Money",
         )
 
     def _record_payment_context(
@@ -319,6 +320,7 @@ class AsyncOrangeMoneyClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Orange Money",
         )
 
     def _record_payment_context(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
+
+import httpx
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk._async.products.collection import Collection
@@ -10,6 +13,7 @@ from py_momo_sdk._async.sandbox import AsyncSandboxProvisioner
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.config import PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -25,7 +29,14 @@ class AsyncPyMomoSDK:
             balance = await client.collection.get_balance()
     """
 
-    def __init__(self, config: PyMomoSDKConfig) -> None:
+    def __init__(
+        self,
+        config: PyMomoSDKConfig,
+        *,
+        client: httpx.AsyncClient | None = None,
+        limits: httpx.Limits | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+    ) -> None:
         self._config = config
         self._token_cache = TokenCache()
         if not config.base_url:
@@ -35,8 +46,13 @@ class AsyncPyMomoSDK:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
+            client=client,
+            limits=limits,
             telemetry=config.telemetry,
+            provider_name="MTN MoMo",
         )
+        self._init_lock = threading.Lock()
         self._collection: Collection | None = None
         self._disbursement: Disbursement | None = None
         self._remittance: Remittance | None = None
@@ -53,12 +69,14 @@ class AsyncPyMomoSDK:
                 "Collection credentials not provided in PyMomoSDKConfig"
             )
         if self._collection is None:
-            self._collection = Collection(
-                config=self._config,
-                product_config=self._config.collection,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._collection is None:
+                    self._collection = Collection(
+                        config=self._config,
+                        product_config=self._config.collection,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._collection
 
     @property
@@ -73,12 +91,14 @@ class AsyncPyMomoSDK:
                 "Disbursement credentials not provided in PyMomoSDKConfig"
             )
         if self._disbursement is None:
-            self._disbursement = Disbursement(
-                config=self._config,
-                product_config=self._config.disbursement,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._disbursement is None:
+                    self._disbursement = Disbursement(
+                        config=self._config,
+                        product_config=self._config.disbursement,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._disbursement
 
     @property
@@ -93,12 +113,14 @@ class AsyncPyMomoSDK:
                 "Remittance credentials not provided in PyMomoSDKConfig"
             )
         if self._remittance is None:
-            self._remittance = Remittance(
-                config=self._config,
-                product_config=self._config.remittance,
-                http=self._http,
-                token_cache=self._token_cache,
-            )
+            with self._init_lock:
+                if self._remittance is None:
+                    self._remittance = Remittance(
+                        config=self._config,
+                        product_config=self._config.remittance,
+                        http=self._http,
+                        token_cache=self._token_cache,
+                    )
         return self._remittance
 
     @property
