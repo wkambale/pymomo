@@ -687,3 +687,176 @@ async def test_framework_verifiers_issue_89_security_and_streaming() -> None:
             provider="flutterwave",
         )
     assert wh_events == [("flutterwave", True), ("flutterwave", False)]
+
+
+def test_mock_server_issue_90_ipv6_chunked_dos_conflict_and_routes() -> None:
+    """Verify Issue #90: IPv6 ::1 bind, port validation, chunked POST, huge/duplicate Content-Length, 409 Conflict, and multi-provider routes."""
+    import socket
+
+    import httpx
+
+    from py_momo_sdk import create_mock_server
+
+    # 1. Port and host validation
+    with pytest.raises(ValueError, match="port"):
+        create_mock_server("127.0.0.1", 70000)
+    with pytest.raises(ValueError, match="port"):
+        create_mock_server("127.0.0.1", -1)
+    with pytest.raises(ValueError, match="host"):
+        create_mock_server("   ", 0)
+
+    # 2. IPv6 ::1 binds cleanly with AF_INET6 (skip only if OS has IPv6 loopback disabled)
+    try:
+        ipv6_srv, _v6_state = create_mock_server("::1", 0)
+    except OSError:
+        ipv6_srv = None
+    if ipv6_srv is not None:
+        try:
+            assert ipv6_srv.address_family == socket.AF_INET6
+        finally:
+            ipv6_srv.server_close()
+
+    # 3. Full route & HTTP edge-case verification on 127.0.0.1
+    srv, _state, _thread = start_mock_server_thread("127.0.0.1", 0)
+    port = srv.server_address[1]
+    base = f"http://127.0.0.1:{port}"
+    try:
+        # 3a. Chunked POST body is decoded (not silently replaced with fallback "100")
+        def _chunk_gen():
+            yield b'{"amount":"4321",'
+            yield b'"currency":"UGX","externalId":"chunk-1"}'
+
+        chunk_res = httpx.post(
+            f"{base}/collection/v1_0/requesttopay",
+            content=_chunk_gen(),
+            headers={"X-Reference-Id": "ref-chunk-1"},
+        )
+        assert chunk_res.status_code == 202
+        st_chunk = httpx.get(f"{base}/collection/v1_0/requesttopay/ref-chunk-1")
+        assert st_chunk.status_code == 200
+        assert st_chunk.json()["amount"] == "4321"
+
+        # 3b. Duplicate X-Reference-Id returns 409 Conflict
+        dup_res = httpx.post(
+            f"{base}/collection/v1_0/requesttopay",
+            json={"amount": "4321", "currency": "UGX"},
+            headers={"X-Reference-Id": "ref-chunk-1"},
+        )
+        assert dup_res.status_code == 409
+
+        # 3c. Huge 4301-digit Content-Length & duplicate Content-Length return HTTP 400 (never drop connection)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(
+                f"POST /collection/v1_0/requesttopay HTTP/1.1\r\n"
+                f"Host: 127.0.0.1\r\n"
+                f"Content-Length: {'9' * 4301}\r\n"
+                f"Connection: close\r\n\r\n".encode("ascii")
+            )
+            resp_bytes = sock.recv(4096)
+        assert b"400 Bad Request" in resp_bytes
+
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(
+                b"POST /collection/v1_0/requesttopay HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Length: 2\r\n"
+                b"Content-Length: 2\r\n"
+                b"Connection: close\r\n\r\n{}"
+            )
+            dup_cl_bytes = sock.recv(4096)
+        assert b"400 Bad Request" in dup_cl_bytes
+
+        # 3d. Sandbox, Disbursement, Remittance, Airtel, Wave payout, M-Pesa, Paystack, Flutterwave, Orange routes
+        assert (
+            httpx.post(
+                f"{base}/v1_0/apiuser",
+                json={"providerCallbackHost": "example.com"},
+                headers={"X-Reference-Id": "user-1"},
+            ).status_code
+            == 201
+        )
+        assert httpx.get(f"{base}/v1_0/apiuser/user-1").status_code == 200
+        assert (
+            httpx.post(f"{base}/v1_0/apiuser/user-1/apikey").json()["apiKey"]
+            == "mock-api-key-user-1"
+        )
+        assert (
+            httpx.post(
+                f"{base}/disbursement/v1_0/transfer",
+                json={"amount": "200", "currency": "UGX"},
+                headers={"X-Reference-Id": "disb-1"},
+            ).status_code
+            == 202
+        )
+        assert httpx.get(f"{base}/disbursement/v1_0/transfer/disb-1").status_code == 200
+        assert (
+            httpx.get(f"{base}/collection/v1_0/account/balance/UGX").json()["currency"]
+            == "UGX"
+        )
+        assert (
+            httpx.get(f"{base}/standard/v1/users/balance").json()["data"]["currency"]
+            == "UGX"
+        )
+        wp = httpx.post(
+            f"{base}/v1/payout",
+            json={
+                "receive_amount": "500",
+                "currency": "XOF",
+                "mobile": "+221771234567",
+            },
+        )
+        assert wp.status_code == 200
+        wp_id = wp.json()["id"]
+        assert httpx.get(f"{base}/v1/payout/{wp_id}").json()["receive_amount"] == "500"
+        assert httpx.get(f"{base}/v1/balance").status_code == 200
+        assert (
+            httpx.get(
+                f"{base}/oauth/v1/generate?grant_type=client_credentials"
+            ).status_code
+            == 200
+        )
+        stk = httpx.post(
+            f"{base}/mpesa/stkpush/v1/processrequest", json={"Amount": 100}
+        )
+        assert stk.status_code == 200
+        cid = stk.json()["CheckoutRequestID"]
+        assert (
+            httpx.post(
+                f"{base}/mpesa/stkpushquery/v1/query",
+                json={"CheckoutRequestID": cid},
+            ).json()["ResultCode"]
+            == "0"
+        )
+        ps = httpx.post(
+            f"{base}/transaction/initialize",
+            json={"reference": "ps-1", "amount": 5000, "currency": "NGN"},
+        )
+        assert ps.status_code == 200
+        assert httpx.get(f"{base}/transaction/verify/ps-1").status_code == 200
+        flw = httpx.post(
+            f"{base}/v3/payments",
+            json={"tx_ref": "INV/2026/001", "amount": "100", "currency": "UGX"},
+        )
+        assert flw.status_code == 200
+        assert (
+            httpx.get(
+                f"{base}/v3/transactions/verify_by_reference?tx_ref=INV%2F2026%2F001"
+            ).status_code
+            == 200
+        )
+        om = httpx.post(
+            f"{base}/orange-money-webpay/dev/v1/webpayment",
+            json={"order_id": "om-1", "amount": 500, "currency": "XOF"},
+        )
+        assert om.status_code == 201
+        pt = om.json()["pay_token"]
+        assert (
+            httpx.post(
+                f"{base}/orange-money-webpay/dev/v1/transactionstatus",
+                json={"order_id": "om-1", "amount": 500, "pay_token": pt},
+            ).json()["status"]
+            == "SUCCESS"
+        )
+    finally:
+        srv.shutdown()
+        srv.server_close()
