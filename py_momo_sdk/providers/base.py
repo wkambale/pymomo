@@ -34,7 +34,9 @@ class PaymentProvider(Protocol):
     ) -> PaymentResult:
         """Query transaction status for a collection or disbursement."""
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         """Query the merchant account balance."""
 
 
@@ -61,5 +63,7 @@ class AsyncPaymentProvider(Protocol):
     ) -> PaymentResult:
         """Query transaction status asynchronously."""
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         """Query the merchant account balance asynchronously."""

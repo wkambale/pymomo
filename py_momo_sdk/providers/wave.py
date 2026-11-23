@@ -581,7 +581,10 @@ class WaveProvider:
             raw=session.model_dump(mode="json"),
         )
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         balance = self._client.get_balance()
         return BalanceResult(
@@ -590,6 +593,15 @@ class WaveProvider:
             currency=balance.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncWaveProvider:
@@ -678,7 +690,10 @@ class AsyncWaveProvider:
             raw=session.model_dump(mode="json"),
         )
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         balance = await self._client.get_balance()
         return BalanceResult(
@@ -687,3 +702,15 @@ class AsyncWaveProvider:
             currency=balance.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

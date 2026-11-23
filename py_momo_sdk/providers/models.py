@@ -62,6 +62,16 @@ class ProviderCapabilities(BaseModel):
     supports_webhook_hmac: bool = False
     currencies: tuple[str, ...] = ()
 
+    @field_validator("currencies")
+    @classmethod
+    def _normalize_currencies(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("Currency codes in capabilities must be non-empty")
+            normalized.append(item.strip().upper())
+        return tuple(normalized)
+
 
 class PaymentRequest(BaseModel):
     """Normalized collection payment request."""
@@ -87,6 +97,13 @@ class PaymentRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("payer_msisdn")
+    @classmethod
+    def _check_payer_msisdn(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("payer_msisdn must not be blank")
+        return validate_header_value(value.strip(), field_name="payer_msisdn")
 
     @field_validator("payer_email")
     @classmethod
@@ -127,6 +144,13 @@ class DisbursementRequest(BaseModel):
     @classmethod
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
+
+    @field_validator("payee_msisdn")
+    @classmethod
+    def _check_payee_msisdn(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("payee_msisdn must not be blank")
+        return validate_header_value(value.strip(), field_name="payee_msisdn")
 
     @field_validator("payee_bank_code")
     @classmethod

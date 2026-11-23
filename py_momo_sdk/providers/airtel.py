@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from py_momo_sdk._async.airtel.client import AsyncAirtelClient
 from py_momo_sdk.airtel.client import AirtelClient
 from py_momo_sdk.airtel.models import AirtelTransactionResponse
@@ -12,6 +14,9 @@ from py_momo_sdk.providers.models import (
     ProviderCapabilities,
     validate_operation_kind,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 _AIRTEL_CAPABILITIES = ProviderCapabilities(
     provider_id="airtel_money",
@@ -119,8 +124,12 @@ class AirtelMoneyProvider:
             result = self._client.collection.get_payment_status(reference_id)
         return _map_airtel_result(reference_id, result)
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
+        if currency is not None:
+            _check_airtel_currency(currency, self._client._config.currency)
         balance = self._client.disbursement.get_balance()
         wallet = balance.data.wallet
         return BalanceResult(
@@ -129,6 +138,15 @@ class AirtelMoneyProvider:
             currency=wallet.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncAirtelMoneyProvider:
@@ -193,8 +211,12 @@ class AsyncAirtelMoneyProvider:
             result = await self._client.collection.get_payment_status(reference_id)
         return _map_airtel_result(reference_id, result)
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
+        if currency is not None:
+            _check_airtel_currency(currency, self._client._config.currency)
         balance = await self._client.disbursement.get_balance()
         wallet = balance.data.wallet
         return BalanceResult(
@@ -203,3 +225,15 @@ class AsyncAirtelMoneyProvider:
             currency=wallet.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

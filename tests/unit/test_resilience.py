@@ -166,11 +166,40 @@ async def test_async_wait_for_settlement() -> None:
 
 
 def test_detect_carrier_from_msisdn() -> None:
-    """Verify MSISDN carrier prefix inference across markets."""
+    """Verify MSISDN carrier prefix inference across pan-African markets."""
     assert detect_carrier_from_msisdn("+256771234567") == ("UG", "mtn_momo")
     assert detect_carrier_from_msisdn("256751234567") == ("UG", "airtel_money")
     assert detect_carrier_from_msisdn("254712345678") == ("KE", "mpesa")
-    assert detect_carrier_from_msisdn("221761234567") == ("SN", "wave")
+    assert detect_carrier_from_msisdn("254740123456") == ("KE", "mpesa")
+    assert detect_carrier_from_msisdn("254744123456") is None  # Telkom KE
+    assert detect_carrier_from_msisdn("254747123456") is None  # Faiba KE
+    assert detect_carrier_from_msisdn("254101234567") == ("KE", "airtel_money")
+    assert detect_carrier_from_msisdn("254750123456") == ("KE", "airtel_money")
+    assert detect_carrier_from_msisdn("233531234567") == ("GH", "mtn_momo")
+    assert detect_carrier_from_msisdn("233561234567") == ("GH", "airtel_money")
+    assert detect_carrier_from_msisdn("221771234567") == ("SN", "orange_money")
+    assert detect_carrier_from_msisdn("221761234567") is None  # Free/Yas, not Wave MNO
+    assert detect_carrier_from_msisdn("221701234567") is None  # Expresso, not Wave MNO
+    assert detect_carrier_from_msisdn("255754123456") == ("TZ", "mpesa")
+    assert detect_carrier_from_msisdn("255784123456") == ("TZ", "airtel_money")
+    assert detect_carrier_from_msisdn("260961234567") == ("ZM", "mtn_momo")
+    assert detect_carrier_from_msisdn("260971234567") == ("ZM", "airtel_money")
+    assert detect_carrier_from_msisdn("237671234567") == ("CM", "mtn_momo")
+    assert detect_carrier_from_msisdn("237691234567") == ("CM", "orange_money")
+    assert detect_carrier_from_msisdn("2348031234567") == ("NG", "mtn_momo")
+    assert detect_carrier_from_msisdn("2348021234567") == ("NG", "airtel_money")
+    assert detect_carrier_from_msisdn("27831234567") == ("ZA", "mtn_momo")
+    assert detect_carrier_from_msisdn("265991234567") == ("MW", "airtel_money")
+    assert detect_carrier_from_msisdn("243811234567") == ("CD", "mpesa")
+    assert detect_carrier_from_msisdn("22990123456") == ("BJ", "mtn_momo")
+    assert detect_carrier_from_msisdn("251712345678") == ("ET", "mpesa")
+    assert detect_carrier_from_msisdn("242061234567") == ("CG", "mtn_momo")
+    assert detect_carrier_from_msisdn("231881234567") == ("LR", "mtn_momo")
+    assert detect_carrier_from_msisdn("224661234567") == ("GN", "mtn_momo")
+    assert detect_carrier_from_msisdn("26876123456") == ("SZ", "mtn_momo")
+    assert detect_carrier_from_msisdn(
+        "221761234567", custom_prefixes={"22176": ("SN", "wave")}
+    ) == ("SN", "wave")
     assert detect_carrier_from_msisdn("999000111") is None
 
 

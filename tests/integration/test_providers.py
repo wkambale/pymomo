@@ -308,9 +308,10 @@ async def test_async_providers_and_router(httpx_mock: HTTPXMock) -> None:
                 AsyncMtnMomoProvider(mtn),
                 AsyncAirtelMoneyProvider(airtel),
                 AsyncWaveProvider(wave),
-            ]
+            ],
+            custom_carrier_prefixes={"22176": ("SN", "wave")},
         )
-        # Senegal Wave MSISDN routes automatically to Wave
+        # Custom carrier prefix routes Senegal 22176 to Wave
         wave_res = await router.collect(
             PaymentRequest(
                 amount="2000",
@@ -604,7 +605,8 @@ async def test_async_mtn_airtel_wave_disburse_and_status(
                 amount="500",
                 currency="XOF",
                 payee_msisdn="221761234567",
-            )
+            ),
+            provider="wave",
         )
         assert wave_disb.is_successful()
         wave_st = await router.get_status(
@@ -842,3 +844,273 @@ async def test_wave_live_protocol_and_webhook_fixes(httpx_mock: HTTPXMock) -> No
         assert ap_body["mobile"] == "+221771234567"
         assert ap_body["payment_reason"] == "Monthly bonus"
         assert "X-Reference-Id" not in async_payout_req.headers
+
+
+@pytest.mark.asyncio
+async def test_router_issue_88_thread_safety_reconciliation_lifecycle_and_plugins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Issue #88: router lock, failover reference_id, capabilities, lifecycle closing, sync/async validation, models."""
+    import concurrent.futures
+
+    from pydantic import ValidationError
+
+    import py_momo_sdk.providers.router as router_mod
+    from py_momo_sdk import (
+        BalanceResult,
+        MpesaClient,
+        MpesaConfig,
+        MpesaProvider,
+        OrangeMoneyClient,
+        OrangeMoneyConfig,
+        OrangeMoneyProvider,
+        PaymentResult,
+        ProviderCapabilities,
+    )
+    from py_momo_sdk.exceptions import PyMomoSDKServerError
+
+    # 1. ProviderCapabilities normalizes currencies to uppercase; blank MSISDNs rejected
+    caps = ProviderCapabilities(provider_id="custom", currencies=("ugx", " kes "))
+    assert caps.currencies == ("UGX", "KES")
+    with pytest.raises(ValidationError):
+        PaymentRequest(amount="100", currency="UGX", payer_msisdn="   ")
+    with pytest.raises(ValidationError):
+        DisbursementRequest(amount="100", currency="UGX", payee_msisdn="")
+
+    # 2. default_provider validated even when providers=()
+    with pytest.raises(PyMomoSDKError, match="Default provider is not registered"):
+        PaymentRouter(default_provider="missing")
+    with pytest.raises(PyMomoSDKError, match="Default provider is not registered"):
+        AsyncPaymentRouter(default_provider="missing")
+
+    # 3. Sync/async provider type validation & lifecycle close
+    closed_events: list[str] = []
+
+    class _SyncStub:
+        def __init__(self, name: str, *, fail_5xx: bool = False) -> None:
+            self._name = name
+            self._fail_5xx = fail_5xx
+            self.seen_refs: list[str | None] = []
+            self.seen_currency: str | None = None
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(
+                provider_id=self._name,
+                currencies=("UGX", "KES"),
+            )
+
+        def collect(self, request: PaymentRequest) -> PaymentResult:
+            self.seen_refs.append(request.reference_id)
+            if self._fail_5xx:
+                raise PyMomoSDKServerError("upstream 503")
+            return PaymentResult(
+                provider=self._name,
+                reference_id=request.reference_id or "gen",
+                status=NormalizedStatus.PENDING,
+            )
+
+        def disburse(self, request: DisbursementRequest) -> PaymentResult:
+            self.seen_refs.append(request.reference_id)
+            if self._fail_5xx:
+                raise PyMomoSDKServerError("upstream 503")
+            return PaymentResult(
+                provider=self._name,
+                reference_id=request.reference_id or "gen",
+                status=NormalizedStatus.PENDING,
+            )
+
+        def get_status(
+            self, reference_id: str, *, kind: str = "collection"
+        ) -> PaymentResult:
+            return PaymentResult(
+                provider=self._name,
+                reference_id=reference_id,
+                status=NormalizedStatus.SUCCEEDED,
+            )
+
+        def get_balance(
+            self, *, kind: str = "collection", currency: str | None = None
+        ) -> BalanceResult:
+            self.seen_currency = currency
+            return BalanceResult(
+                provider=self._name,
+                available_balance="100",
+                currency=currency or "UGX",
+            )
+
+        def close(self) -> None:
+            closed_events.append(f"sync:{self._name}")
+
+    class _AsyncStub:
+        def __init__(self, name: str, *, fail_5xx: bool = False) -> None:
+            self._name = name
+            self._fail_5xx = fail_5xx
+            self.seen_refs: list[str | None] = []
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(
+                provider_id=self._name,
+                currencies=("UGX",),
+            )
+
+        async def collect(self, request: PaymentRequest) -> PaymentResult:
+            self.seen_refs.append(request.reference_id)
+            if self._fail_5xx:
+                raise PyMomoSDKServerError("upstream 503")
+            return PaymentResult(
+                provider=self._name,
+                reference_id=request.reference_id or "gen",
+                status=NormalizedStatus.PENDING,
+            )
+
+        async def disburse(self, request: DisbursementRequest) -> PaymentResult:
+            self.seen_refs.append(request.reference_id)
+            return PaymentResult(
+                provider=self._name,
+                reference_id=request.reference_id or "gen",
+                status=NormalizedStatus.PENDING,
+            )
+
+        async def get_status(
+            self, reference_id: str, *, kind: str = "collection"
+        ) -> PaymentResult:
+            return PaymentResult(
+                provider=self._name,
+                reference_id=reference_id,
+                status=NormalizedStatus.SUCCEEDED,
+            )
+
+        async def get_balance(
+            self, *, kind: str = "collection", currency: str | None = None
+        ) -> BalanceResult:
+            return BalanceResult(
+                provider=self._name,
+                available_balance="200",
+                currency=currency or "UGX",
+            )
+
+        async def aclose(self) -> None:
+            closed_events.append(f"async:{self._name}")
+
+    # Sync router rejects async provider; async router rejects sync provider
+    with pytest.raises(TypeError, match="synchronous PaymentProvider"):
+        PaymentRouter([_AsyncStub("a1")])  # type: ignore[list-item]
+    with pytest.raises(TypeError, match="asynchronous AsyncPaymentProvider"):
+        AsyncPaymentRouter([_SyncStub("s1")])  # type: ignore[list-item]
+
+    # 4. Pre-generated reconciliation reference_id on allow_ambiguous_write_fallback=True
+    p1 = _SyncStub("rail1", fail_5xx=True)
+    p2 = _SyncStub("rail2")
+    with PaymentRouter([p1, p2]) as router:
+        res = router.collect(
+            PaymentRequest(amount="500", currency="UGX", payer_msisdn="256771234567"),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+        assert p1.seen_refs[0] is not None
+        assert p1.seen_refs[0] == p2.seen_refs[0] == res.reference_id
+        assert res.raw["prior_failed_attempts"] == [
+            {"provider": "rail1", "reference_id": p1.seen_refs[0]}
+        ]
+        # Currency forwarding on get_balance
+        bal = router.get_balance(provider="rail2", currency="KES")
+        assert bal.currency == "KES"
+        assert p2.seen_currency == "KES"
+    assert "sync:rail1" in closed_events and "sync:rail2" in closed_events
+
+    ap1 = _AsyncStub("arail1", fail_5xx=True)
+    ap2 = _AsyncStub("arail2")
+    async with AsyncPaymentRouter([ap1, ap2]) as arouter:
+        ares = await arouter.collect(
+            PaymentRequest(amount="500", currency="UGX", payer_msisdn="256771234567"),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+        assert ap1.seen_refs[0] is not None
+        assert ap1.seen_refs[0] == ap2.seen_refs[0] == ares.reference_id
+    assert "async:arail1" in closed_events and "async:arail2" in closed_events
+
+    # 5. Capability checks on get_balance / get_status in PaymentRouter
+    with (
+        MpesaClient(
+            MpesaConfig(
+                consumer_key="ck",
+                consumer_secret="cs",
+                short_code="174379",
+                passkey="pk",
+            )
+        ) as mp_client,
+        OrangeMoneyClient(
+            OrangeMoneyConfig(client_id="cid", client_secret="sec", merchant_key="mk")
+        ) as om_client,
+    ):
+        cap_router = PaymentRouter(
+            [MpesaProvider(mp_client), OrangeMoneyProvider(om_client)]
+        )
+        with pytest.raises(PyMomoSDKError, match="does not support balance"):
+            cap_router.get_balance(provider="mpesa")
+        with pytest.raises(PyMomoSDKError, match="does not support disbursement"):
+            cap_router.get_status("ref-1", provider="orange_money", kind="disbursement")
+
+    # 6. Thread safety under concurrent register() and _resolve_candidates()
+    concurrent_router = PaymentRouter([_SyncStub("base")])
+
+    def _worker(idx: int) -> list[str]:
+        concurrent_router.register(_SyncStub(f"p-{idx % 10}"))
+        cands = concurrent_router._resolve_candidates(
+            provider=None,
+            msisdn="256771234567",
+            operation="collection",
+            currency="UGX",
+            fallback=True,
+        )
+        return [c.name for c in cands]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(_worker, range(40)))
+    assert all("base" in names for names in results)
+    provs = concurrent_router.list_providers()
+    assert len(provs) == len(set(provs))
+
+    # 7. discover_provider_plugins: hybrid provider rejected; strict=False skips duplicate
+    class _HybridStub(_SyncStub):
+        async def collect(self, request: PaymentRequest) -> PaymentResult:  # type: ignore[override]
+            return PaymentResult(
+                provider=self._name,
+                reference_id="r",
+                status=NormalizedStatus.PENDING,
+            )
+
+    class _EP:
+        def __init__(self, name: str, obj: object) -> None:
+            self.name = name
+            self._obj = obj
+
+        def load(self) -> object:
+            return self._obj
+
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [_EP("hybrid", _HybridStub("h"))],
+    )
+    with pytest.raises(PyMomoSDKError, match="not a valid PaymentProvider"):
+        discover_provider_plugins(strict=True)
+    assert discover_provider_plugins(strict=False) == {}
+
+    monkeypatch.setattr(
+        router_mod,
+        "entry_points",
+        lambda group: [_EP("dup", _SyncStub("d1")), _EP("dup", _SyncStub("d2"))],
+    )
+    assert list(discover_provider_plugins(strict=False).keys()) == ["dup"]
