@@ -193,10 +193,11 @@ def test_wave_client_and_provider_sync(httpx_mock: HTTPXMock) -> None:
         url="https://api.wave.com/v1/payout",
         json={
             "id": "pt-456",
-            "amount": "500",
+            "receive_amount": "500",
             "currency": "XOF",
             "status": "succeeded",
             "client_reference": "payout-1",
+            "transaction_id": "T_WAVE_456",
         },
         status_code=200,
     )
@@ -248,7 +249,7 @@ def test_wave_client_and_provider_sync(httpx_mock: HTTPXMock) -> None:
 
         ts = int(time.time())
         sig = hmac.new(
-            b"whsec_wave", f"{ts}.".encode() + body, hashlib.sha256
+            b"whsec_wave", f"{ts}".encode() + body, hashlib.sha256
         ).hexdigest()
         wave_client.verify_webhook(body, f"t={ts},v1={sig}")
 
@@ -610,3 +611,234 @@ async def test_async_mtn_airtel_wave_disburse_and_status(
             "pt-async", provider="wave", kind="disbursement"
         )
         assert wave_st.is_successful()
+
+
+@pytest.mark.asyncio
+async def test_wave_live_protocol_and_webhook_fixes(httpx_mock: HTTPXMock) -> None:
+    """Verify Issue #86: receive_amount, Wave-Signature no-dot format, no X-Reference-Id, error_url, and telemetry."""
+    import json
+    import time
+
+    from py_momo_sdk import WebhookHandler, WebhookVerificationError
+    from py_momo_sdk.providers.wave import WaveCheckoutSession, WavePayoutResponse
+    from py_momo_sdk.telemetry import (
+        RequestTelemetryEvent,
+        TelemetryHook,
+        WebhookTelemetryEvent,
+    )
+
+    # 1. WaveConfig rejects blank/whitespace webhook_secret
+    with pytest.raises(ValueError, match="webhook_secret"):
+        WaveConfig(api_key="wave_key", webhook_secret="   ")
+
+    # 2. Live WavePayoutResponse with receive_amount + backward-compatible .amount
+    live_payout = WavePayoutResponse.model_validate(
+        {
+            "id": "pt-185sewgm8100t",
+            "currency": "XOF",
+            "receive_amount": "5000",
+            "status": "failed",
+            "transaction_id": "T_WAVE_99",
+            "when_completed": "2026-04-01T12:00:00Z",
+            "payout_error": {"code": "insufficient-funds", "message": "Low balance"},
+        }
+    )
+    assert live_payout.receive_amount == "5000"
+    assert live_payout.amount == "5000"
+    assert live_payout.transaction_id == "T_WAVE_99"
+
+    live_session = WaveCheckoutSession.model_validate(
+        {
+            "id": "cos-err-1",
+            "amount": "1500",
+            "currency": "XOF",
+            "checkout_status": "expired",
+            "payment_status": "cancelled",
+            "transaction_id": "T_CHK_1",
+            "last_payment_error": {"code": "payer-cancelled", "message": "Cancelled"},
+        }
+    )
+    assert live_session.transaction_id == "T_CHK_1"
+
+    # 3. Live Wave-Signature (HMAC-SHA256(secret, timestamp + raw_body), NO dot)
+    secret = "wave_sn_whsec_live"
+    body = b'{"id":"ev_1","type":"checkout.session.completed"}'
+    ts = str(int(time.time()))
+    live_sig = hmac.new(secret.encode(), ts.encode() + body, hashlib.sha256).hexdigest()
+    dot_sig = hmac.new(
+        secret.encode(), f"{ts}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+
+    # Default verify_timestamped_hmac_signature keeps "." separator
+    WebhookHandler.verify_timestamped_hmac_signature(
+        body, f"t={ts},v1={dot_sig}", secret
+    )
+    WebhookHandler.verify_timestamped_hmac_signature(
+        body, f"t={ts},v1={live_sig}", secret, timestamp_separator=""
+    )
+
+    with WaveClient(WaveConfig(api_key="wk", webhook_secret=secret)) as wc_wh:
+        wc_wh.verify_webhook(body, f"t={ts},v1={live_sig}")
+        with pytest.raises(WebhookVerificationError):
+            wc_wh.verify_webhook(body, f"t={ts},v1={dot_sig}")
+
+    async with AsyncWaveClient(
+        WaveConfig(api_key="wk", webhook_secret=secret)
+    ) as awc_wh:
+        awc_wh.verify_webhook(body, f"t={ts},v1={live_sig}")
+        with pytest.raises(WebhookVerificationError):
+            awc_wh.verify_webhook(body, f"t={ts},v1={dot_sig}")
+
+    # 4. Sync payout sends receive_amount, strips 00 prefix, omits X-Reference-Id, retries via idempotent=True, and emits telemetry
+    events: list[tuple[str, int | None]] = []
+
+    class _Hook(TelemetryHook):
+        def on_request(self, event: RequestTelemetryEvent) -> None:
+            events.append((event.path, event.status_code))
+
+        def on_webhook(self, event: WebhookTelemetryEvent) -> None:
+            pass
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        json={
+            "id": "pt-live-1",
+            "receive_amount": "5000",
+            "currency": "XOF",
+            "status": "failed",
+            "client_reference": "ref-86",
+            "transaction_id": "T_WAVE_86",
+            "payout_error": {"code": "recipient-limit", "message": "Limit exceeded"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+        json={
+            "id": "cos-meta-1",
+            "amount": "2000",
+            "currency": "XOF",
+            "checkout_status": "open",
+            "payment_status": "processing",
+            "transaction_id": "T_CHK_86",
+            "last_payment_error": {"code": "err-1", "message": "Timed out"},
+        },
+        status_code=200,
+    )
+
+    # WaveProvider.collect does NOT fall back error_url to callback_url when config.error_url is unset
+    with WaveClient(
+        WaveConfig(
+            api_key="wk",
+            max_retries=1,
+            retry_backoff=0.001,
+            telemetry=_Hook(),
+        )
+    ) as wc:
+        prov = WaveProvider(wc)
+        with pytest.raises(ValueError, match="success_url and error_url"):
+            prov.collect(
+                PaymentRequest(
+                    amount="2000",
+                    currency="XOF",
+                    payer_msisdn="221771234567",
+                    callback_url="https://callback.example.test/success",
+                )
+            )
+
+        # Configured error_url succeeds without touching private _config
+        with WaveClient(
+            WaveConfig(
+                api_key="wk",
+                error_url="https://callback.example.test/error",
+            )
+        ) as wc_err:
+            col = WaveProvider(wc_err).collect(
+                PaymentRequest(
+                    amount="2000",
+                    currency="XOF",
+                    payer_msisdn="221771234567",
+                    callback_url="https://callback.example.test/success",
+                )
+            )
+            assert col.provider_transaction_id == "T_CHK_86"
+            assert col.reason == "err-1: Timed out"
+
+        payout = wc.create_payout(
+            amount="5000",
+            currency="XOF",
+            mobile="00221771234567",
+            client_reference="ref-86",
+            name="Amina Diallo",
+            payment_reason="Invoice 86",
+            national_id="SN-12345",
+            aggregated_merchant_id="agg-1",
+        )
+        assert payout.receive_amount == "5000"
+        assert payout.transaction_id == "T_WAVE_86"
+
+    reqs = httpx_mock.get_requests()
+    payout_reqs = [r for r in reqs if r.url.path == "/v1/payout"]
+    assert len(payout_reqs) == 2  # Retried safely with Idempotency-Key
+    for req in payout_reqs:
+        assert req.headers["Idempotency-Key"] == "ref-86"
+        assert "X-Reference-Id" not in req.headers
+        pbody = json.loads(req.read().decode("utf-8"))
+        assert pbody["receive_amount"] == "5000"
+        assert "amount" not in pbody
+        assert pbody["mobile"] == "+221771234567"
+        assert pbody["name"] == "Amina Diallo"
+        assert pbody["payment_reason"] == "Invoice 86"
+        assert pbody["national_id"] == "SN-12345"
+        assert pbody["aggregated_merchant_id"] == "agg-1"
+    assert ("/v1/payout", 200) in events
+
+    # 5. Async parity: receive_amount, error_url required, and reason/provider_transaction_id populated
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        json={
+            "id": "pt-async-86",
+            "receive_amount": "3000",
+            "currency": "XOF",
+            "status": "succeeded",
+            "transaction_id": "T_ASYNC_86",
+        },
+        status_code=200,
+    )
+    async with AsyncWaveClient(WaveConfig(api_key="wk")) as awc:
+        aprov = AsyncWaveProvider(awc)
+        with pytest.raises(ValueError, match="success_url and error_url"):
+            await aprov.collect(
+                PaymentRequest(
+                    amount="1000",
+                    currency="XOF",
+                    payer_msisdn="221771234567",
+                    callback_url="https://callback.example.test/success",
+                )
+            )
+        ad = await aprov.disburse(
+            DisbursementRequest(
+                amount="3000",
+                currency="XOF",
+                payee_msisdn="00221771234567",
+                payer_message="Monthly bonus",
+            )
+        )
+        assert ad.amount == "3000"
+        assert ad.provider_transaction_id == "T_ASYNC_86"
+        async_payout_req = [
+            r for r in httpx_mock.get_requests() if r.url.path == "/v1/payout"
+        ][-1]
+        ap_body = json.loads(async_payout_req.read().decode("utf-8"))
+        assert ap_body["receive_amount"] == "3000"
+        assert ap_body["mobile"] == "+221771234567"
+        assert ap_body["payment_reason"] == "Monthly bonus"
+        assert "X-Reference-Id" not in async_payout_req.headers

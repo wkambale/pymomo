@@ -1110,7 +1110,7 @@ async def test_async_webhook_parity_mtn_callback_and_active_guard(
     payload = b'{"id":"evt-1"}'
     ts = int(time.time())
     wave_sig = hmac.new(
-        b"wave-wh-sec", f"{ts}.".encode() + payload, hashlib.sha256
+        b"wave-wh-sec", f"{ts}".encode() + payload, hashlib.sha256
     ).hexdigest()
     ps_sig = hmac.new(b"ps-sec", payload, hashlib.sha512).hexdigest()
 
@@ -1207,7 +1207,7 @@ async def test_phase3_negative_webhooks_path_traversal_payloads_and_not_implemen
     # 1. Negative webhook tests across Wave, Paystack, and Flutterwave
     with WaveClient(WaveConfig(api_key="wk", webhook_secret="wave-sec")) as wc:
         valid_sig = hmac.new(
-            b"wave-sec", f"{ts}.".encode() + raw, hashlib.sha256
+            b"wave-sec", f"{ts}".encode() + raw, hashlib.sha256
         ).hexdigest()
         with pytest.raises(WebhookVerificationError):
             wc.verify_webhook(b"tampered", f"t={ts},v1={valid_sig}")
@@ -1317,8 +1317,11 @@ async def test_phase3_negative_webhooks_path_traversal_payloads_and_not_implemen
     assert json.loads(ps_req.read().decode("utf-8"))["amount"] == 1234
     wave_req = next(r for r in reqs if r.url.path == "/v1/payout")
     assert wave_req.headers["Idempotency-Key"] == "wave-ref-99"
-    assert wave_req.headers["X-Reference-Id"] == "wave-ref-99"
-    assert json.loads(wave_req.read().decode("utf-8"))["mobile"] == "+221761234567"
+    assert "X-Reference-Id" not in wave_req.headers
+    wave_body = json.loads(wave_req.read().decode("utf-8"))
+    assert wave_body["receive_amount"] == "250"
+    assert "amount" not in wave_body
+    assert wave_body["mobile"] == "+221761234567"
     stk_req = next(r for r in reqs if r.url.path == "/mpesa/stkpush/v1/processrequest")
     stk_body = json.loads(stk_req.read().decode("utf-8"))
     assert stk_body["BusinessShortCode"] == "174379"
