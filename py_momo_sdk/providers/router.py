@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Collection, Sequence
+import threading
+from collections.abc import Collection, Mapping, Sequence
 from importlib.metadata import entry_points
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from py_momo_sdk.exceptions import (
     AuthenticationError,
@@ -17,10 +19,45 @@ from py_momo_sdk.providers.models import (
     DisbursementRequest,
     PaymentRequest,
     PaymentResult,
+    validate_operation_kind,
 )
-from py_momo_sdk.utils import detect_carrier_from_msisdn
+from py_momo_sdk.utils import detect_carrier_from_msisdn, generate_reference_id
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 logger = logging.getLogger("py_momo_sdk.providers")
+
+_PROVIDER_METHODS = ("collect", "disburse", "get_status", "get_balance")
+
+
+def _is_sync_provider(obj: object) -> bool:
+    """Return True if ``obj`` implements synchronous ``PaymentProvider`` methods."""
+    if not isinstance(obj, PaymentProvider):
+        return False
+    return all(
+        callable(getattr(obj, m, None))
+        and not inspect.iscoroutinefunction(getattr(obj, m, None))
+        for m in _PROVIDER_METHODS
+    )
+
+
+def _is_async_provider(obj: object) -> bool:
+    """Return True if ``obj`` implements asynchronous ``AsyncPaymentProvider`` coroutine methods."""
+    if not isinstance(obj, AsyncPaymentProvider):
+        return False
+    return all(
+        inspect.iscoroutinefunction(getattr(obj, m, None)) for m in _PROVIDER_METHODS
+    )
+
+
+def _is_valid_plugin_object(obj: object) -> bool:
+    if _is_sync_provider(obj) or _is_async_provider(obj):
+        return True
+    # Reject hybrid objects that implement provider attributes with mixed sync/async methods
+    if isinstance(obj, (PaymentProvider, AsyncPaymentProvider)):
+        return False
+    return callable(obj)
 
 
 def discover_provider_plugins(
@@ -34,9 +71,9 @@ def discover_provider_plugins(
         allowed_plugins: Optional allowlist of entry-point names permitted to load.
             Unlisted entry points are skipped before ``load()`` executes.
         strict: When ``True`` (default), raise ``PyMomoSDKError`` if a plugin fails
-            to load or does not conform to ``PaymentProvider`` /
+            to load, collides on name, or does not conform to ``PaymentProvider`` /
             ``AsyncPaymentProvider`` / callable factory. When ``False``, log a
-            warning and skip broken plugins.
+            warning and skip broken or duplicate plugins.
 
     Raises:
         TypeError: If ``allowed_plugins`` is a bare string or bytes.
@@ -55,9 +92,12 @@ def discover_provider_plugins(
         if allow_set is not None and ep.name not in allow_set:
             continue
         if ep.name in seen_names:
-            raise PyMomoSDKError(
-                f"Duplicate provider plugin entry point detected: {ep.name}"
-            )
+            if strict:
+                raise PyMomoSDKError(
+                    f"Duplicate provider plugin entry point detected: {ep.name}"
+                )
+            logger.warning("Skipping duplicate provider plugin '%s'", ep.name)
+            continue
         seen_names.add(ep.name)
         try:
             loaded = ep.load()
@@ -71,10 +111,7 @@ def discover_provider_plugins(
             )
             continue
 
-        if not (
-            isinstance(loaded, (PaymentProvider, AsyncPaymentProvider))
-            or callable(loaded)
-        ):
+        if not _is_valid_plugin_object(loaded):
             if strict:
                 raise PyMomoSDKError(
                     f"Plugin '{ep.name}' is not a valid PaymentProvider or factory"
@@ -101,23 +138,60 @@ def _supports_operation_and_currency(
     return not caps.currencies or norm_currency in caps.currencies
 
 
+def _ensure_status_supported(
+    provider: PaymentProvider | AsyncPaymentProvider,
+    *,
+    provider_name: str,
+    kind: str,
+) -> None:
+    validate_operation_kind(kind)
+    caps = provider.capabilities
+    if kind == "collection" and not caps.supports_collection:
+        raise PyMomoSDKError(
+            f"Provider '{provider_name}' does not support collection status queries"
+        )
+    if kind == "disbursement" and not caps.supports_disbursement:
+        raise PyMomoSDKError(
+            f"Provider '{provider_name}' does not support disbursement status queries"
+        )
+
+
+def _ensure_balance_supported(
+    provider: PaymentProvider | AsyncPaymentProvider,
+    *,
+    provider_name: str,
+    kind: str,
+) -> None:
+    validate_operation_kind(kind)
+    if not provider.capabilities.supports_balance:
+        raise PyMomoSDKError(
+            f"Provider '{provider_name}' does not support balance queries"
+        )
+
+
 class PaymentRouter:
-    """Route normalized payment operations across registered providers."""
+    """Thread-safe router for normalized payment operations across registered providers."""
 
     def __init__(
         self,
         providers: Sequence[PaymentProvider] = (),
         *,
         default_provider: str | None = None,
+        custom_carrier_prefixes: Mapping[str, tuple[str, str]] | None = None,
     ) -> None:
+        self._lock = threading.RLock()
         self._providers: dict[str, PaymentProvider] = {}
         self._order: list[str] = []
         self._default_provider = default_provider
+        self._custom_carrier_prefixes = (
+            dict(custom_carrier_prefixes)
+            if custom_carrier_prefixes is not None
+            else None
+        )
         for provider in providers:
             self.register(provider)
         if (
-            providers
-            and self._default_provider is not None
+            self._default_provider is not None
             and self._default_provider not in self._providers
         ):
             raise PyMomoSDKError(
@@ -126,22 +200,30 @@ class PaymentRouter:
 
     def register(self, provider: PaymentProvider) -> None:
         """Register a synchronous payment provider adapter."""
-        if provider.name not in self._providers:
-            self._order.append(provider.name)
-        self._providers[provider.name] = provider
-        if self._default_provider is None:
-            self._default_provider = provider.name
+        if not _is_sync_provider(provider):
+            raise TypeError(
+                "PaymentRouter requires a synchronous PaymentProvider adapter"
+            )
+        with self._lock:
+            is_new = provider.name not in self._providers
+            self._providers[provider.name] = provider
+            if is_new:
+                self._order.append(provider.name)
+            if self._default_provider is None:
+                self._default_provider = provider.name
 
     def get(self, name: str) -> PaymentProvider:
         """Return a registered provider by name."""
-        provider = self._providers.get(name)
+        with self._lock:
+            provider = self._providers.get(name)
         if provider is None:
             raise PyMomoSDKError(f"Provider is not registered: {name}")
         return provider
 
     def list_providers(self) -> list[str]:
         """Return registered provider identifiers in registration order."""
-        return list(self._order)
+        with self._lock:
+            return list(self._order)
 
     def _resolve_candidates(
         self,
@@ -152,8 +234,15 @@ class PaymentRouter:
         currency: str,
         fallback: bool,
     ) -> list[PaymentProvider]:
+        with self._lock:
+            providers_snapshot = dict(self._providers)
+            order_snapshot = list(self._order)
+            default_name = self._default_provider
+
         if provider is not None:
-            explicit = self.get(provider)
+            explicit = providers_snapshot.get(provider)
+            if explicit is None:
+                raise PyMomoSDKError(f"Provider is not registered: {provider}")
             if not _supports_operation_and_currency(
                 explicit, operation=operation, currency=currency
             ):
@@ -162,27 +251,26 @@ class PaymentRouter:
                 )
             candidates = [explicit]
         else:
-            if (
-                self._default_provider is not None
-                and self._default_provider not in self._providers
-            ):
+            if default_name is not None and default_name not in providers_snapshot:
                 raise PyMomoSDKError(
-                    f"Default provider is not registered: {self._default_provider}"
+                    f"Default provider is not registered: {default_name}"
                 )
             candidates = []
-            inferred = detect_carrier_from_msisdn(msisdn) if msisdn else None
-            if inferred and inferred[1] in self._providers:
-                cand = self._providers[inferred[1]]
+            inferred = (
+                detect_carrier_from_msisdn(
+                    msisdn, custom_prefixes=self._custom_carrier_prefixes
+                )
+                if msisdn
+                else None
+            )
+            if inferred and inferred[1] in providers_snapshot:
+                cand = providers_snapshot[inferred[1]]
                 if _supports_operation_and_currency(
                     cand, operation=operation, currency=currency
                 ):
                     candidates.append(cand)
-            if (
-                not candidates
-                and self._default_provider
-                and self._default_provider in self._providers
-            ):
-                def_cand = self._providers[self._default_provider]
+            if not candidates and default_name and default_name in providers_snapshot:
+                def_cand = providers_snapshot[default_name]
                 if _supports_operation_and_currency(
                     def_cand, operation=operation, currency=currency
                 ):
@@ -190,9 +278,9 @@ class PaymentRouter:
 
         if fallback:
             seen = {c.name for c in candidates}
-            for name in self._order:
+            for name in order_snapshot:
                 if name not in seen:
-                    cand = self._providers[name]
+                    cand = providers_snapshot[name]
                     if _supports_operation_and_currency(
                         cand, operation=operation, currency=currency
                     ):
@@ -217,7 +305,9 @@ class PaymentRouter:
         authentication/credential errors (``AuthenticationError``,
         ``MissingCredentialsError``) to prevent double-charging on ambiguous 5xx
         responses. Pass ``allow_ambiguous_write_fallback=True`` only if you
-        reconcile transactions across both rails.
+        reconcile transactions across both rails; when enabled, a deterministic
+        ``reference_id`` is pre-generated before attempting the first rail so
+        every attempted rail can be reconciled.
         """
         candidates = self._resolve_candidates(
             provider=provider,
@@ -226,16 +316,34 @@ class PaymentRouter:
             currency=request.currency,
             fallback=fallback,
         )
+        effective_request = request
+        if (
+            fallback
+            and allow_ambiguous_write_fallback
+            and len(candidates) > 1
+            and effective_request.reference_id is None
+        ):
+            effective_request = effective_request.model_copy(
+                update={"reference_id": generate_reference_id()}
+            )
         failover_errors: tuple[type[PyMomoSDKError], ...] = (
             (AuthenticationError, MissingCredentialsError, PyMomoSDKServerError)
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
         last_exc: PyMomoSDKError | None = None
+        attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
             try:
-                return candidate.collect(request)
+                result = candidate.collect(effective_request)
+                if attempted_refs:
+                    result.raw.setdefault(
+                        "prior_failed_attempts",
+                        [{"provider": p, "reference_id": r} for p, r in attempted_refs],
+                    )
+                return result
             except failover_errors as exc:
+                attempted_refs.append((candidate.name, effective_request.reference_id))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
                     raise
@@ -257,16 +365,34 @@ class PaymentRouter:
             currency=request.currency,
             fallback=fallback,
         )
+        effective_request = request
+        if (
+            fallback
+            and allow_ambiguous_write_fallback
+            and len(candidates) > 1
+            and effective_request.reference_id is None
+        ):
+            effective_request = effective_request.model_copy(
+                update={"reference_id": generate_reference_id()}
+            )
         failover_errors: tuple[type[PyMomoSDKError], ...] = (
             (AuthenticationError, MissingCredentialsError, PyMomoSDKServerError)
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
         last_exc: PyMomoSDKError | None = None
+        attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
             try:
-                return candidate.disburse(request)
+                result = candidate.disburse(effective_request)
+                if attempted_refs:
+                    result.raw.setdefault(
+                        "prior_failed_attempts",
+                        [{"provider": p, "reference_id": r} for p, r in attempted_refs],
+                    )
+                return result
             except failover_errors as exc:
+                attempted_refs.append((candidate.name, effective_request.reference_id))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
                     raise
@@ -280,16 +406,38 @@ class PaymentRouter:
         kind: str = "collection",
     ) -> PaymentResult:
         """Query transaction status on a specific registered provider."""
-        return self.get(provider).get_status(reference_id, kind=kind)
+        target = self.get(provider)
+        _ensure_status_supported(target, provider_name=provider, kind=kind)
+        return target.get_status(reference_id, kind=kind)
 
     def get_balance(
         self,
         *,
         provider: str,
         kind: str = "collection",
+        currency: str | None = None,
     ) -> BalanceResult:
         """Query account balance on a specific registered provider."""
-        return self.get(provider).get_balance(kind=kind)
+        target = self.get(provider)
+        _ensure_balance_supported(target, provider_name=provider, kind=kind)
+        if currency is not None:
+            return target.get_balance(kind=kind, currency=currency)
+        return target.get_balance(kind=kind)
+
+    def close(self) -> None:
+        """Close all registered providers that expose a ``close()`` method."""
+        with self._lock:
+            providers_snapshot = list(self._providers.values())
+        for prov in providers_snapshot:
+            closer = getattr(prov, "close", None)
+            if callable(closer):
+                closer()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncPaymentRouter:
@@ -300,15 +448,21 @@ class AsyncPaymentRouter:
         providers: Sequence[AsyncPaymentProvider] = (),
         *,
         default_provider: str | None = None,
+        custom_carrier_prefixes: Mapping[str, tuple[str, str]] | None = None,
     ) -> None:
+        self._lock = threading.RLock()
         self._providers: dict[str, AsyncPaymentProvider] = {}
         self._order: list[str] = []
         self._default_provider = default_provider
+        self._custom_carrier_prefixes = (
+            dict(custom_carrier_prefixes)
+            if custom_carrier_prefixes is not None
+            else None
+        )
         for provider in providers:
             self.register(provider)
         if (
-            providers
-            and self._default_provider is not None
+            self._default_provider is not None
             and self._default_provider not in self._providers
         ):
             raise PyMomoSDKError(
@@ -317,22 +471,30 @@ class AsyncPaymentRouter:
 
     def register(self, provider: AsyncPaymentProvider) -> None:
         """Register an asynchronous payment provider adapter."""
-        if provider.name not in self._providers:
-            self._order.append(provider.name)
-        self._providers[provider.name] = provider
-        if self._default_provider is None:
-            self._default_provider = provider.name
+        if not _is_async_provider(provider):
+            raise TypeError(
+                "AsyncPaymentRouter requires an asynchronous AsyncPaymentProvider adapter"
+            )
+        with self._lock:
+            is_new = provider.name not in self._providers
+            self._providers[provider.name] = provider
+            if is_new:
+                self._order.append(provider.name)
+            if self._default_provider is None:
+                self._default_provider = provider.name
 
     def get(self, name: str) -> AsyncPaymentProvider:
         """Return a registered async provider by name."""
-        provider = self._providers.get(name)
+        with self._lock:
+            provider = self._providers.get(name)
         if provider is None:
             raise PyMomoSDKError(f"Provider is not registered: {name}")
         return provider
 
     def list_providers(self) -> list[str]:
         """Return registered provider identifiers in registration order."""
-        return list(self._order)
+        with self._lock:
+            return list(self._order)
 
     def _resolve_candidates(
         self,
@@ -343,8 +505,15 @@ class AsyncPaymentRouter:
         currency: str,
         fallback: bool,
     ) -> list[AsyncPaymentProvider]:
+        with self._lock:
+            providers_snapshot = dict(self._providers)
+            order_snapshot = list(self._order)
+            default_name = self._default_provider
+
         if provider is not None:
-            explicit = self.get(provider)
+            explicit = providers_snapshot.get(provider)
+            if explicit is None:
+                raise PyMomoSDKError(f"Provider is not registered: {provider}")
             if not _supports_operation_and_currency(
                 explicit, operation=operation, currency=currency
             ):
@@ -353,27 +522,26 @@ class AsyncPaymentRouter:
                 )
             candidates = [explicit]
         else:
-            if (
-                self._default_provider is not None
-                and self._default_provider not in self._providers
-            ):
+            if default_name is not None and default_name not in providers_snapshot:
                 raise PyMomoSDKError(
-                    f"Default provider is not registered: {self._default_provider}"
+                    f"Default provider is not registered: {default_name}"
                 )
             candidates = []
-            inferred = detect_carrier_from_msisdn(msisdn) if msisdn else None
-            if inferred and inferred[1] in self._providers:
-                cand = self._providers[inferred[1]]
+            inferred = (
+                detect_carrier_from_msisdn(
+                    msisdn, custom_prefixes=self._custom_carrier_prefixes
+                )
+                if msisdn
+                else None
+            )
+            if inferred and inferred[1] in providers_snapshot:
+                cand = providers_snapshot[inferred[1]]
                 if _supports_operation_and_currency(
                     cand, operation=operation, currency=currency
                 ):
                     candidates.append(cand)
-            if (
-                not candidates
-                and self._default_provider
-                and self._default_provider in self._providers
-            ):
-                def_cand = self._providers[self._default_provider]
+            if not candidates and default_name and default_name in providers_snapshot:
+                def_cand = providers_snapshot[default_name]
                 if _supports_operation_and_currency(
                     def_cand, operation=operation, currency=currency
                 ):
@@ -381,9 +549,9 @@ class AsyncPaymentRouter:
 
         if fallback:
             seen = {c.name for c in candidates}
-            for name in self._order:
+            for name in order_snapshot:
                 if name not in seen:
-                    cand = self._providers[name]
+                    cand = providers_snapshot[name]
                     if _supports_operation_and_currency(
                         cand, operation=operation, currency=currency
                     ):
@@ -409,16 +577,34 @@ class AsyncPaymentRouter:
             currency=request.currency,
             fallback=fallback,
         )
+        effective_request = request
+        if (
+            fallback
+            and allow_ambiguous_write_fallback
+            and len(candidates) > 1
+            and effective_request.reference_id is None
+        ):
+            effective_request = effective_request.model_copy(
+                update={"reference_id": generate_reference_id()}
+            )
         failover_errors: tuple[type[PyMomoSDKError], ...] = (
             (AuthenticationError, MissingCredentialsError, PyMomoSDKServerError)
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
         last_exc: PyMomoSDKError | None = None
+        attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
             try:
-                return await candidate.collect(request)
+                result = await candidate.collect(effective_request)
+                if attempted_refs:
+                    result.raw.setdefault(
+                        "prior_failed_attempts",
+                        [{"provider": p, "reference_id": r} for p, r in attempted_refs],
+                    )
+                return result
             except failover_errors as exc:
+                attempted_refs.append((candidate.name, effective_request.reference_id))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
                     raise
@@ -439,16 +625,34 @@ class AsyncPaymentRouter:
             currency=request.currency,
             fallback=fallback,
         )
+        effective_request = request
+        if (
+            fallback
+            and allow_ambiguous_write_fallback
+            and len(candidates) > 1
+            and effective_request.reference_id is None
+        ):
+            effective_request = effective_request.model_copy(
+                update={"reference_id": generate_reference_id()}
+            )
         failover_errors: tuple[type[PyMomoSDKError], ...] = (
             (AuthenticationError, MissingCredentialsError, PyMomoSDKServerError)
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
         last_exc: PyMomoSDKError | None = None
+        attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
             try:
-                return await candidate.disburse(request)
+                result = await candidate.disburse(effective_request)
+                if attempted_refs:
+                    result.raw.setdefault(
+                        "prior_failed_attempts",
+                        [{"provider": p, "reference_id": r} for p, r in attempted_refs],
+                    )
+                return result
             except failover_errors as exc:
+                attempted_refs.append((candidate.name, effective_request.reference_id))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
                     raise
@@ -461,12 +665,46 @@ class AsyncPaymentRouter:
         provider: str,
         kind: str = "collection",
     ) -> PaymentResult:
-        return await self.get(provider).get_status(reference_id, kind=kind)
+        target = self.get(provider)
+        _ensure_status_supported(target, provider_name=provider, kind=kind)
+        return await target.get_status(reference_id, kind=kind)
 
     async def get_balance(
         self,
         *,
         provider: str,
         kind: str = "collection",
+        currency: str | None = None,
     ) -> BalanceResult:
-        return await self.get(provider).get_balance(kind=kind)
+        target = self.get(provider)
+        _ensure_balance_supported(target, provider_name=provider, kind=kind)
+        if currency is not None:
+            return await target.get_balance(kind=kind, currency=currency)
+        return await target.get_balance(kind=kind)
+
+    async def aclose(self) -> None:
+        """Asynchronously close all registered providers that expose ``aclose()`` or ``close()``."""
+        with self._lock:
+            providers_snapshot = list(self._providers.values())
+        for prov in providers_snapshot:
+            acloser = getattr(prov, "aclose", None)
+            if callable(acloser):
+                res = acloser()
+                if inspect.isawaitable(res):
+                    await res
+                continue
+            closer = getattr(prov, "close", None)
+            if callable(closer):
+                res = closer()
+                if inspect.isawaitable(res):
+                    await res
+
+    async def close(self) -> None:
+        """Alias for ``aclose()``."""
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

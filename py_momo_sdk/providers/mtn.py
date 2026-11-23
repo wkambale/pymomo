@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from py_momo_sdk._async.client import AsyncPyMomoSDK
 from py_momo_sdk.client import PyMomoSDK
 from py_momo_sdk.models import TransactionResult, TransactionStatus
@@ -13,6 +15,9 @@ from py_momo_sdk.providers.models import (
     validate_operation_kind,
 )
 from py_momo_sdk.utils import generate_reference_id
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 _MTN_STATUS_MAP = {
     TransactionStatus.pending: NormalizedStatus.PENDING,
@@ -112,12 +117,19 @@ class MtnMomoProvider:
             result = self._client.collection.get_payment_status(reference_id)
         return _map_mtn_result(reference_id, result)
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
-        balance = (
-            self._client.disbursement.get_balance()
+        product = (
+            self._client.disbursement
             if kind == "disbursement"
-            else self._client.collection.get_balance()
+            else self._client.collection
+        )
+        balance = (
+            product.get_balance_for_currency(currency)
+            if currency is not None
+            else product.get_balance()
         )
         return BalanceResult(
             provider=self.name,
@@ -125,6 +137,15 @@ class MtnMomoProvider:
             currency=balance.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncMtnMomoProvider:
@@ -195,12 +216,19 @@ class AsyncMtnMomoProvider:
             result = await self._client.collection.get_payment_status(reference_id)
         return _map_mtn_result(reference_id, result)
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
         validate_operation_kind(kind)
-        balance = (
-            await self._client.disbursement.get_balance()
+        product = (
+            self._client.disbursement
             if kind == "disbursement"
-            else await self._client.collection.get_balance()
+            else self._client.collection
+        )
+        balance = (
+            await product.get_balance_for_currency(currency)
+            if currency is not None
+            else await product.get_balance()
         )
         return BalanceResult(
             provider=self.name,
@@ -208,3 +236,15 @@ class AsyncMtnMomoProvider:
             currency=balance.currency,
             raw=balance.model_dump(mode="json"),
         )
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

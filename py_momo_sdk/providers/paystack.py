@@ -592,6 +592,15 @@ class PaystackProvider:
             raw=res,
         )
 
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
 
 class AsyncPaystackProvider:
     """Asynchronous unified provider adapter for Paystack."""
@@ -679,3 +688,15 @@ class AsyncPaystackProvider:
             currency=resolved_currency,
             raw=res,
         )
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

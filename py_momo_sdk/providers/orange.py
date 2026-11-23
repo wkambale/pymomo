@@ -717,9 +717,21 @@ class OrangeMoneyProvider:
             raw=res,
         )
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         raise NotImplementedError("Orange Money Web Payment does not expose balances")
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncOrangeMoneyProvider:
@@ -804,6 +816,21 @@ class AsyncOrangeMoneyProvider:
             raw=res,
         )
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         raise NotImplementedError("Orange Money Web Payment does not expose balances")
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

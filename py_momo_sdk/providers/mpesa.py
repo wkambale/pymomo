@@ -792,9 +792,21 @@ class MpesaProvider:
             )
         return _map_mpesa_query(reference_id, self._client.stk_query(reference_id))
 
-    def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         raise NotImplementedError("M-Pesa balance queries use asynchronous callbacks")
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 class AsyncMpesaProvider:
@@ -882,6 +894,21 @@ class AsyncMpesaProvider:
         res = await self._client.stk_query(reference_id)
         return _map_mpesa_query(reference_id, res)
 
-    async def get_balance(self, *, kind: str = "collection") -> BalanceResult:
+    async def get_balance(
+        self, *, kind: str = "collection", currency: str | None = None
+    ) -> BalanceResult:
+        del currency
         validate_operation_kind(kind)
         raise NotImplementedError("M-Pesa balance queries use asynchronous callbacks")
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+    async def close(self) -> None:
+        await self.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()

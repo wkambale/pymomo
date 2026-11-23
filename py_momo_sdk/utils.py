@@ -628,50 +628,197 @@ _CARRIER_PREFIX_MAP: tuple[tuple[str, str, str], ...] = (
     ("25674", "UG", "airtel_money"),
     # Ghana (233)
     ("23324", "GH", "mtn_momo"),
+    ("23325", "GH", "mtn_momo"),
+    ("23353", "GH", "mtn_momo"),
     ("23354", "GH", "mtn_momo"),
     ("23355", "GH", "mtn_momo"),
     ("23359", "GH", "mtn_momo"),
-    ("23327", "GH", "airtel_money"),
-    ("23357", "GH", "airtel_money"),
     ("23326", "GH", "airtel_money"),
-    # Kenya (254)
+    ("23327", "GH", "airtel_money"),
+    ("23356", "GH", "airtel_money"),
+    ("23357", "GH", "airtel_money"),
+    # Kenya (254) — 6-digit Safaricom/Airtel allocations avoid Telkom (744) & Faiba (747)
+    ("254740", "KE", "mpesa"),
+    ("254741", "KE", "mpesa"),
+    ("254742", "KE", "mpesa"),
+    ("254743", "KE", "mpesa"),
+    ("254745", "KE", "mpesa"),
+    ("254746", "KE", "mpesa"),
+    ("254748", "KE", "mpesa"),
+    ("254757", "KE", "mpesa"),
+    ("254758", "KE", "mpesa"),
+    ("254759", "KE", "mpesa"),
+    ("254768", "KE", "mpesa"),
+    ("254769", "KE", "mpesa"),
+    ("254750", "KE", "airtel_money"),
+    ("254751", "KE", "airtel_money"),
+    ("254752", "KE", "airtel_money"),
+    ("254753", "KE", "airtel_money"),
+    ("254754", "KE", "airtel_money"),
+    ("254755", "KE", "airtel_money"),
+    ("254756", "KE", "airtel_money"),
+    ("254762", "KE", "airtel_money"),
     ("25470", "KE", "mpesa"),
     ("25471", "KE", "mpesa"),
     ("25472", "KE", "mpesa"),
-    ("25474", "KE", "mpesa"),
     ("25479", "KE", "mpesa"),
     ("25411", "KE", "mpesa"),
+    ("25410", "KE", "airtel_money"),
     ("25473", "KE", "airtel_money"),
     ("25478", "KE", "airtel_money"),
+    # Tanzania (255)
+    ("25574", "TZ", "mpesa"),
+    ("25575", "TZ", "mpesa"),
+    ("25576", "TZ", "mpesa"),
+    ("25568", "TZ", "airtel_money"),
+    ("25569", "TZ", "airtel_money"),
+    ("25578", "TZ", "airtel_money"),
+    ("25579", "TZ", "airtel_money"),
     # Rwanda (250)
     ("25078", "RW", "mtn_momo"),
     ("25079", "RW", "mtn_momo"),
     ("25072", "RW", "airtel_money"),
     ("25073", "RW", "airtel_money"),
+    # Zambia (260)
+    ("26076", "ZM", "mtn_momo"),
+    ("26096", "ZM", "mtn_momo"),
+    ("26077", "ZM", "airtel_money"),
+    ("26097", "ZM", "airtel_money"),
+    # Malawi (265)
+    ("26598", "MW", "airtel_money"),
+    ("26599", "MW", "airtel_money"),
+    # DRC (243)
+    ("24381", "CD", "mpesa"),
+    ("24382", "CD", "mpesa"),
+    ("24383", "CD", "mpesa"),
+    ("24397", "CD", "airtel_money"),
+    ("24398", "CD", "airtel_money"),
+    ("24399", "CD", "airtel_money"),
+    ("24384", "CD", "orange_money"),
+    ("24385", "CD", "orange_money"),
+    ("24389", "CD", "orange_money"),
+    # Ethiopia (251)
+    ("2517", "ET", "mpesa"),
+    # Cameroon (237)
+    ("237650", "CM", "mtn_momo"),
+    ("237651", "CM", "mtn_momo"),
+    ("237652", "CM", "mtn_momo"),
+    ("237653", "CM", "mtn_momo"),
+    ("237654", "CM", "mtn_momo"),
+    ("237655", "CM", "orange_money"),
+    ("237656", "CM", "orange_money"),
+    ("237657", "CM", "orange_money"),
+    ("237658", "CM", "orange_money"),
+    ("237659", "CM", "orange_money"),
+    ("23767", "CM", "mtn_momo"),
+    ("23768", "CM", "mtn_momo"),
+    ("23769", "CM", "orange_money"),
+    # Nigeria (234)
+    ("234703", "NG", "mtn_momo"),
+    ("234706", "NG", "mtn_momo"),
+    ("234803", "NG", "mtn_momo"),
+    ("234806", "NG", "mtn_momo"),
+    ("234810", "NG", "mtn_momo"),
+    ("234813", "NG", "mtn_momo"),
+    ("234814", "NG", "mtn_momo"),
+    ("234816", "NG", "mtn_momo"),
+    ("234903", "NG", "mtn_momo"),
+    ("234906", "NG", "mtn_momo"),
+    ("234913", "NG", "mtn_momo"),
+    ("234916", "NG", "mtn_momo"),
+    ("234701", "NG", "airtel_money"),
+    ("234708", "NG", "airtel_money"),
+    ("234802", "NG", "airtel_money"),
+    ("234808", "NG", "airtel_money"),
+    ("234812", "NG", "airtel_money"),
+    ("234901", "NG", "airtel_money"),
+    ("234902", "NG", "airtel_money"),
+    ("234904", "NG", "airtel_money"),
+    ("234907", "NG", "airtel_money"),
+    ("234912", "NG", "airtel_money"),
+    # South Africa (27)
+    ("27710", "ZA", "mtn_momo"),
+    ("27717", "ZA", "mtn_momo"),
+    ("27718", "ZA", "mtn_momo"),
+    ("27719", "ZA", "mtn_momo"),
+    ("2763", "ZA", "mtn_momo"),
+    ("2768", "ZA", "mtn_momo"),
+    ("2773", "ZA", "mtn_momo"),
+    ("2778", "ZA", "mtn_momo"),
+    ("2783", "ZA", "mtn_momo"),
     # Ivory Coast (225)
     ("22505", "CI", "mtn_momo"),
     ("22507", "CI", "orange_money"),
     ("22501", "CI", "moov_money"),
-    # Senegal (221)
+    # Senegal (221) — Wave is an OTT wallet across all SIMs; only Orange prefixes map directly
     ("22177", "SN", "orange_money"),
     ("22178", "SN", "orange_money"),
-    ("22176", "SN", "wave"),
-    ("22170", "SN", "wave"),
+    # Benin (229)
+    ("229015", "BJ", "mtn_momo"),
+    ("229016", "BJ", "mtn_momo"),
+    ("229019", "BJ", "mtn_momo"),
+    ("22950", "BJ", "mtn_momo"),
+    ("22951", "BJ", "mtn_momo"),
+    ("22952", "BJ", "mtn_momo"),
+    ("22953", "BJ", "mtn_momo"),
+    ("22954", "BJ", "mtn_momo"),
+    ("22956", "BJ", "mtn_momo"),
+    ("22957", "BJ", "mtn_momo"),
+    ("22959", "BJ", "mtn_momo"),
+    ("22961", "BJ", "mtn_momo"),
+    ("22962", "BJ", "mtn_momo"),
+    ("22966", "BJ", "mtn_momo"),
+    ("22967", "BJ", "mtn_momo"),
+    ("22969", "BJ", "mtn_momo"),
+    ("22990", "BJ", "mtn_momo"),
+    ("22991", "BJ", "mtn_momo"),
+    ("22996", "BJ", "mtn_momo"),
+    ("22997", "BJ", "mtn_momo"),
+    # Congo-Brazzaville (242)
+    ("24206", "CG", "mtn_momo"),
+    ("24205", "CG", "airtel_money"),
+    # Liberia (231)
+    ("23155", "LR", "mtn_momo"),
+    ("23188", "LR", "mtn_momo"),
+    ("23177", "LR", "orange_money"),
+    # Guinea (224)
+    ("22466", "GN", "mtn_momo"),
+    ("22462", "GN", "orange_money"),
+    # Eswatini (268)
+    ("26876", "SZ", "mtn_momo"),
+    ("26878", "SZ", "mtn_momo"),
+)
+
+# Ensure longest prefixes always match first
+_SORTED_CARRIER_PREFIX_MAP: tuple[tuple[str, str, str], ...] = tuple(
+    sorted(_CARRIER_PREFIX_MAP, key=lambda item: len(item[0]), reverse=True)
 )
 
 
-def detect_carrier_from_msisdn(msisdn: str) -> tuple[str, str] | None:
+def detect_carrier_from_msisdn(
+    msisdn: str,
+    *,
+    custom_prefixes: Any = None,
+) -> tuple[str, str] | None:
     """Infer ``(country_code, provider_id)`` from an MSISDN prefix.
 
-    Returns ``None`` if the prefix is not in the built-in routing table. Callers
-    should allow explicit provider overrides for ported numbers.
+    Returns ``None`` if the prefix is not in the routing table. Pass
+    ``custom_prefixes`` (mapping prefix string to ``(country_code, provider_id)``)
+    to override ported numbers or OTT wallets such as Wave.
     """
     if not isinstance(msisdn, str):
         raise TypeError("MSISDN must be a string")
     digits = re.sub(r"[^0-9]", "", msisdn).removeprefix("00")
     if not (10 <= len(digits) <= 15):
         return None
-    for prefix, country, provider in _CARRIER_PREFIX_MAP:
+    if custom_prefixes is not None:
+        for prefix, target in sorted(
+            custom_prefixes.items(), key=lambda kv: len(str(kv[0])), reverse=True
+        ):
+            clean_prefix = re.sub(r"[^0-9]", "", str(prefix)).removeprefix("00")
+            if clean_prefix and digits.startswith(clean_prefix):
+                return (str(target[0]), str(target[1]))
+    for prefix, country, provider in _SORTED_CARRIER_PREFIX_MAP:
         if digits.startswith(prefix):
             return (country, provider)
     return None
