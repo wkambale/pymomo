@@ -8,12 +8,13 @@ from py_momo_sdk.airtel.models import (
     AirtelDisbursementRequest,
     AirtelDisbursementTransaction,
     AirtelTransactionResponse,
+    check_airtel_response_status,
+    normalise_airtel_msisdn,
 )
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
-    normalise_msisdn,
     validate_airtel_reference_id,
 )
 
@@ -32,6 +33,10 @@ class AsyncAirtelDisbursement:
         amount: str,
         payee_msisdn: str,
         reference_id: str | None = None,
+        *,
+        external_id: str | None = None,
+        transaction_type: str | None = None,
+        wallet_type: str | None = None,
     ) -> str:
         """Initiate a disbursement (payout) to a subscriber asynchronously."""
         if not self._client._config.pin:
@@ -39,19 +44,36 @@ class AsyncAirtelDisbursement:
 
         ref = reference_id or generate_reference_id()
         validate_airtel_reference_id(ref)
+        merchant_ref = external_id or ref
 
         payload = AirtelDisbursementRequest(
-            payee=AirtelDisbursementPayee(msisdn=normalise_msisdn(payee_msisdn)),
-            reference=ref,
+            payee=AirtelDisbursementPayee(
+                msisdn=normalise_airtel_msisdn(
+                    payee_msisdn, self._client._config.country
+                ),
+                wallet_type=wallet_type,
+            ),
+            reference=merchant_ref,
             pin=self._client._config.pin,
-            transaction=AirtelDisbursementTransaction(amount=amount, id=ref),
+            transaction=AirtelDisbursementTransaction(
+                amount=amount,
+                id=ref,
+                type=transaction_type,
+            ),
         )
 
-        await self._client.request(
+        response = await self._client.request(
             "POST",
             "/standard/v1/disbursements/",
-            json=payload.model_dump(by_alias=True, mode="json"),
+            json=payload.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_response_status(parsed, reference_id=ref)
         return ref
 
     async def get_transfer_status(self, reference_id: str) -> AirtelTransactionResponse:
@@ -70,4 +92,11 @@ class AsyncAirtelDisbursement:
             "GET",
             "/merchant/v2/wallets/balance/",
         )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_response_status(parsed)
         return parse_model(response, AirtelBalanceResponse)

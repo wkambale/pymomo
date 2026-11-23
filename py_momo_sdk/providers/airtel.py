@@ -79,6 +79,7 @@ class AirtelMoneyProvider:
             amount=request.amount,
             payer_msisdn=request.payer_msisdn,
             reference_id=request.reference_id,
+            external_id=request.external_id or None,
         )
         return PaymentResult(
             provider=self.name,
@@ -97,6 +98,7 @@ class AirtelMoneyProvider:
             amount=request.amount,
             payee_msisdn=request.payee_msisdn,
             reference_id=request.reference_id,
+            external_id=request.external_id or None,
         )
         return PaymentResult(
             provider=self.name,
@@ -151,6 +153,7 @@ class AsyncAirtelMoneyProvider:
             amount=request.amount,
             payer_msisdn=request.payer_msisdn,
             reference_id=request.reference_id,
+            external_id=request.external_id or None,
         )
         return PaymentResult(
             provider=self.name,
@@ -169,6 +172,7 @@ class AsyncAirtelMoneyProvider:
             amount=request.amount,
             payee_msisdn=request.payee_msisdn,
             reference_id=request.reference_id,
+            external_id=request.external_id or None,
         )
         return PaymentResult(
             provider=self.name,

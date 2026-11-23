@@ -1,8 +1,107 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from py_momo_sdk.utils import validate_amount, validate_country_code, validate_currency
+from py_momo_sdk.exceptions import (
+    BadRequestError,
+    PyMomoSDKError,
+    TransactionFailedError,
+)
+from py_momo_sdk.utils import (
+    normalise_msisdn,
+    validate_amount,
+    validate_country_code,
+    validate_currency,
+)
+
+_AIRTEL_COUNTRY_CALLING_CODES: dict[str, str] = {
+    "CD": "243",
+    "CG": "242",
+    "GA": "241",
+    "GH": "233",
+    "KE": "254",
+    "MG": "261",
+    "MW": "265",
+    "NE": "227",
+    "NG": "234",
+    "RW": "250",
+    "SC": "248",
+    "TD": "235",
+    "TZ": "255",
+    "UG": "256",
+    "ZM": "260",
+}
+
+_AIRTEL_TERMINAL_FAILURE_STATUSES = frozenset(
+    {"TF", "FAILED", "FAIL", "REJECTED", "CANCELLED", "CANCELED", "EXPIRED"}
+)
+
+
+def normalise_airtel_msisdn(msisdn: str, country: str) -> str:
+    """Normalise an MSISDN to Airtel Africa's local subscriber format.
+
+    Strips formatting characters, leading ``00``, the matching country calling
+    code for ``country`` (e.g. ``256`` for ``UG``), and any leading trunk ``0``
+    so the local subscriber digits (e.g. ``701234567``) match Airtel's
+    ``X-Country`` header contract.
+    """
+    digits = normalise_msisdn(msisdn)
+    calling_code = _AIRTEL_COUNTRY_CALLING_CODES.get(country.upper())
+    if (
+        calling_code
+        and digits.startswith(calling_code)
+        and len(digits) - len(calling_code) >= 7
+    ):
+        digits = digits[len(calling_code) :]
+    if digits.startswith("0") and len(digits) > 7:
+        digits = digits.lstrip("0")
+    return digits
+
+
+def check_airtel_response_status(
+    data: dict[str, Any], *, reference_id: str | None = None
+) -> None:
+    """Inspect an Airtel HTTP 200 JSON envelope and raise on business failures."""
+    status_obj = data.get("status")
+    status_success: bool | None = None
+    status_code_str: str | None = None
+    status_msg: str | None = None
+    if isinstance(status_obj, dict):
+        raw_success = status_obj.get("success")
+        if isinstance(raw_success, bool):
+            status_success = raw_success
+        raw_code = status_obj.get("code")
+        if isinstance(raw_code, str) and raw_code.strip():
+            status_code_str = raw_code.strip()
+        raw_msg = status_obj.get("message")
+        if isinstance(raw_msg, str) and raw_msg.strip():
+            status_msg = raw_msg.strip()
+
+    tx_status: str | None = None
+    tx_msg: str | None = None
+    data_obj = data.get("data")
+    if isinstance(data_obj, dict):
+        tx_obj = data_obj.get("transaction")
+        if isinstance(tx_obj, dict):
+            raw_tx_status = tx_obj.get("status")
+            if isinstance(raw_tx_status, str) and raw_tx_status.strip():
+                tx_status = raw_tx_status.strip().upper()
+            raw_tx_msg = tx_obj.get("message")
+            if isinstance(raw_tx_msg, str) and raw_tx_msg.strip():
+                tx_msg = raw_tx_msg.strip()
+
+    reason = tx_msg or status_msg or "Airtel transaction rejected"
+    if status_success is False:
+        if reference_id is not None and tx_status in _AIRTEL_TERMINAL_FAILURE_STATUSES:
+            raise TransactionFailedError(reference_id=reference_id, reason=reason)
+        if status_code_str == "400":
+            raise BadRequestError(reason, response_body=data)
+        raise PyMomoSDKError(reason)
+    if reference_id is not None and tx_status in _AIRTEL_TERMINAL_FAILURE_STATUSES:
+        raise TransactionFailedError(reference_id=reference_id, reason=reason)
+
 
 # --- Request models ---
 
@@ -67,6 +166,10 @@ class AirtelDisbursementPayee(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     msisdn: str
+    wallet_type: str | None = None
+    currency: str | None = None
+    country: str | None = None
+    name: str | None = None
 
 
 class AirtelDisbursementTransaction(BaseModel):
@@ -74,6 +177,9 @@ class AirtelDisbursementTransaction(BaseModel):
 
     amount: str
     id: str
+    type: str | None = None
+    country: str | None = None
+    currency: str | None = None
 
     @field_validator("amount")
     @classmethod
@@ -108,7 +214,8 @@ class AirtelStatus(BaseModel):
 
     code: str
     message: str
-    result_code: str = Field(alias="result_code")
+    result_code: str | None = Field(default=None, alias="result_code")
+    success: bool | None = None
 
 
 class AirtelTransactionDetails(BaseModel):
@@ -150,6 +257,8 @@ class AirtelTransactionResponse(BaseModel):
         cannot falsely mark a pending, initiated, or failed transaction as
         successful.
         """
+        if self.status.success is False:
+            return False
         tx_status = self._normalized_tx_status()
         if tx_status is None:
             return False
@@ -157,20 +266,24 @@ class AirtelTransactionResponse(BaseModel):
 
     def is_pending(self) -> bool:
         """Verify if the transaction status is currently pending."""
+        if self.status.success is False:
+            return False
         tx_status = self._normalized_tx_status()
         if tx_status is not None:
             return tx_status in _AIRTEL_PENDING_STATUSES
-        return self.status.result_code == "02"
+        return self.status.result_code in ("00", "02", "DP0000000000", None)
 
     def is_failed(self) -> bool:
         """Verify if the transaction status is failed."""
+        if self.status.success is False:
+            return True
         tx_status = self._normalized_tx_status()
         if tx_status is not None:
             return (
                 tx_status not in _AIRTEL_SUCCESS_STATUSES
                 and tx_status not in _AIRTEL_PENDING_STATUSES
             )
-        return self.status.result_code not in ("00", "02", "DP0000000000")
+        return self.status.result_code not in ("00", "02", "DP0000000000", None)
 
 
 class AirtelWalletDetails(BaseModel):
@@ -192,3 +305,4 @@ class AirtelBalanceResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     data: AirtelWalletData
+    status: AirtelStatus | None = None

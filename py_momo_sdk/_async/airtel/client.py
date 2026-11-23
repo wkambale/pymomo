@@ -19,6 +19,7 @@ from py_momo_sdk.http import (
     _compute_retry_delay,
     _get_header_ci,
     _is_retryable_request,
+    _ResponseTooLargeError,
     _sanitize_telemetry_path,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
@@ -62,6 +63,7 @@ class AsyncAirtelClient:
             client_id=config.client_id,
             client_secret=config.client_secret,
             base_url=base_url,
+            max_response_bytes=max_response_bytes,
         )
         if client is not None:
             injected_base = str(client.base_url)
@@ -127,19 +129,6 @@ class AsyncAirtelClient:
         target = (
             path if str(self._http.base_url) else f"{self._validated_base_url}{path}"
         )
-        if "request" in self._http.__dict__:
-            response = await self._http.request(
-                method,
-                target,
-                headers=headers,
-                json=json,
-            )
-            if len(response.content) > self._max_response_bytes:
-                raise PyMomoSDKError(
-                    f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
-                )
-            return response
-
         req = self._http.build_request(method, target, headers=headers, json=json)
         response = await self._http.send(req, stream=True, follow_redirects=False)
         try:
@@ -147,18 +136,18 @@ class AsyncAirtelClient:
             if cl_header is not None:
                 try:
                     if int(cl_header) > self._max_response_bytes:
-                        raise PyMomoSDKError(
+                        raise _ResponseTooLargeError(
                             f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                         )
                 except ValueError:
                     pass
             buf = bytearray()
             async for chunk in response.aiter_bytes():
-                buf.extend(chunk)
-                if len(buf) > self._max_response_bytes:
-                    raise PyMomoSDKError(
+                if len(buf) + len(chunk) > self._max_response_bytes:
+                    raise _ResponseTooLargeError(
                         f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                     )
+                buf.extend(chunk)
             response._content = bytes(buf)
         finally:
             await response.aclose()
@@ -186,6 +175,17 @@ class AsyncAirtelClient:
                 response = await self._execute_bounded(
                     method, path, headers=headers, json=json
                 )
+            except _ResponseTooLargeError:
+                self._emit_telemetry(
+                    method,
+                    path,
+                    None,
+                    started,
+                    attempt + 1,
+                    correlation_id,
+                    "ResponseTooLargeError",
+                )
+                raise
             except httpx.TimeoutException:
                 self._emit_telemetry(
                     method,

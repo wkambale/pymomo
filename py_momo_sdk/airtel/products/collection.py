@@ -7,12 +7,13 @@ from py_momo_sdk.airtel.models import (
     AirtelSubscriber,
     AirtelTransactionRequest,
     AirtelTransactionResponse,
+    check_airtel_response_status,
+    normalise_airtel_msisdn,
 )
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
-    normalise_msisdn,
     validate_airtel_reference_id,
 )
 
@@ -31,26 +32,32 @@ class Collection:
         amount: str,
         payer_msisdn: str,
         reference_id: str | None = None,
+        *,
+        external_id: str | None = None,
     ) -> str:
         """Initiate a payment collection (USSD Push).
 
         Args:
             amount: The transaction amount.
-            payer_msisdn: Phone number of the payer.
+            payer_msisdn: Phone number of the payer (international or local).
             reference_id: Optional client-supplied reference/transaction ID.
+            external_id: Optional merchant reference sent in Airtel's ``reference`` field.
 
         Returns:
             The reference ID associated with the transaction.
         """
         ref = reference_id or generate_reference_id()
         validate_airtel_reference_id(ref)
+        merchant_ref = external_id or ref
 
         payload = AirtelCollectionRequest(
-            reference=ref,
+            reference=merchant_ref,
             subscriber=AirtelSubscriber(
                 country=self._client._config.country,
                 currency=self._client._config.currency,
-                msisdn=normalise_msisdn(payer_msisdn),
+                msisdn=normalise_airtel_msisdn(
+                    payer_msisdn, self._client._config.country
+                ),
             ),
             transaction=AirtelTransactionRequest(
                 amount=amount,
@@ -60,11 +67,18 @@ class Collection:
             ),
         )
 
-        self._client.request(
+        response = self._client.request(
             "POST",
             "/merchant/v1/payments/",
-            json=payload.model_dump(by_alias=True, mode="json"),
+            json=payload.model_dump(by_alias=True, mode="json", exclude_none=True),
         )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_response_status(parsed, reference_id=ref)
         return ref
 
     def get_payment_status(self, reference_id: str) -> AirtelTransactionResponse:

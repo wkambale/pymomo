@@ -23,16 +23,30 @@ def test_airtel_token_cache_get_set_invalidate() -> None:
     assert cache.get() is None
 
 
-def test_airtel_token_cache_safety_margin_expiry() -> None:
-    """Verify that Airtel token expires prematurely based on the 30 seconds safety margin."""
+def test_airtel_token_cache_safety_margin_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify proportional safety margin for short TTLs and 30s cap for long TTLs (#84)."""
+    import py_momo_sdk.airtel.auth as airtel_auth_mod
+
+    now = [1000.0]
+    monkeypatch.setattr(airtel_auth_mod.time, "monotonic", lambda: now[0])
+
     cache = AirtelTokenCache()
+    # Short TTL (30s): 20% margin -> valid for 24s (not evicted immediately)
+    cache.set("airtel-short", 30)
+    assert cache.get() == "airtel-short"
+    now[0] = 1023.9
+    assert cache.get() == "airtel-short"
+    now[0] = 1024.0
+    assert cache.get() is None
 
-    # Expires in 31 seconds -> valid for 1 second
-    cache.set("airtel-token-2", 31)
-    assert cache.get() == "airtel-token-2"
-
-    # Expires in 29 seconds -> treated as expired immediately
-    cache.set("airtel-token-3", 29)
+    # Long TTL (3600s): 30s safety margin
+    now[0] = 2000.0
+    cache.set("airtel-long", 3600)
+    now[0] = 5569.9
+    assert cache.get() == "airtel-long"
+    now[0] = 5570.0
     assert cache.get() is None
 
 
@@ -133,13 +147,13 @@ def test_airtel_auth_get_token_exceptions() -> None:
 
     with httpx.Client(base_url="https://openapiuat.airtel.africa") as client:
         with patch.object(
-            client, "request", side_effect=httpx.TimeoutException("timeout")
+            client, "send", side_effect=httpx.TimeoutException("timeout")
         ):
             with pytest.raises(PyMomoSDKError) as excinfo:
                 auth.get_token(client)
             assert "Airtel authentication request timed out" in str(excinfo.value)
 
-        with patch.object(client, "request", side_effect=httpx.RequestError("conn")):
+        with patch.object(client, "send", side_effect=httpx.RequestError("conn")):
             with pytest.raises(PyMomoSDKError) as excinfo:
                 auth.get_token(client)
             assert "Airtel authentication request connection error" in str(
