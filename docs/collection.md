@@ -4,7 +4,7 @@ The Collection product allows you to receive payments and withdrawal requests fr
 
 ## Initializing the collection client
 
-Access collection methods via the `.collection` property of a `PyMomoSDK` instance:
+Always manage `PyMomoSDK` with a `with` statement (or call `client.close()`) so HTTP connection pools are released cleanly:
 
 ```python
 from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
@@ -15,29 +15,34 @@ config = PyMomoSDKConfig(
         subscription_key="your-subscription-key",
         api_user="550e8400-e29b-41d4-a716-446655440000",
         api_key="your-api-key",
+        callback_url="https://your-app.example.com/webhooks/mtn",
     ),
 )
 
-client = PyMomoSDK(config)
-collection_client = client.collection
+with PyMomoSDK(config) as client:
+    balance = client.collection.get_balance()
+    print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
 
 ## Request to pay
 
-Initiate a request to collect funds from a subscriber:
+Initiate a request to collect funds from a subscriber. Pass an optional `callback_url` to override the `ProductConfig.callback_url` for a single request, and supply an explicit canonical UUID v4 `reference_id` when you want idempotent retries on transient failures:
 
 ```python
-reference_id = client.collection.request_to_pay(
-    amount="1500.00",
-    currency="UGX",
-    payer_msisdn="256771234567",
-    external_id="invoice-9922",
-    payer_message="Invoice payment",
-    payee_note="Receipt note",
-    # Optional canonical UUID v4; omit to auto-generate
-    reference_id="550e8400-e29b-41d4-a716-446655440000",
-)
-print(f"Transaction reference: {reference_id}")
+with PyMomoSDK(config) as client:
+    reference_id = client.collection.request_to_pay(
+        amount="1500",
+        currency="UGX",
+        payer_msisdn="256771234567",
+        external_id="invoice-9922",
+        payer_message="Invoice payment",
+        payee_note="Receipt note",
+        # Optional canonical UUID v4; omit to auto-generate
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        # Optional per-request HTTPS webhook override
+        callback_url="https://your-app.example.com/webhooks/invoice-9922",
+    )
+    print(f"Transaction reference: {reference_id}")
 ```
 
 ## Get payment status
@@ -45,10 +50,13 @@ print(f"Transaction reference: {reference_id}")
 Poll the status of a request to pay transaction using its reference ID:
 
 ```python
-result = client.collection.get_payment_status(reference_id)
-print(f"Status: {result.status}")
-if result.is_successful():
-    print(f"Financial transaction ID: {result.financial_transaction_id}")
+with PyMomoSDK(config) as client:
+    result = client.collection.get_payment_status(reference_id)
+    print(f"Status: {result.status}")
+    if result.is_successful():
+        print(f"Financial transaction ID: {result.financial_transaction_id}")
+    elif result.is_failed():
+        print(f"Failure code: {result.reason_code}, reason: {result.reason}")
 ```
 
 ## Request to withdraw
@@ -56,17 +64,18 @@ if result.is_successful():
 Initiate a request to withdraw funds from a subscriber wallet (collection v2):
 
 ```python
-reference_id = client.collection.request_to_withdraw(
-    amount="50.00",
-    currency="EUR",
-    payer_msisdn="256771234567",
-    external_id="withdrawal-1002",
-    payer_message="Withdraw approval",
-    payee_note="Agent payout",
-    # Optional canonical UUID v4; omit to auto-generate
-    reference_id="550e8400-e29b-41d4-a716-446655440000",
-)
-print(f"Withdraw reference: {reference_id}")
+with PyMomoSDK(config) as client:
+    reference_id = client.collection.request_to_withdraw(
+        amount="50.00",
+        currency="EUR",
+        payer_msisdn="256771234567",
+        external_id="withdrawal-1002",
+        payer_message="Withdraw approval",
+        payee_note="Agent payout",
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        callback_url="https://your-app.example.com/webhooks/withdraw-1002",
+    )
+    print(f"Withdraw reference: {reference_id}")
 ```
 
 ## Get withdraw status
@@ -74,8 +83,9 @@ print(f"Withdraw reference: {reference_id}")
 Check the status of a request to withdraw transaction:
 
 ```python
-result = client.collection.get_withdraw_status(reference_id)
-print(f"Withdrawal status: {result.status}")
+with PyMomoSDK(config) as client:
+    result = client.collection.get_withdraw_status(reference_id)
+    print(f"Withdrawal status: {result.status}")
 ```
 
 ## Get account balance
@@ -83,8 +93,9 @@ print(f"Withdrawal status: {result.status}")
 Retrieve the collection account balance:
 
 ```python
-balance = client.collection.get_balance()
-print(f"Available balance: {balance.available_balance} {balance.currency}")
+with PyMomoSDK(config) as client:
+    balance = client.collection.get_balance()
+    print(f"Available balance: {balance.available_balance} {balance.currency}")
 ```
 
 ## Get account balance for currency
@@ -92,8 +103,9 @@ print(f"Available balance: {balance.available_balance} {balance.currency}")
 Retrieve the account balance for a specific ISO currency code:
 
 ```python
-balance = client.collection.get_balance_for_currency("UGX")
-print(f"Balance: {balance.available_balance} {balance.currency}")
+with PyMomoSDK(config) as client:
+    balance = client.collection.get_balance_for_currency("UGX")
+    print(f"Balance: {balance.available_balance} {balance.currency}")
 ```
 
 ## Check if account holder is active
@@ -101,11 +113,12 @@ print(f"Balance: {balance.available_balance} {balance.currency}")
 Validate whether a subscriber account exists and is active:
 
 ```python
-is_active = client.collection.is_account_holder_active(
-    account_holder_id="256771234567",
-    account_holder_id_type="msisdn",
-)
-print(f"Subscriber active: {is_active}")
+with PyMomoSDK(config) as client:
+    is_active = client.collection.is_account_holder_active(
+        account_holder_id="256771234567",
+        account_holder_id_type="msisdn",
+    )
+    print(f"Subscriber active: {is_active}")
 ```
 
 ## Get basic user info
@@ -113,34 +126,46 @@ print(f"Subscriber active: {is_active}")
 Query the basic registration profile of a subscriber:
 
 ```python
-info = client.collection.get_basic_user_info("256771234567")
-print(f"Name: {info.name}")
-print(f"Locale: {info.locale}")
+with PyMomoSDK(config) as client:
+    info = client.collection.get_basic_user_info("256771234567")
+    print(f"Name: {info.name}")
+    print(f"Locale: {info.locale}")
 ```
 
 ## Backchannel authorize
 
-Initiate a CIBA backchannel authorization request:
+Initiate a CIBA backchannel authorization request (`access_type` must be `"online"` or `"offline"`):
 
 ```python
-auth_response = client.collection.bc_authorize(
-    login_hint="256771234567",
-    scope="profile",
-)
-print(f"Auth request ID: {auth_response.auth_req_id}")
-print(f"Expires in: {auth_response.expires_in} seconds")
+with PyMomoSDK(config) as client:
+    auth_response = client.collection.bc_authorize(
+        login_hint="256771234567",
+        scope="profile",
+        access_type="offline",
+        callback_url="https://your-app.example.com/webhooks/ciba",
+    )
+    print(f"Auth request ID: {auth_response.auth_req_id}")
+    print(f"Expires in: {auth_response.expires_in} seconds")
 ```
 
-## Create OAuth2 token
+## Create or refresh OAuth2 token
 
-Exchange the `auth_req_id` returned by `bc_authorize` for a user OAuth2 token:
+Exchange the `auth_req_id` returned by `bc_authorize` for a user OAuth2 token, or refresh an existing token with `grant_type="refresh_token"`:
 
 ```python
-oauth_token = client.collection.create_oauth2_token(
-    auth_req_id=auth_response.auth_req_id,
-)
-print(f"Token type: {oauth_token.token_type}")
-print(f"Expires in: {oauth_token.expires_in} seconds")
+with PyMomoSDK(config) as client:
+    oauth_token = client.collection.create_oauth2_token(
+        auth_req_id=auth_response.auth_req_id,
+    )
+    print(f"Token type: {oauth_token.token_type}")
+    print(f"Expires in: {oauth_token.expires_in} seconds")
+
+    if oauth_token.refresh_token:
+        refreshed = client.collection.create_oauth2_token(
+            grant_type="refresh_token",
+            refresh_token=oauth_token.refresh_token,
+        )
+        print(f"Refreshed expires in: {refreshed.expires_in} seconds")
 ```
 
 ## Get basic user info by reference
@@ -148,11 +173,12 @@ print(f"Expires in: {oauth_token.expires_in} seconds")
 Retrieve a user profile using the reference ID of a consent query:
 
 ```python
-user_info = client.collection.get_basic_user_info_by_reference(
-    "550e8400-e29b-41d4-a716-446655440000"
-)
-print(f"Name: {user_info.name}")
-print(f"Gender: {user_info.gender}")
+with PyMomoSDK(config) as client:
+    user_info = client.collection.get_basic_user_info_by_reference(
+        "550e8400-e29b-41d4-a716-446655440000"
+    )
+    print(f"Name: {user_info.name}")
+    print(f"Gender: {user_info.gender}")
 ```
 
 Next step: [Explore Disbursement](disbursement.md).

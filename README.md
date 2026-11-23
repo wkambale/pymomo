@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Py MoMo SDK</h1>
-  <p><b>PyMoMo is a fully-typed, Python client library for the MTN Mobile Money and Airtel Money API</b></p>
+  <p><b>Strictly typed Python SDK for MTN Mobile Money, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, and Orange Money</b></p>
 
   [![PyPI version](https://img.shields.io/pypi/v/py-momo-sdk.svg)](https://pypi.org/project/py-momo-sdk/)
   [![Python versions](https://img.shields.io/pypi/pyversions/py-momo-sdk.svg)](https://pypi.org/project/py-momo-sdk/)
@@ -8,46 +8,55 @@
   [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 </div>
 
-Py MoMo SDK (`py-momo-sdk` 1.2.0) is a strictly typed Python client library for the MTN Mobile Money (MoMo) Open API and Airtel Money API. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict validation, and complete product coverage.
+Py MoMo SDK (`py-momo-sdk` 1.2.0) is a strictly typed Python client library for MTN Mobile Money (MoMo), Airtel Money, Wave, Safaricom M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money behind a unified `PaymentRouter`. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict input validation, and verified webhook security.
 
-Developed for high reliability and clean developer experience, Py MoMo SDK adheres to the strict security standards of modern payment systems.
-
-- **PyPI package:** [py-momo-sdk](https://pypi.org/project/py-momo-sdk/) (`1.2.0`, imported as `py_momo_sdk`)
+- **PyPI package:** [py-momo-sdk](https://pypi.org/project/py-momo-sdk/) (`1.2.0`, imported as `py_momo_sdk`, inspectable via `py_momo_sdk.__version__`)
 - **Python support:** Python 3.10 to 3.15
 - **Documentation:** [https://wkambale.github.io/pymomo/](https://wkambale.github.io/pymomo/)
 - **Repository:** [https://github.com/wkambale/pymomo](https://github.com/wkambale/pymomo)
 
 ## Features
 
-- **Sync and async parity:** `PyMomoSDK` and `AsyncPyMomoSDK` backed by `httpx.Client` and `httpx.AsyncClient` with matching interfaces.
+- **Sync and async parity:** `PyMomoSDK`, `AsyncPyMomoSDK`, `AirtelClient`, `AsyncAirtelClient`, `PaymentRouter`, `AsyncPaymentRouter`, and all provider clients backed by `httpx.Client` and `httpx.AsyncClient`.
 - **Pydantic v2 models:** Fully typed request and response validation and serialization.
-- **Automated token caching:** Thread-safe and async-safe in-memory token management with automatic cache invalidation and retry-once logic.
-- **Comprehensive API coverage:** Full MTN MoMo Collection (including CIBA and OAuth2 token exchange), Disbursement, Remittance, Sandbox, synchronous and asynchronous Airtel Money (`AirtelClient` and `AsyncAirtelClient`), Wave, M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money adapters behind `PaymentRouter`.
-- **Resilience and observability:** Configurable idempotent retries with `Retry-After` and jitter, settlement polling helpers, `TelemetryHook` observability events, MSISDN carrier auto-routing, FastAPI and Django webhook verifiers, and a local `py-momo-sdk mock` simulator.
-- **CLI utility:** Ships with the `py-momo-sdk` Typer-powered CLI to bootstrap sandbox credentials, initiate payments, and query balances or transaction status.
+- **Automated token caching:** Thread-safe and async-safe double-checked token management with conditional `expected_token` invalidation and retry-once logic.
+- **Comprehensive African payment coverage:** MTN MoMo Collection (including CIBA and OAuth2 token exchange/refresh), Disbursement, Remittance, and Sandbox; Airtel Money (`AirtelClient` / `AsyncAirtelClient` with `encrypt_airtel_pin()`); Wave; Safaricom M-Pesa (Daraja); Paystack; Flutterwave; and Orange Money behind `PaymentRouter`.
+- **Resilience and observability:** Configurable idempotent retries with `Retry-After` and jitter, bounded streaming response caps (`max_response_bytes`), HTTP `3xx` redirect rejection, `wait_for_settlement()` / `async_wait_for_settlement()`, `TelemetryHook` observability events, 18-market MSISDN carrier detection, FastAPI/Starlette and Django webhook verifiers, and a local `py-momo-sdk mock` simulator.
+- **CLI utility:** Optional `py-momo-sdk` Typer CLI for sandbox provisioning, collections, disbursements, remittances, Airtel PIN encryption, webhook verification, carrier lookup, and mock server hosting.
 
 ## Installation
 
-Install `py-momo-sdk` (1.2.0) from PyPI using pip:
+Install the core library from PyPI:
 
 ```bash
 pip install py-momo-sdk
 ```
 
-For development dependencies, install with:
+Install optional extras as needed:
 
 ```bash
-pip install -e ".[dev]"
+pip install "py-momo-sdk[cli]"      # Typer CLI tool
+pip install "py-momo-sdk[airtel]"   # cryptography for encrypt_airtel_pin()
+pip install "py-momo-sdk[fastapi]"  # FastAPI / Starlette ASGI webhook verifier
+pip install "py-momo-sdk[django]"   # Django webhook verifier
+pip install "py-momo-sdk[all]"      # All optional extras
+```
+
+For local development and testing:
+
+```bash
+pip install -e ".[all,dev]"
 ```
 
 ## Quickstart
 
-### Sandbox provisioning
-
-Bootstrap a new sandbox API user and API key:
+### Check installed version and provision sandbox credentials
 
 ```python
+import py_momo_sdk
 from py_momo_sdk import PyMomoSDK, PyMomoSDKConfig
+
+print(py_momo_sdk.__version__)
 
 config = PyMomoSDKConfig(environment="sandbox")
 
@@ -61,10 +70,15 @@ with PyMomoSDK(config) as client:
 
 ### Collection (synchronous example)
 
-Request a payment from a subscriber using the synchronous client:
+Request a payment from a subscriber and wait for settlement:
 
 ```python
-from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
+from py_momo_sdk import (
+    ProductConfig,
+    PyMomoSDK,
+    PyMomoSDKConfig,
+    wait_for_settlement,
+)
 
 config = PyMomoSDKConfig(
     environment="sandbox",
@@ -77,23 +91,23 @@ config = PyMomoSDKConfig(
 )
 
 with PyMomoSDK(config) as client:
-    # Query account balance
     balance = client.collection.get_balance()
     print(f"Available balance: {balance.available_balance} {balance.currency}")
 
-    # Initiate a request to pay
     reference_id = client.collection.request_to_pay(
-        amount="1000.00",
+        amount="1000",
         currency="UGX",
         payer_msisdn="256771234567",
         external_id="ext-tx-12345",
         payer_message="Payment for invoice 123",
         payee_note="Thank you for shopping with us",
     )
-    print(f"Transaction reference: {reference_id}")
 
-    # Check status
-    tx = client.collection.get_payment_status(reference_id)
+    tx = wait_for_settlement(
+        lambda: client.collection.get_payment_status(reference_id),
+        timeout=60.0,
+        interval=2.0,
+    )
     print(f"Transaction status: {tx.status}")
 ```
 
@@ -114,15 +128,14 @@ config = PyMomoSDKConfig(
     ),
 )
 
+
 async def main() -> None:
     async with AsyncPyMomoSDK(config) as client:
-        # Check active status of a mobile money user
         is_active = await client.disbursement.is_account_holder_active("256771234567")
         print(f"Account holder active: {is_active}")
 
-        # Initiate a transfer
         reference_id = await client.disbursement.transfer(
-            amount="5000.00",
+            amount="5000",
             currency="UGX",
             payee_msisdn="256771234567",
             external_id="disb-tx-9999",
@@ -130,16 +143,16 @@ async def main() -> None:
             payee_note="Disbursement successful",
         )
 
-        # Query transaction details
         status = await client.disbursement.get_transfer_status(reference_id)
         print(f"Transfer status: {status.status} (ID: {status.financial_transaction_id})")
+
 
 asyncio.run(main())
 ```
 
 ## CLI usage
 
-Py MoMo SDK bundles the `py-momo-sdk` CLI tool for sandbox management, balance checks, and payment queries. Export credentials as `PY_MOMO_SDK_*` environment variables so secrets are not recorded in shell history or process listings:
+Install `pip install "py-momo-sdk[cli]"` and export credentials via `PY_MOMO_SDK_*` environment variables or `--*-file` flags so secrets are never recorded in shell history or process listings:
 
 ```bash
 export PY_MOMO_SDK_ENVIRONMENT="sandbox"
@@ -147,38 +160,24 @@ export PY_MOMO_SDK_COLLECTION_SUBSCRIPTION_KEY="your-key"
 export PY_MOMO_SDK_COLLECTION_API_USER="550e8400-e29b-41d4-a716-446655440000"
 export PY_MOMO_SDK_COLLECTION_API_KEY="your-api-key"
 
-# Show installed version
 py-momo-sdk --version
-
-# Provision a sandbox environment
-py-momo-sdk sandbox provision --callback-host "https://example.com"
-
-# Query the collection balance
+py-momo-sdk sandbox provision --callback-host "example.com" --output-file ./creds.json
 py-momo-sdk collection balance
-
-# Check the status of a request to pay transaction
 py-momo-sdk collection status "550e8400-e29b-41d4-a716-446655440000"
 ```
 
-Use `py-momo-sdk --help` to list all available commands and flags.
+Use `py-momo-sdk --help` to list all available commands and options.
 
 ## Testing
 
-Run checks, security analysis, and coverage reports:
+Run style checks, type checking, security analysis, and coverage reports:
 
 ```bash
-# Style and format checks
 ruff check .
 black --check .
-isort --check .
-
-# Static type check
-mypy py_momo_sdk/
-
-# Security analysis
-bandit -r py_momo_sdk/
-
-# Test execution with coverage
+isort --check-only .
+mypy py_momo_sdk/ tests/
+bandit -r py_momo_sdk/ -ll
 pytest --cov=py_momo_sdk --cov-report=term-missing
 ```
 
