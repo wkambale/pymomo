@@ -202,6 +202,7 @@ class MpesaClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="M-Pesa",
         )
 
     def _get_token(self) -> str:
@@ -363,6 +364,7 @@ class AsyncMpesaClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="M-Pesa",
         )
 
     async def _get_token(self) -> str:

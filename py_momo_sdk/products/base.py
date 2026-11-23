@@ -41,17 +41,27 @@ class BaseProduct:
         self._product_config = product_config
         self._http = http
         self._token_cache = token_cache
+        self._token_namespace = f"{config.environment}:{config.base_url or ''}"
         self._token_lock = threading.Lock()
 
     def _get_token(self) -> str:
-        cached = self._token_cache.get(self._product_name)
+        cached = self._token_cache.get(
+            self._product_name, namespace=self._token_namespace
+        )
         if cached:
             return cached
-        with self._token_lock:
-            cached = self._token_cache.get(self._product_name)
+        acquired = self._token_lock.acquire(timeout=self._config.timeout)
+        if not acquired:
+            raise PyMomoSDKError("Timed out waiting for OAuth token refresh")
+        try:
+            cached = self._token_cache.get(
+                self._product_name, namespace=self._token_namespace
+            )
             if cached:
                 return cached
             return self._fetch_token()
+        finally:
+            self._token_lock.release()
 
     def _fetch_token(self) -> str:
         auth_header = build_basic_auth_header(
@@ -66,6 +76,7 @@ class BaseProduct:
                 "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,
                 "X-Target-Environment": self._config.environment,
             },
+            idempotent=True,
         )
         try:
             token = parse_model(response, TokenResponse)
@@ -75,6 +86,7 @@ class BaseProduct:
             self._product_name,
             token.access_token,
             token.expires_in,
+            namespace=self._token_namespace,
         )
         return token.access_token
 
@@ -122,6 +134,7 @@ class BaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, Balance)
 
@@ -142,6 +155,7 @@ class BaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, Balance)
 
@@ -173,6 +187,7 @@ class BaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         res = parse_json_dict(response)
         result = res.get("result")
@@ -212,5 +227,6 @@ class BaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, BasicUserInfo)

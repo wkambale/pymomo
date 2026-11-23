@@ -145,6 +145,7 @@ class FlutterwaveClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Flutterwave",
         )
 
     def _headers(self) -> dict[str, str]:
@@ -288,6 +289,7 @@ class AsyncFlutterwaveClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Flutterwave",
         )
 
     def _headers(self) -> dict[str, str]:

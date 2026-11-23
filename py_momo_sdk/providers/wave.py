@@ -149,6 +149,7 @@ class WaveClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Wave",
         )
 
     def _headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
@@ -288,6 +289,7 @@ class AsyncWaveClient:
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
             client=client,
+            provider_name="Wave",
         )
 
     def _headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:

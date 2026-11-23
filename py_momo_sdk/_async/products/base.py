@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import weakref
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
@@ -42,22 +44,41 @@ class AsyncBaseProduct:
         self._product_config = product_config
         self._http = http
         self._token_cache = token_cache
-        self._token_lock: asyncio.Lock | None = None
+        self._token_namespace = f"{config.environment}:{config.base_url or ''}"
+        self._loop_locks: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Lock
+        ] = weakref.WeakKeyDictionary()
+        self._loop_locks_guard = threading.Lock()
 
     def _get_token_lock(self) -> asyncio.Lock:
-        if self._token_lock is None:
-            self._token_lock = asyncio.Lock()
-        return self._token_lock
+        loop = asyncio.get_running_loop()
+        with self._loop_locks_guard:
+            lock = self._loop_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._loop_locks[loop] = lock
+            return lock
 
     async def _get_token(self) -> str:
-        cached = self._token_cache.get(self._product_name)
+        cached = self._token_cache.get(
+            self._product_name, namespace=self._token_namespace
+        )
         if cached:
             return cached
-        async with self._get_token_lock():
-            cached = self._token_cache.get(self._product_name)
+        lock = self._get_token_lock()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=self._config.timeout)
+        except asyncio.TimeoutError:
+            raise PyMomoSDKError("Timed out waiting for OAuth token refresh") from None
+        try:
+            cached = self._token_cache.get(
+                self._product_name, namespace=self._token_namespace
+            )
             if cached:
                 return cached
             return await self._fetch_token()
+        finally:
+            lock.release()
 
     async def _fetch_token(self) -> str:
         auth_header = build_basic_auth_header(
@@ -72,6 +93,7 @@ class AsyncBaseProduct:
                 "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,
                 "X-Target-Environment": self._config.environment,
             },
+            idempotent=True,
         )
         try:
             token = parse_model(response, TokenResponse)
@@ -81,6 +103,7 @@ class AsyncBaseProduct:
             self._product_name,
             token.access_token,
             token.expires_in,
+            namespace=self._token_namespace,
         )
         return token.access_token
 
@@ -128,6 +151,7 @@ class AsyncBaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, Balance)
 
@@ -148,6 +172,7 @@ class AsyncBaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, Balance)
 
@@ -179,6 +204,7 @@ class AsyncBaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         res = parse_json_dict(response)
         result = res.get("result")
@@ -218,5 +244,6 @@ class AsyncBaseProduct:
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
         )
         return parse_model(response, BasicUserInfo)

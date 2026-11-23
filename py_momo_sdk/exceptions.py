@@ -46,11 +46,15 @@ class ResourceNotFoundError(PyMomoSDKError):
 
 
 class ConflictError(PyMomoSDKError):
-    """Raised on HTTP 409 (duplicate X-Reference-Id)."""
+    """Raised on HTTP 409 (duplicate request reference / conflict)."""
+
+    def __init__(self, message: str, *, reference_id: str | None = None) -> None:
+        super().__init__(message)
+        self.reference_id = reference_id
 
 
 class PyMomoSDKServerError(PyMomoSDKError):
-    """Raised on HTTP 5xx from the MTN API."""
+    """Raised on HTTP 5xx from an upstream payment gateway API."""
 
 
 class TransactionFailedError(PyMomoSDKError):

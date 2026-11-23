@@ -17,9 +17,11 @@ from py_momo_sdk.http import (
     _RETRYABLE_STATUS_CODES,
     DEFAULT_MAX_RESPONSE_BYTES,
     _compute_retry_delay,
+    _extract_bearer_token,
     _get_header_ci,
     _is_retryable_request,
     _raise_for_status,
+    _ResponseTooLargeError,
     _sanitize_telemetry_path,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
@@ -44,16 +46,20 @@ class AsyncHttpClient:
     def __init__(
         self,
         base_url: str,
-        timeout: float,
+        timeout: float | httpx.Timeout,
         *,
         max_retries: int = 0,
         retry_backoff: float = 0.5,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         client: httpx.AsyncClient | None = None,
+        limits: httpx.Limits | None = None,
         telemetry: TelemetryHook | None = None,
+        provider_name: str | None = None,
     ) -> None:
         validated_url = validate_base_url(base_url)
-        validated_timeout = validate_timeout(timeout)
+        validated_timeout: float | httpx.Timeout = (
+            timeout if isinstance(timeout, httpx.Timeout) else validate_timeout(timeout)
+        )
         if (
             isinstance(max_response_bytes, bool)
             or not isinstance(max_response_bytes, int)
@@ -65,6 +71,7 @@ class AsyncHttpClient:
         self._retry_backoff = validate_retry_backoff(retry_backoff)
         self._max_response_bytes = max_response_bytes
         self._telemetry = telemetry
+        self._provider_name = provider_name
         self._owns_client = client is None
         if client is not None:
             injected_base = str(client.base_url)
@@ -73,11 +80,14 @@ class AsyncHttpClient:
                 validate_matching_origin(validated_url, injected_base)
             self._client = client
         else:
-            self._client = httpx.AsyncClient(
-                base_url=validated_url,
-                timeout=validated_timeout,
-                follow_redirects=False,
-            )
+            client_kwargs: dict[str, Any] = {
+                "base_url": validated_url,
+                "timeout": validated_timeout,
+                "follow_redirects": False,
+            }
+            if limits is not None:
+                client_kwargs["limits"] = limits
+            self._client = httpx.AsyncClient(**client_kwargs)
 
     def _emit_telemetry(
         self,
@@ -120,21 +130,6 @@ class AsyncHttpClient:
         target = (
             path if str(self._client.base_url) else f"{self._validated_base_url}{path}"
         )
-        if "request" in self._client.__dict__:
-            response = await self._client.request(
-                method,
-                target,
-                headers=headers,
-                json=json,
-                data=data,
-                follow_redirects=False,
-            )
-            if len(response.content) > self._max_response_bytes:
-                raise PyMomoSDKError(
-                    f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
-                )
-            return response
-
         req = self._client.build_request(
             method, target, headers=headers, json=json, data=data
         )
@@ -144,18 +139,18 @@ class AsyncHttpClient:
             if cl_header is not None:
                 try:
                     if int(cl_header) > self._max_response_bytes:
-                        raise PyMomoSDKError(
+                        raise _ResponseTooLargeError(
                             f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                         )
                 except ValueError:
                     pass
             buf = bytearray()
             async for chunk in response.aiter_bytes():
-                buf.extend(chunk)
-                if len(buf) > self._max_response_bytes:
-                    raise PyMomoSDKError(
+                if len(buf) + len(chunk) > self._max_response_bytes:
+                    raise _ResponseTooLargeError(
                         f"Response body exceeded maximum allowed size of {self._max_response_bytes} bytes"
                     )
+                buf.extend(chunk)
             response._content = bytes(buf)
         finally:
             await response.aclose()
@@ -171,10 +166,19 @@ class AsyncHttpClient:
         data: Any,
         timeout_msg: str,
         conn_msg: str,
-    ) -> httpx.Response:
-        can_retry = self._max_retries > 0 and _is_retryable_request(method, headers)
-        attempts = (self._max_retries + 1) if can_retry else 1
-        correlation_id = _get_header_ci(headers, "X-Reference-Id")
+        idempotent: bool | None = None,
+        max_retries_override: int | None = None,
+    ) -> tuple[httpx.Response, int]:
+        effective_retries = (
+            self._max_retries if max_retries_override is None else max_retries_override
+        )
+        can_retry = effective_retries > 0 and _is_retryable_request(
+            method, headers, idempotent=idempotent
+        )
+        attempts = (effective_retries + 1) if can_retry else 1
+        correlation_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
+            headers, "Idempotency-Key"
+        )
 
         for attempt in range(attempts):
             started = time.monotonic()
@@ -182,6 +186,17 @@ class AsyncHttpClient:
                 response = await self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
+            except _ResponseTooLargeError:
+                self._emit_telemetry(
+                    method,
+                    path,
+                    None,
+                    started,
+                    attempt + 1,
+                    correlation_id,
+                    "ResponseTooLargeError",
+                )
+                raise
             except httpx.TimeoutException:
                 self._emit_telemetry(
                     method,
@@ -237,9 +252,9 @@ class AsyncHttpClient:
                 )
                 await asyncio.sleep(delay)
                 continue
-            return response
+            return response, attempt + 1
 
-        raise PyMomoSDKError(conn_msg)
+        raise AssertionError("Unreachable retry loop exit")
 
     async def request(
         self,
@@ -252,12 +267,14 @@ class AsyncHttpClient:
         product_name: str | None = None,
         token_cache: TokenCache | None = None,
         token_refresher: Callable[[], Coroutine[Any, Any, str]] | None = None,
+        token_namespace: str = "",
+        idempotent: bool | None = None,
     ) -> httpx.Response:
         """Execute async HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
         safe_path = _sanitize_telemetry_path(path)
         logger.debug("%s %s", method, safe_path)
-        response = await self._send_with_transient_retries(
+        response, attempts_used = await self._send_with_transient_retries(
             method,
             path,
             headers=headers,
@@ -265,6 +282,7 @@ class AsyncHttpClient:
             data=data,
             timeout_msg=f"Request timed out: {method} {safe_path}",
             conn_msg=f"Connection error: {method} {safe_path}",
+            idempotent=idempotent,
         )
 
         if (
@@ -274,26 +292,30 @@ class AsyncHttpClient:
             and product_name
         ):
             # Only invalidate if cache still holds the token that just failed
-            auth_val = _get_header_ci(headers, "Authorization") or ""
-            failed_token = auth_val[7:] if auth_val.startswith("Bearer ") else None
-            token_cache.invalidate(product_name, expected_token=failed_token)
+            failed_token = _extract_bearer_token(headers)
+            token_cache.invalidate(
+                product_name,
+                expected_token=failed_token,
+                namespace=token_namespace,
+            )
 
-            # Re-fetch a token asynchronously
+            # Re-fetch a token asynchronously (preserving upstream 5xx / timeout errors)
             try:
                 new_token = await token_refresher()
-            except (PyMomoSDKError, ValueError):
+            except (AuthenticationError, ValueError):
                 raise AuthenticationError(
                     "Authentication failed during token refresh"
                 ) from None
 
-            # Retry original request exactly once
+            # Retry original request once with remaining transient retry budget
             retry_headers = {
                 k: v for k, v in headers.items() if k.lower() != "authorization"
             }
             retry_headers["Authorization"] = f"Bearer {new_token}"
+            remaining_retries = max(0, self._max_retries - (attempts_used - 1))
 
             logger.debug("Retrying %s %s with new token", method, safe_path)
-            response = await self._send_with_transient_retries(
+            response, _ = await self._send_with_transient_retries(
                 method,
                 path,
                 headers=retry_headers,
@@ -301,9 +323,18 @@ class AsyncHttpClient:
                 data=data,
                 timeout_msg=f"Request timed out on retry: {method} {safe_path}",
                 conn_msg=f"Connection error on retry: {method} {safe_path}",
+                idempotent=idempotent,
+                max_retries_override=remaining_retries,
             )
 
-        _raise_for_status(response)
+        ref_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
+            headers, "Idempotency-Key"
+        )
+        _raise_for_status(
+            response,
+            provider_name=self._provider_name,
+            reference_id=ref_id,
+        )
         return response
 
     async def close(self) -> None:

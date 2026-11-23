@@ -3,10 +3,12 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+import httpx
+
 from py_momo_sdk.auth import TokenCache
 from py_momo_sdk.config import PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
-from py_momo_sdk.http import HttpClient
+from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient
 from py_momo_sdk.products.collection import Collection
 from py_momo_sdk.products.disbursement import Disbursement
 from py_momo_sdk.products.remittance import Remittance
@@ -35,7 +37,14 @@ class PyMomoSDK:
         balance = client.collection.get_balance()
     """
 
-    def __init__(self, config: PyMomoSDKConfig) -> None:
+    def __init__(
+        self,
+        config: PyMomoSDKConfig,
+        *,
+        client: httpx.Client | None = None,
+        limits: httpx.Limits | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+    ) -> None:
         self._config = config
         self._token_cache = TokenCache()
         if not config.base_url:
@@ -45,7 +54,11 @@ class PyMomoSDK:
             timeout=config.timeout,
             max_retries=config.max_retries,
             retry_backoff=config.retry_backoff,
+            max_response_bytes=max_response_bytes,
+            client=client,
+            limits=limits,
             telemetry=config.telemetry,
+            provider_name="MTN MoMo",
         )
         self._init_lock = threading.Lock()
         self._collection: Collection | None = None
