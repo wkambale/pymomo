@@ -78,6 +78,7 @@ class Disbursement:
             "POST",
             "/standard/v1/disbursements/",
             json=payload.model_dump(by_alias=True, mode="json", exclude_none=True),
+            reference_id=ref,
         )
         if response.content:
             try:
@@ -102,8 +103,11 @@ class Disbursement:
         response = self._client.request(
             "GET",
             f"/standard/v1/disbursements/{encoded}",
+            reference_id=reference_id,
         )
-        return parse_model(response, AirtelTransactionResponse)
+        return parse_model(
+            response, AirtelTransactionResponse, reference_id=reference_id
+        )
 
     def get_balance(self) -> AirtelBalanceResponse:
         """Query the merchant wallet balance.

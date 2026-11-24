@@ -82,6 +82,7 @@ class Remittance(AsyncBaseProduct):
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
             idempotent=(reference_id is not None),
+            reference_id=ref,
         )
         return ref
 
@@ -103,5 +104,6 @@ class Remittance(AsyncBaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
+            reference_id=reference_id,
         )
-        return parse_model(response, TransactionResult)
+        return parse_model(response, TransactionResult, reference_id=reference_id)

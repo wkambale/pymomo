@@ -867,7 +867,7 @@ def _is_result_pending(result: Any) -> bool:
     return _extract_status_str(result) == "PENDING"
 
 
-def _raise_if_result_failed(result: Any) -> None:
+def _raise_if_result_failed(result: Any, *, reference_id: str | None = None) -> None:
     """Raise TransactionFailedError when a settled result represents a failure."""
     from py_momo_sdk.exceptions import TransactionFailedError
 
@@ -879,12 +879,13 @@ def _raise_if_result_failed(result: Any) -> None:
         is_failed = _extract_status_str(result) == "FAILED"
 
     if is_failed:
-        ref = (
+        result_ref = (
             result.get("reference_id")
             if isinstance(result, dict)
             else getattr(result, "reference_id", None)
             or getattr(result, "external_id", None)
         )
+        ref = reference_id or result_ref
         reason = (
             result.get("reason")
             if isinstance(result, dict)
@@ -913,6 +914,7 @@ def wait_for_settlement(
     max_interval: float = 10.0,
     sleep_fn: Any = None,
     raise_on_failed: bool = False,
+    reference_id: str | None = None,
 ) -> Any:
     """Poll ``poll_fn`` until a transaction leaves the pending state.
 
@@ -926,6 +928,8 @@ def wait_for_settlement(
         sleep_fn: Optional sleep callable (defaults to ``time.sleep``).
         raise_on_failed: When ``True``, raise ``TransactionFailedError`` if the
             settled result has failed status.
+        reference_id: Optional transaction reference ID attached to raised
+            ``TransactionFailedError`` or timeout ``PyMomoSDKError`` instances.
 
     Returns:
         The settled status object.
@@ -951,12 +955,15 @@ def wait_for_settlement(
         result = poll_fn()
         if not _is_result_pending(result):
             if raise_on_failed:
-                _raise_if_result_failed(result)
+                _raise_if_result_failed(result, reference_id=reference_id)
             return result
         remaining = deadline - time.monotonic()
         sleep_for = _jittered_poll_delay(delay, max_interval_f)
         if remaining <= 0 or sleep_for >= remaining:
-            raise PyMomoSDKError("Transaction settlement polling timed out")
+            raise PyMomoSDKError(
+                "Transaction settlement polling timed out",
+                reference_id=reference_id,
+            )
         sleeper(sleep_for)
         delay = min(delay * backoff_f, max_interval_f)
 
@@ -970,6 +977,7 @@ async def async_wait_for_settlement(
     max_interval: float = 10.0,
     sleep_fn: Any = None,
     raise_on_failed: bool = False,
+    reference_id: str | None = None,
 ) -> Any:
     """Asynchronously poll ``poll_fn`` until a transaction leaves pending state."""
     import asyncio
@@ -988,11 +996,14 @@ async def async_wait_for_settlement(
         result = await poll_fn()
         if not _is_result_pending(result):
             if raise_on_failed:
-                _raise_if_result_failed(result)
+                _raise_if_result_failed(result, reference_id=reference_id)
             return result
         remaining = deadline - time.monotonic()
         sleep_for = _jittered_poll_delay(delay, max_interval_f)
         if remaining <= 0 or sleep_for >= remaining:
-            raise PyMomoSDKError("Transaction settlement polling timed out")
+            raise PyMomoSDKError(
+                "Transaction settlement polling timed out",
+                reference_id=reference_id,
+            )
         await sleeper(sleep_for)
         delay = min(delay * backoff_f, max_interval_f)

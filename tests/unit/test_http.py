@@ -1041,3 +1041,519 @@ async def test_airtel_structured_errors_and_transport_subtypes_issue_116() -> No
     assert "(ReadTimeout)" in str(exc_aa.value)
     assert exc_aa.value.provider == "Airtel Money"
     assert exc_aa.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_reference_id_preserved_across_all_providers_sync_and_async_issue_115() -> (
+    None
+):
+    """Verify exc.reference_id is preserved on failed writes across all 7 providers (sync & async) (#115)."""
+    from py_momo_sdk import (
+        AirtelClient,
+        AirtelConfig,
+        AsyncAirtelClient,
+        AsyncPyMomoSDK,
+        PyMomoSDK,
+        PyMomoSDKConfig,
+    )
+    from py_momo_sdk.config import SANDBOX, ProductConfig
+    from py_momo_sdk.exceptions import AuthenticationError
+    from py_momo_sdk.providers import (
+        AsyncFlutterwaveClient,
+        AsyncMpesaClient,
+        AsyncOrangeMoneyClient,
+        AsyncPaystackClient,
+        AsyncWaveClient,
+        FlutterwaveClient,
+        FlutterwaveConfig,
+        MpesaClient,
+        MpesaConfig,
+        OrangeMoneyClient,
+        OrangeMoneyConfig,
+        PaystackClient,
+        PaystackConfig,
+        WaveClient,
+        WaveConfig,
+    )
+
+    # 1. MTN MoMo (sync & async): auto-generated ref preserved on 500, timeout, AND token 401 failure
+    seen_mtn_refs: list[str] = []
+
+    def mtn_fail_500(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/collection/token/":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "tok-mtn",
+                    "token_type": "access_token",
+                    "expires_in": 3600,
+                },
+            )
+        seen_mtn_refs.append(req.headers["X-Reference-Id"])
+        return httpx.Response(
+            500, json={"code": "INTERNAL_ERROR", "message": "Ledger down"}
+        )
+
+    mtn_cfg = PyMomoSDKConfig(
+        environment=SANDBOX,
+        collection=ProductConfig("sub", "user", "key"),
+        disbursement=ProductConfig("sub", "user", "key"),
+        remittance=ProductConfig("sub", "user", "key"),
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(mtn_fail_500),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_mtn,
+        PyMomoSDK(mtn_cfg, client=raw_mtn) as sdk,
+        pytest.raises(PyMomoSDKServerError) as exc_mtn_sync,
+    ):
+        sdk.collection.request_to_pay("100", "EUR", "256771234567", "ord-1")
+    assert exc_mtn_sync.value.reference_id == seen_mtn_refs[-1]
+    assert exc_mtn_sync.value.status_code == 500
+    assert "Ledger down" in str(exc_mtn_sync.value)
+
+    # MTN pre-request token failure still preserves the generated/explicit reference_id
+    explicit_mtn_ref = "11111111-2222-4333-8444-555555555555"
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(401, json={"message": "Bad API key"})
+            ),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_mtn_401,
+        PyMomoSDK(mtn_cfg, client=raw_mtn_401) as sdk,
+        pytest.raises(AuthenticationError) as exc_mtn_tok,
+    ):
+        sdk.collection.request_to_pay(
+            "100", "EUR", "256771234567", "ord-2", reference_id=explicit_mtn_ref
+        )
+    assert exc_mtn_tok.value.reference_id == explicit_mtn_ref
+
+    # MTN async timeout preserves auto-generated ref
+    def mtn_timeout_handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/disbursement/token/":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "tok-d",
+                    "token_type": "access_token",
+                    "expires_in": 3600,
+                },
+            )
+        seen_mtn_refs.append(req.headers["X-Reference-Id"])
+        raise httpx.ReadTimeout("slow")
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(mtn_timeout_handler),
+            base_url="https://sandbox.momodeveloper.mtn.com",
+        ) as raw_mtn_async,
+        AsyncPyMomoSDK(mtn_cfg, client=raw_mtn_async) as asdk,
+    ):
+        with pytest.raises(PyMomoSDKError) as exc_mtn_async:
+            await asdk.disbursement.transfer("50", "EUR", "256771234567", "ord-3")
+    assert exc_mtn_async.value.reference_id == seen_mtn_refs[-1]
+    assert "(ReadTimeout)" in str(exc_mtn_async.value)
+
+    # 2. Airtel Money (sync & async): auto-generated ref preserved on HTTP 400 and timeout
+    import json as _json
+
+    seen_airtel_refs: list[str] = []
+
+    def airtel_fail_400(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/auth/oauth2/token":
+            return httpx.Response(
+                200, json={"access_token": "air-tok", "expires_in": 3600}
+            )
+        body = _json.loads(req.content.decode())
+        seen_airtel_refs.append(body["transaction"]["id"])
+        return httpx.Response(
+            400,
+            json={
+                "status": {"result_code": "DP00800001006", "message": "Invalid MSISDN"}
+            },
+        )
+
+    air_cfg = AirtelConfig(
+        client_id="cid",
+        client_secret="csec",
+        country="UG",
+        currency="UGX",
+        pin="enc-pin",
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(airtel_fail_400),
+            base_url="https://openapiuat.airtel.africa",
+        ) as raw_air,
+        AirtelClient(air_cfg, client=raw_air) as air,
+        pytest.raises(BadRequestError) as exc_air_sync,
+    ):
+        air.collection.request_to_pay("5000", "256752123456")
+    assert exc_air_sync.value.reference_id == seen_airtel_refs[-1]
+    assert exc_air_sync.value.error_code == "DP00800001006"
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(airtel_fail_400),
+            base_url="https://openapiuat.airtel.africa",
+        ) as raw_air_async,
+        AsyncAirtelClient(air_cfg, client=raw_air_async) as aair,
+    ):
+        with pytest.raises(BadRequestError) as exc_air_async:
+            await aair.disbursement.transfer("5000", "256752123456")
+    assert exc_air_async.value.reference_id == seen_airtel_refs[-1]
+
+    # 3. Wave (sync & async): auto-generated client_reference preserved on 422
+    seen_wave_refs: list[str] = []
+
+    def wave_fail_422(req: httpx.Request) -> httpx.Response:
+        body = _json.loads(req.content.decode())
+        seen_wave_refs.append(body["client_reference"])
+        return httpx.Response(
+            422, json={"code": "invalid-amount", "message": "Amount too small"}
+        )
+
+    wave_cfg = WaveConfig(
+        api_key="wave_sn_prod_123",
+        success_url="https://merchant.example.com/ok",
+        error_url="https://merchant.example.com/err",
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(wave_fail_422),
+            base_url="https://api.wave.com",
+        ) as raw_w,
+        WaveClient(wave_cfg, client=raw_w) as wc,
+        pytest.raises(BadRequestError) as exc_wave_sync,
+    ):
+        wc.create_checkout_session("100", "XOF")
+    assert exc_wave_sync.value.reference_id == seen_wave_refs[-1]
+    assert exc_wave_sync.value.status_code == 422
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(wave_fail_422),
+            base_url="https://api.wave.com",
+        ) as raw_wa,
+        AsyncWaveClient(wave_cfg, client=raw_wa) as awc,
+    ):
+        with pytest.raises(BadRequestError) as exc_wave_async:
+            await awc.create_payout("100", "XOF", "221771234567")
+    assert exc_wave_async.value.reference_id == seen_wave_refs[-1]
+
+    # 4. M-Pesa (sync & async): AccountReference & OriginatorConversationID preserved on 500 & token 401
+    seen_mpesa_refs: list[str] = []
+
+    def mpesa_fail_500(req: httpx.Request) -> httpx.Response:
+        if "/oauth/v1/generate" in str(req.url):
+            return httpx.Response(
+                200, json={"access_token": "mp-tok", "expires_in": "3599"}
+            )
+        body = _json.loads(req.content.decode())
+        seen_mpesa_refs.append(
+            body.get("OriginatorConversationID") or body.get("AccountReference")
+        )
+        return httpx.Response(
+            500, json={"errorCode": "500.001.1001", "errorMessage": "Daraja busy"}
+        )
+
+    mpesa_cfg = MpesaConfig(
+        consumer_key="ck",
+        consumer_secret="cs",
+        short_code="174379",
+        passkey="pk",
+        callback_url="https://merchant.example.com/cb",
+        initiator_name="init",
+        security_credential="sec-cred",
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(mpesa_fail_500),
+            base_url="https://sandbox.safaricom.co.ke",
+        ) as raw_mp,
+        MpesaClient(mpesa_cfg, client=raw_mp) as mc,
+        pytest.raises(PyMomoSDKServerError) as exc_mp_sync,
+    ):
+        mc.b2c_transfer("100", "254712345678")
+    assert exc_mp_sync.value.reference_id == seen_mpesa_refs[-1]
+    assert exc_mp_sync.value.error_code == "500.001.1001"
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(mpesa_fail_500),
+            base_url="https://sandbox.safaricom.co.ke",
+        ) as raw_mpa,
+        AsyncMpesaClient(mpesa_cfg, client=raw_mpa) as amc,
+    ):
+        with pytest.raises(PyMomoSDKServerError) as exc_mp_async:
+            await amc.stk_push("100", "254712345678", account_reference="INV-42")
+    assert exc_mp_async.value.reference_id == "INV-42"
+
+    # 5. Paystack (sync & async): auto-generated ref preserved on 400 and invalid JSON
+    seen_ps_refs: list[str] = []
+
+    def paystack_fail_400(req: httpx.Request) -> httpx.Response:
+        body = _json.loads(req.content.decode())
+        seen_ps_refs.append(body["reference"])
+        return httpx.Response(400, json={"status": False, "message": "Duplicate ref"})
+
+    ps_cfg = PaystackConfig(secret_key="sk_test_123")
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(paystack_fail_400),
+            base_url="https://api.paystack.co",
+        ) as raw_ps,
+        PaystackClient(ps_cfg, client=raw_ps) as psc,
+        pytest.raises(BadRequestError) as exc_ps_sync,
+    ):
+        psc.initialize_transaction("a@example.com", "100", "NGN")
+    assert exc_ps_sync.value.reference_id == seen_ps_refs[-1]
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(paystack_fail_400),
+            base_url="https://api.paystack.co",
+        ) as raw_psa,
+        AsyncPaystackClient(ps_cfg, client=raw_psa) as apsc,
+    ):
+        with pytest.raises(BadRequestError) as exc_ps_async:
+            await apsc.initiate_transfer("100", "NGN", "RCP_12345")
+    assert exc_ps_async.value.reference_id == seen_ps_refs[-1]
+
+    # 6. Flutterwave (sync & async): auto-generated tx_ref/reference preserved on 503
+    seen_flw_refs: list[str] = []
+
+    def flw_fail_503(req: httpx.Request) -> httpx.Response:
+        body = _json.loads(req.content.decode())
+        seen_flw_refs.append(body.get("tx_ref") or body.get("reference"))
+        return httpx.Response(
+            503, json={"status": "error", "message": "Rail maintenance"}
+        )
+
+    flw_cfg = FlutterwaveConfig(
+        secret_key="FLWSECK_TEST-123",
+        default_customer_email="buyer@example.com",
+        default_account_bank="044",
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(flw_fail_503),
+            base_url="https://api.flutterwave.com",
+        ) as raw_flw,
+        FlutterwaveClient(flw_cfg, client=raw_flw) as fc,
+        pytest.raises(PyMomoSDKServerError) as exc_flw_sync,
+    ):
+        fc.create_payment("100", "UGX", "256771234567")
+    assert exc_flw_sync.value.reference_id == seen_flw_refs[-1]
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(flw_fail_503),
+            base_url="https://api.flutterwave.com",
+        ) as raw_flwa,
+        AsyncFlutterwaveClient(flw_cfg, client=raw_flwa) as afc,
+    ):
+        with pytest.raises(PyMomoSDKServerError) as exc_flw_async:
+            await afc.create_transfer("100", "UGX", "0690000040")
+    assert exc_flw_async.value.reference_id == seen_flw_refs[-1]
+
+    # 7. Orange Money (sync & async): auto-generated order_id preserved on 500 AND token failure
+    seen_or_refs: list[str] = []
+
+    def orange_fail_500(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/oauth/v3/token":
+            return httpx.Response(
+                200, json={"access_token": "or-tok", "expires_in": 3600}
+            )
+        body = _json.loads(req.content.decode())
+        seen_or_refs.append(body["order_id"])
+        return httpx.Response(
+            500, json={"code": "OM_DOWN", "description": "Orange switch error"}
+        )
+
+    or_cfg = OrangeMoneyConfig(
+        client_id="oid",
+        client_secret="osec",
+        merchant_key="mk",
+        return_url="https://merchant.example.com/ret",
+        cancel_url="https://merchant.example.com/can",
+        notif_url="https://merchant.example.com/not",
+    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(orange_fail_500),
+            base_url="https://api.orange.com",
+        ) as raw_or,
+        OrangeMoneyClient(or_cfg, client=raw_or) as oc,
+        pytest.raises(PyMomoSDKServerError) as exc_or_sync,
+    ):
+        oc.create_web_payment("500", "XOF")
+    assert exc_or_sync.value.reference_id == seen_or_refs[-1]
+    assert exc_or_sync.value.error_code == "OM_DOWN"
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(orange_fail_500),
+            base_url="https://api.orange.com",
+        ) as raw_ora,
+        AsyncOrangeMoneyClient(or_cfg, client=raw_ora) as aoc,
+    ):
+        with pytest.raises(PyMomoSDKServerError) as exc_or_async:
+            await aoc.create_web_payment("500", "XOF")
+    assert exc_or_async.value.reference_id == seen_or_refs[-1]
+
+
+@pytest.mark.asyncio
+async def test_router_failover_exhaustion_preserves_attempted_references_issue_115() -> (
+    None
+):
+    """Verify PaymentRouter & AsyncPaymentRouter attach attempted_references when failover exhausts (#115)."""
+    from py_momo_sdk.exceptions import AuthenticationError
+    from py_momo_sdk.providers.models import (
+        DisbursementRequest,
+        PaymentRequest,
+        ProviderCapabilities,
+    )
+    from py_momo_sdk.providers.router import AsyncPaymentRouter, PaymentRouter
+
+    class _FailingSyncProvider:
+        def __init__(self, name: str, err_ref: str) -> None:
+            self.name = name
+            self._err_ref = err_ref
+            self.capabilities = ProviderCapabilities(
+                provider_id=name,
+                supports_collection=True,
+                supports_disbursement=True,
+                currencies=("UGX",),
+            )
+
+        def collect(self, request: PaymentRequest) -> object:
+            raise AuthenticationError(
+                f"{self.name} auth failed",
+                reference_id=request.reference_id or self._err_ref,
+                status_code=401,
+                provider=self.name,
+            )
+
+        def disburse(self, request: DisbursementRequest) -> object:
+            raise PyMomoSDKServerError(
+                f"{self.name} 503",
+                reference_id=request.reference_id or self._err_ref,
+                status_code=503,
+                provider=self.name,
+            )
+
+        def get_status(self, reference_id: str, *, kind: str = "collection") -> object:
+            raise NotImplementedError
+
+        def get_balance(
+            self, *, kind: str = "collection", currency: str | None = None
+        ) -> object:
+            raise NotImplementedError
+
+    router = PaymentRouter(
+        [
+            _FailingSyncProvider("rail_a", "ref-a-1"),  # type: ignore[list-item]
+            _FailingSyncProvider("rail_b", "ref-b-1"),  # type: ignore[list-item]
+        ],
+        default_provider="rail_a",
+    )
+
+    with pytest.raises(AuthenticationError) as exc_col:
+        router.collect(
+            PaymentRequest(amount="1000", currency="UGX", payer_msisdn="256771234567"),
+            fallback=True,
+        )
+    assert exc_col.value.reference_id == "ref-b-1"
+    assert exc_col.value.attempted_references == [
+        {"provider": "rail_a", "reference_id": "ref-a-1"},
+        {"provider": "rail_b", "reference_id": "ref-b-1"},
+    ]
+
+    with pytest.raises(PyMomoSDKServerError) as exc_disb:
+        router.disburse(
+            DisbursementRequest(
+                amount="1000", currency="UGX", payee_msisdn="256771234567"
+            ),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+    assert exc_disb.value.reference_id is not None
+    assert len(exc_disb.value.attempted_references) == 2
+    assert (
+        exc_disb.value.attempted_references[0]["reference_id"]
+        == exc_disb.value.reference_id
+    )
+    assert (
+        exc_disb.value.attempted_references[1]["reference_id"]
+        == exc_disb.value.reference_id
+    )
+
+    class _FailingAsyncProvider:
+        def __init__(self, name: str, err_ref: str) -> None:
+            self.name = name
+            self._err_ref = err_ref
+            self.capabilities = ProviderCapabilities(
+                provider_id=name,
+                supports_collection=True,
+                supports_disbursement=True,
+                currencies=("UGX",),
+            )
+
+        async def collect(self, request: PaymentRequest) -> object:
+            raise AuthenticationError(
+                f"{self.name} auth failed",
+                reference_id=request.reference_id or self._err_ref,
+                status_code=401,
+                provider=self.name,
+            )
+
+        async def disburse(self, request: DisbursementRequest) -> object:
+            raise PyMomoSDKServerError(
+                f"{self.name} 503",
+                reference_id=request.reference_id or self._err_ref,
+                status_code=503,
+                provider=self.name,
+            )
+
+        async def get_status(
+            self, reference_id: str, *, kind: str = "collection"
+        ) -> object:
+            raise NotImplementedError
+
+        async def get_balance(
+            self, *, kind: str = "collection", currency: str | None = None
+        ) -> object:
+            raise NotImplementedError
+
+    arouter = AsyncPaymentRouter(
+        [
+            _FailingAsyncProvider("arail_a", "aref-a"),  # type: ignore[list-item]
+            _FailingAsyncProvider("arail_b", "aref-b"),  # type: ignore[list-item]
+        ],
+        default_provider="arail_a",
+    )
+
+    with pytest.raises(AuthenticationError) as exc_acol:
+        await arouter.collect(
+            PaymentRequest(amount="1000", currency="UGX", payer_msisdn="256771234567"),
+            fallback=True,
+        )
+    assert exc_acol.value.reference_id == "aref-b"
+    assert exc_acol.value.attempted_references == [
+        {"provider": "arail_a", "reference_id": "aref-a"},
+        {"provider": "arail_b", "reference_id": "aref-b"},
+    ]
+
+    with pytest.raises(PyMomoSDKServerError) as exc_adisb:
+        await arouter.disburse(
+            DisbursementRequest(
+                amount="1000", currency="UGX", payee_msisdn="256771234567"
+            ),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+    assert exc_adisb.value.reference_id is not None
+    assert len(exc_adisb.value.attempted_references) == 2

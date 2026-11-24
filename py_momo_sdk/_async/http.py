@@ -168,6 +168,7 @@ class AsyncHttpClient:
         conn_msg: str,
         idempotent: bool | None = None,
         max_retries_override: int | None = None,
+        reference_id: str | None = None,
     ) -> tuple[httpx.Response, int]:
         effective_retries = (
             self._max_retries if max_retries_override is None else max_retries_override
@@ -176,8 +177,10 @@ class AsyncHttpClient:
             method, headers, idempotent=idempotent
         )
         attempts = (effective_retries + 1) if can_retry else 1
-        correlation_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
-            headers, "Idempotency-Key"
+        correlation_id = (
+            reference_id
+            or _get_header_ci(headers, "X-Reference-Id")
+            or _get_header_ci(headers, "Idempotency-Key")
         )
 
         for attempt in range(attempts):
@@ -186,7 +189,7 @@ class AsyncHttpClient:
                 response = await self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
-            except _ResponseTooLargeError:
+            except _ResponseTooLargeError as exc:
                 self._emit_telemetry(
                     method,
                     path,
@@ -196,6 +199,10 @@ class AsyncHttpClient:
                     correlation_id,
                     "ResponseTooLargeError",
                 )
+                if exc.reference_id is None and correlation_id is not None:
+                    exc.reference_id = correlation_id
+                if exc.provider is None and self._provider_name is not None:
+                    exc.provider = self._provider_name
                 raise
             except httpx.TimeoutException as exc:
                 exc_name = type(exc).__name__
@@ -215,6 +222,7 @@ class AsyncHttpClient:
                     continue
                 raise PyMomoSDKError(
                     f"{timeout_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider=self._provider_name,
                 ) from None
@@ -236,6 +244,7 @@ class AsyncHttpClient:
                     continue
                 raise PyMomoSDKError(
                     f"{conn_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider=self._provider_name,
                 ) from None
@@ -279,10 +288,16 @@ class AsyncHttpClient:
         token_refresher: Callable[[], Coroutine[Any, Any, str]] | None = None,
         token_namespace: str = "",
         idempotent: bool | None = None,
+        reference_id: str | None = None,
     ) -> httpx.Response:
         """Execute async HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
         safe_path = _sanitize_telemetry_path(path)
+        effective_ref = (
+            reference_id
+            or _get_header_ci(headers, "X-Reference-Id")
+            or _get_header_ci(headers, "Idempotency-Key")
+        )
         logger.debug("%s %s", method, safe_path)
         response, attempts_used = await self._send_with_transient_retries(
             method,
@@ -293,6 +308,7 @@ class AsyncHttpClient:
             timeout_msg=f"Request timed out: {method} {safe_path}",
             conn_msg=f"Connection error: {method} {safe_path}",
             idempotent=idempotent,
+            reference_id=effective_ref,
         )
 
         if (
@@ -314,8 +330,15 @@ class AsyncHttpClient:
                 new_token = await token_refresher()
             except (AuthenticationError, ValueError):
                 raise AuthenticationError(
-                    "Authentication failed during token refresh"
+                    "Authentication failed during token refresh",
+                    reference_id=effective_ref,
+                    status_code=401,
+                    provider=self._provider_name,
                 ) from None
+            except PyMomoSDKError as exc:
+                if exc.reference_id is None and effective_ref is not None:
+                    exc.reference_id = effective_ref
+                raise
 
             # Retry original request once with remaining transient retry budget
             retry_headers = {
@@ -335,15 +358,13 @@ class AsyncHttpClient:
                 conn_msg=f"Connection error on retry: {method} {safe_path}",
                 idempotent=idempotent,
                 max_retries_override=remaining_retries,
+                reference_id=effective_ref,
             )
 
-        ref_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
-            headers, "Idempotency-Key"
-        )
         _raise_for_status(
             response,
             provider_name=self._provider_name,
-            reference_id=ref_id,
+            reference_id=effective_ref,
         )
         return response
 

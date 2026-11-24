@@ -257,6 +257,7 @@ class HttpClient:
         conn_msg: str,
         idempotent: bool | None = None,
         max_retries_override: int | None = None,
+        reference_id: str | None = None,
     ) -> tuple[httpx.Response, int]:
         effective_retries = (
             self._max_retries if max_retries_override is None else max_retries_override
@@ -265,8 +266,10 @@ class HttpClient:
             method, headers, idempotent=idempotent
         )
         attempts = (effective_retries + 1) if can_retry else 1
-        correlation_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
-            headers, "Idempotency-Key"
+        correlation_id = (
+            reference_id
+            or _get_header_ci(headers, "X-Reference-Id")
+            or _get_header_ci(headers, "Idempotency-Key")
         )
 
         for attempt in range(attempts):
@@ -275,7 +278,7 @@ class HttpClient:
                 response = self._execute_bounded_request(
                     method, path, headers=headers, json=json, data=data
                 )
-            except _ResponseTooLargeError:
+            except _ResponseTooLargeError as exc:
                 self._emit_telemetry(
                     method,
                     path,
@@ -285,6 +288,10 @@ class HttpClient:
                     correlation_id,
                     "ResponseTooLargeError",
                 )
+                if exc.reference_id is None and correlation_id is not None:
+                    exc.reference_id = correlation_id
+                if exc.provider is None and self._provider_name is not None:
+                    exc.provider = self._provider_name
                 raise
             except httpx.TimeoutException as exc:
                 exc_name = type(exc).__name__
@@ -302,6 +309,7 @@ class HttpClient:
                     continue
                 raise PyMomoSDKError(
                     f"{timeout_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider=self._provider_name,
                 ) from None
@@ -321,6 +329,7 @@ class HttpClient:
                     continue
                 raise PyMomoSDKError(
                     f"{conn_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider=self._provider_name,
                 ) from None
@@ -364,10 +373,16 @@ class HttpClient:
         token_refresher: Callable[[], str] | None = None,
         token_namespace: str = "",
         idempotent: bool | None = None,
+        reference_id: str | None = None,
     ) -> httpx.Response:
         """Execute HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
         safe_path = _sanitize_telemetry_path(path)
+        effective_ref = (
+            reference_id
+            or _get_header_ci(headers, "X-Reference-Id")
+            or _get_header_ci(headers, "Idempotency-Key")
+        )
         logger.debug("%s %s", method, safe_path)
         response, attempts_used = self._send_with_transient_retries(
             method,
@@ -378,6 +393,7 @@ class HttpClient:
             timeout_msg=f"Request timed out: {method} {safe_path}",
             conn_msg=f"Connection error: {method} {safe_path}",
             idempotent=idempotent,
+            reference_id=effective_ref,
         )
 
         if (
@@ -399,8 +415,15 @@ class HttpClient:
                 new_token = token_refresher()
             except (AuthenticationError, ValueError):
                 raise AuthenticationError(
-                    "Authentication failed during token refresh"
+                    "Authentication failed during token refresh",
+                    reference_id=effective_ref,
+                    status_code=401,
+                    provider=self._provider_name,
                 ) from None
+            except PyMomoSDKError as exc:
+                if exc.reference_id is None and effective_ref is not None:
+                    exc.reference_id = effective_ref
+                raise
 
             # Retry original request once with remaining transient retry budget
             retry_headers = {
@@ -420,15 +443,13 @@ class HttpClient:
                 conn_msg=f"Connection error on retry: {method} {safe_path}",
                 idempotent=idempotent,
                 max_retries_override=remaining_retries,
+                reference_id=effective_ref,
             )
 
-        ref_id = _get_header_ci(headers, "X-Reference-Id") or _get_header_ci(
-            headers, "Idempotency-Key"
-        )
         _raise_for_status(
             response,
             provider_name=self._provider_name,
-            reference_id=ref_id,
+            reference_id=effective_ref,
         )
         return response
 
@@ -447,7 +468,9 @@ class HttpClient:
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
-def parse_json_dict(response: httpx.Response) -> dict[str, Any]:
+def parse_json_dict(
+    response: httpx.Response, *, reference_id: str | None = None
+) -> dict[str, Any]:
     """Decode an HTTP response body as a JSON object.
 
     Raises:
@@ -456,25 +479,40 @@ def parse_json_dict(response: httpx.Response) -> dict[str, Any]:
     try:
         parsed = response.json()
     except ValueError:
-        raise PyMomoSDKError("API returned invalid JSON response") from None
+        raise PyMomoSDKError(
+            "API returned invalid JSON response",
+            reference_id=reference_id,
+            status_code=response.status_code,
+        ) from None
     if not isinstance(parsed, dict):
-        raise PyMomoSDKError("API returned unexpected non-object JSON response")
+        raise PyMomoSDKError(
+            "API returned unexpected non-object JSON response",
+            reference_id=reference_id,
+            status_code=response.status_code,
+        )
     return parsed
 
 
-def parse_model(response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
+def parse_model(
+    response: httpx.Response,
+    model_cls: type[ModelT],
+    *,
+    reference_id: str | None = None,
+) -> ModelT:
     """Decode a JSON object response and validate it against a Pydantic model.
 
     Raises:
         PyMomoSDKError: If the response body is not valid JSON or does not match
             the expected model schema.
     """
-    data = parse_json_dict(response)
+    data = parse_json_dict(response, reference_id=reference_id)
     try:
         return model_cls.model_validate(data)
     except ValidationError:
         raise PyMomoSDKError(
-            f"API response did not match expected {model_cls.__name__} schema"
+            f"API response did not match expected {model_cls.__name__} schema",
+            reference_id=reference_id,
+            status_code=response.status_code,
         ) from None
 
 

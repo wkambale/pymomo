@@ -115,7 +115,12 @@ class AsyncBaseProduct:
         callback_url: str | None = None,
         include_content_type: bool = False,
     ) -> dict[str, str]:
-        token = await self._get_token()
+        try:
+            token = await self._get_token()
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and reference_id is not None:
+                exc.reference_id = reference_id
+            raise
         headers = {
             "Authorization": f"Bearer {token}",
             "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,

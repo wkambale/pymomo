@@ -96,6 +96,7 @@ class Collection(BaseProduct):
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
             idempotent=(reference_id is not None),
+            reference_id=ref,
         )
         return ref
 
@@ -112,13 +113,14 @@ class Collection(BaseProduct):
         response = self._http.request(
             "GET",
             f"/collection/v1_0/requesttopay/{reference_id}",
-            headers=self._build_headers(),
+            headers=self._build_headers(reference_id=None),
             product_name=self._product_name,
             token_cache=self._token_cache,
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
+            reference_id=reference_id,
         )
-        return parse_model(response, TransactionResult)
+        return parse_model(response, TransactionResult, reference_id=reference_id)
 
     def request_to_withdraw(
         self,
@@ -186,6 +188,7 @@ class Collection(BaseProduct):
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
             idempotent=(reference_id is not None),
+            reference_id=ref,
         )
         return ref
 
@@ -207,8 +210,9 @@ class Collection(BaseProduct):
             token_cache=self._token_cache,
             token_refresher=self._get_token,
             token_namespace=self._token_namespace,
+            reference_id=reference_id,
         )
-        return parse_model(response, TransactionResult)
+        return parse_model(response, TransactionResult, reference_id=reference_id)
 
     def get_basic_user_info_by_reference(
         self,
