@@ -5,18 +5,30 @@ All SDK-specific exceptions inherit from the base `PyMomoSDKError` exception cla
 ## Exception hierarchy
 
 ```
-PyMomoSDKError (Base exception)
-├── AuthenticationError (Raised on HTTP 401)
+PyMomoSDKError (Base exception; carries reference_id, status_code, error_code, reason, response_body, provider, attempted_references)
+├── AuthenticationError (Raised on HTTP 401 with upstream error detail)
 ├── MissingCredentialsError (Raised when credentials are not configured)
-├── BadRequestError (Raised on HTTP 400; includes sanitized message and response_body)
-├── ResourceNotFoundError (Raised on HTTP 404)
+├── BadRequestError (Raised on HTTP 400 and 422; includes sanitized message, error_code, and redacted response_body)
+├── ResourceNotFoundError (Raised on HTTP 404 with upstream error detail)
 ├── ConflictError (Raised on HTTP 409; carries duplicate reference_id attribute)
-├── PyMomoSDKServerError (Raised on HTTP 5xx errors with provider attribution)
+├── PyMomoSDKServerError (Raised on HTTP 5xx errors with provider attribution and upstream error detail)
 ├── TransactionFailedError (Raised for failed settlements or wait_for_settlement(..., raise_on_failed=True))
 └── WebhookVerificationError (Raised on signature, IP, replay, size, or payload validation failure)
 ```
 
-Status and settlement polling helpers (`get_payment_status`, `wait_for_settlement`, and `async_wait_for_settlement`) return a typed `TransactionResult` or `PaymentResult` by default. Pass `raise_on_failed=True` to `wait_for_settlement` or `async_wait_for_settlement` to raise `TransactionFailedError` automatically when a transaction settles as failed.
+Status and settlement polling helpers (`get_payment_status`, `wait_for_settlement`, and `async_wait_for_settlement`) return a typed `TransactionResult` or `PaymentResult` by default. Pass `raise_on_failed=True` and `reference_id=ref` to `wait_for_settlement` or `async_wait_for_settlement` so raised `TransactionFailedError` and polling timeout exceptions always carry the payment reference ID.
+
+### Structured error attributes
+
+Every `PyMomoSDKError` instance (and every subclass) exposes structured attributes so callers can reconcile failed payments and log clear failure reasons without scraping exception text:
+
+- **`reference_id`**: The caller-supplied or auto-generated payment reference ID associated with the failed request (preserved across HTTP `4xx`/`5xx`, timeouts, connection errors, OAuth2 token failures, and response parsing errors across all 7 providers).
+- **`status_code`**: The upstream HTTP status code (for example `400`, `401`, `403`, `404`, `409`, `422`, `429`, or `500`), or `None` for transport failures.
+- **`error_code`**: The machine-readable upstream error code extracted from the gateway response (such as MTN `code`, Airtel `status.result_code`, M-Pesa `errorCode`, Wave `code`, or OAuth2 `error`).
+- **`reason`**: The sanitized human-readable failure reason from the gateway response, or the safe `httpx` transport subtype name (such as `ReadTimeout` or `ConnectError`) on network errors.
+- **`response_body`**: A sanitized dictionary of the upstream JSON payload with sensitive keys (`access_token`, `client_secret`, `api_key`, `pin`, `authorization`, `password`, etc.) recursively replaced with `<redacted>` and omitted from `repr()`.
+- **`provider`**: The upstream payment rail name (for example `"MTN MoMo"`, `"Airtel Money"`, `"Wave"`, `"M-Pesa"`, `"Paystack"`, `"Flutterwave"`, or `"Orange Money"`).
+- **`attempted_references`**: On `PaymentRouter` and `AsyncPaymentRouter` failover exhaustion, a list of `{"provider": ..., "reference_id": ...}` records for every rail attempted.
 
 ### Transport protection errors
 
@@ -28,7 +40,7 @@ Status and settlement polling helpers (`get_payment_status`, `wait_for_settlemen
 
 ## Catching exceptions
 
-Catch specific exceptions to handle distinct application states:
+Catch specific exceptions to handle distinct application states and reconcile failed writes using `e.reference_id`, `e.error_code`, and `e.reason`:
 
 ```python
 from py_momo_sdk import (
@@ -66,22 +78,23 @@ with PyMomoSDK(config) as client:
             lambda: client.collection.get_payment_status(ref),
             timeout=60.0,
             raise_on_failed=True,
+            reference_id=ref,
         )
         print(f"Settled: {tx.financial_transaction_id}")
     except ValueError as e:
         # Raised immediately on client-side validation errors (e.g. amount="abc")
         print(f"Invalid request input: {e}")
     except BadRequestError as e:
-        print(f"Server rejected request: {e}")
+        print(f"Server rejected {e.reference_id} ({e.error_code}): {e.reason}")
         print(f"Details: {e.response_body}")
     except ConflictError as e:
         print(f"Duplicate reference ID used: {e.reference_id}")
-    except AuthenticationError:
-        print("Authentication credentials rejected.")
+    except AuthenticationError as e:
+        print(f"Authentication rejected for {e.reference_id}: {e.reason}")
     except TransactionFailedError as e:
         print(f"Settlement failed for {e.reference_id}: {e.reason}")
     except PyMomoSDKError as e:
-        print(f"Library error occurred: {e}")
+        print(f"Payment {e.reference_id} failed ({e.status_code}): {e}")
 ```
 
 ## Security policies

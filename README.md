@@ -8,9 +8,9 @@
   [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 </div>
 
-Py MoMo SDK (`py-momo-sdk` 1.3.0) is a strictly typed Python client library for MTN Mobile Money (MoMo), Airtel Money, Wave, Safaricom M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money behind a unified `PaymentRouter`. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict input validation, and verified webhook security.
+Py MoMo SDK (`py-momo-sdk` 1.3.1) is a strictly typed Python client library for MTN Mobile Money (MoMo), Airtel Money, Wave, Safaricom M-Pesa (Daraja), Paystack, Flutterwave, and Orange Money behind a unified `PaymentRouter`. It provides synchronous and asynchronous clients with matching interfaces, automatic token caching, strict input validation, and verified webhook security.
 
-- **PyPI package:** [py-momo-sdk](https://pypi.org/project/py-momo-sdk/) (`1.3.0`, imported as `py_momo_sdk`, inspectable via `py_momo_sdk.__version__`)
+- **PyPI package:** [py-momo-sdk](https://pypi.org/project/py-momo-sdk/) (`1.3.1`, imported as `py_momo_sdk`, inspectable via `py_momo_sdk.__version__`)
 - **Python support:** Python 3.10 to 3.15
 - **Documentation:** [https://wkambale.github.io/pymomo/](https://wkambale.github.io/pymomo/)
 - **Repository:** [https://github.com/wkambale/pymomo](https://github.com/wkambale/pymomo)

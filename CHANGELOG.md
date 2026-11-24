@@ -2,6 +2,13 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## 1.3.1 - 2026-11-24
+
+### Fixed
+- Preserved the payment `reference_id` (both caller-supplied and auto-generated) on every failed request across all 7 payment rails (MTN MoMo, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, and Orange Money) in both synchronous and asynchronous clients, including HTTP `4xx`/`5xx` errors, timeouts, connection errors, response-size rejections, OAuth2 token acquisition/refresh failures, and JSON/schema parsing errors.
+- Surfaced clear, structured upstream failure diagnostics on `PyMomoSDKError` and all subclasses via `reference_id`, `status_code`, `error_code`, `reason`, secret-redacted `response_body`, `provider`, and `attempted_references` across all 7 gateway error schemas (including HTTP `422` validation errors mapped to `BadRequestError`, Airtel HTTP `200` `status.result_code` rejections, sanitized plain-text bodies with HTML suppression, and safe transport exception subtypes such as `(ReadTimeout)` and `(ConnectError)` without chaining raw request headers).
+- Attached `attempted_references` on `PaymentRouter` and `AsyncPaymentRouter` failover exhaustion, added `reference_id` support to `wait_for_settlement()` and `async_wait_for_settlement()`, and included `(reference_id: ...)` in CLI error output.
+
 ## 1.3.0 - 2026-11-23
 
 ### Added
