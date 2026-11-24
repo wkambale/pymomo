@@ -23,6 +23,8 @@ from py_momo_sdk.http import (
     _RETRYABLE_STATUS_CODES,
     DEFAULT_MAX_RESPONSE_BYTES,
     _compute_retry_delay,
+    _extract_error_details,
+    _format_error_detail,
     _get_header_ci,
     _is_retryable_request,
     _ResponseTooLargeError,
@@ -73,47 +75,128 @@ def _merge_airtel_headers(
     return req_headers
 
 
-def _extract_airtel_bad_request_message(body: dict[str, Any]) -> str:
-    status_obj = body.get("status")
-    if isinstance(status_obj, dict):
-        nested = status_obj.get("message")
-        if isinstance(nested, str) and nested:
-            return nested
-    top = body.get("message")
-    if isinstance(top, str) and top:
-        return top
-    return "Bad request"
-
-
-def _raise_for_airtel_status(response: httpx.Response) -> None:
-    """Map Airtel HTTP status codes to custom exception classes."""
-    if 200 <= response.status_code < 300:
+def _raise_for_airtel_status(
+    response: httpx.Response, *, reference_id: str | None = None
+) -> None:
+    """Map Airtel HTTP status codes to structured custom exception classes."""
+    status = response.status_code
+    if 200 <= status < 300:
         return
-    if 300 <= response.status_code < 400:
+    if 300 <= status < 400:
         raise PyMomoSDKError(
-            f"Unexpected Airtel redirect HTTP status: {response.status_code}"
+            f"Unexpected Airtel redirect HTTP status: {status}",
+            status_code=status,
+            reference_id=reference_id,
+            provider="Airtel Money",
         )
-    body: dict[str, Any] = {}
-    try:
-        parsed = response.json()
-        if isinstance(parsed, dict):
-            body = parsed
-    except ValueError:
-        body = {}
 
-    if response.status_code == 400:
+    body, error_code, reason = _extract_error_details(response)
+    detail = _format_error_detail(error_code, reason)
+
+    if status == 400:
+        msg = detail or "Bad request"
         raise BadRequestError(
-            _extract_airtel_bad_request_message(body), response_body=body
+            msg,
+            response_body=body,
+            reference_id=reference_id,
+            status_code=400,
+            error_code=error_code,
+            reason=reason or msg,
+            provider="Airtel Money",
         )
-    if response.status_code == 401:
-        raise AuthenticationError("Invalid or expired Airtel credentials")
-    if response.status_code == 404:
-        raise ResourceNotFoundError("Resource not found")
-    if response.status_code == 409:
-        raise ConflictError("Duplicate transaction reference")
-    if response.status_code >= 500:
-        raise PyMomoSDKServerError(f"Airtel server error: {response.status_code}")
-    raise PyMomoSDKError(f"Unexpected Airtel HTTP status: {response.status_code}")
+    if status == 401:
+        base = "Invalid or expired Airtel credentials"
+        msg = f"{base}: {detail}" if detail else base
+        raise AuthenticationError(
+            msg,
+            reference_id=reference_id,
+            status_code=401,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status == 403:
+        base = "Airtel Money forbidden (HTTP 403)"
+        msg = f"{base}: {detail}" if detail else base
+        raise PyMomoSDKError(
+            msg,
+            reference_id=reference_id,
+            status_code=403,
+            error_code=error_code,
+            reason=reason or detail or "Forbidden",
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status == 404:
+        base = "Resource not found"
+        msg = f"{base}: {detail}" if detail else base
+        raise ResourceNotFoundError(
+            msg,
+            reference_id=reference_id,
+            status_code=404,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status == 409:
+        msg = detail or "Duplicate transaction reference"
+        raise ConflictError(
+            msg,
+            reference_id=reference_id,
+            status_code=409,
+            error_code=error_code,
+            reason=reason or msg,
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status == 422:
+        msg = detail or "Unprocessable entity (HTTP 422)"
+        raise BadRequestError(
+            msg,
+            response_body=body,
+            reference_id=reference_id,
+            status_code=422,
+            error_code=error_code,
+            reason=reason or msg,
+            provider="Airtel Money",
+        )
+    if status == 429:
+        base = "Airtel Money rate limit exceeded (HTTP 429)"
+        msg = f"{base}: {detail}" if detail else base
+        raise PyMomoSDKError(
+            msg,
+            reference_id=reference_id,
+            status_code=429,
+            error_code=error_code,
+            reason=reason or detail or "Rate limit exceeded",
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status >= 500:
+        base = f"Airtel server error: {status}"
+        msg = f"{base} ({detail})" if detail else base
+        raise PyMomoSDKServerError(
+            msg,
+            reference_id=reference_id,
+            status_code=status,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider="Airtel Money",
+        )
+    base = f"Unexpected Airtel HTTP status: {status}"
+    msg = f"{base} ({detail})" if detail else base
+    raise PyMomoSDKError(
+        msg,
+        reference_id=reference_id,
+        status_code=status,
+        error_code=error_code,
+        reason=reason or detail,
+        response_body=body,
+        provider="Airtel Money",
+    )
 
 
 class AirtelClient:
@@ -274,7 +357,8 @@ class AirtelClient:
                     "ResponseTooLargeError",
                 )
                 raise
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -289,8 +373,13 @@ class AirtelClient:
                         _compute_retry_delay(attempt, self._config.retry_backoff, None)
                     )
                     continue
-                raise PyMomoSDKError(timeout_msg) from None
-            except httpx.RequestError:
+                raise PyMomoSDKError(
+                    f"{timeout_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider="Airtel Money",
+                ) from None
+            except httpx.RequestError as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -305,7 +394,11 @@ class AirtelClient:
                         _compute_retry_delay(attempt, self._config.retry_backoff, None)
                     )
                     continue
-                raise PyMomoSDKError(conn_msg) from None
+                raise PyMomoSDKError(
+                    f"{conn_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider="Airtel Money",
+                ) from None
 
             self._emit_telemetry(
                 method,

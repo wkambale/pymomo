@@ -7,7 +7,11 @@ import time
 import httpx
 
 from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
-from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES
+from py_momo_sdk.http import (
+    DEFAULT_MAX_RESPONSE_BYTES,
+    _extract_error_details,
+    _format_error_detail,
+)
 from py_momo_sdk.utils import validate_header_value
 
 logger = logging.getLogger("py_momo_sdk.airtel.auth")
@@ -16,15 +20,36 @@ _MAX_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
 
 def _parse_airtel_token_payload(response: httpx.Response) -> tuple[str, int]:
     """Validate an Airtel OAuth2 token response and return ``(token, expires_in)``."""
-    if 300 <= response.status_code < 400:
+    status = response.status_code
+    if 300 <= status < 400:
         raise AuthenticationError(
-            f"Airtel authentication unexpected redirect: HTTP {response.status_code}"
+            f"Airtel authentication unexpected redirect: HTTP {status}",
+            status_code=status,
+            provider="Airtel Money",
         )
-    if response.status_code == 401:
-        raise AuthenticationError("Invalid or expired Airtel client credentials")
-    if response.status_code >= 400:
+    if status == 401:
+        body, error_code, reason = _extract_error_details(response)
+        detail = _format_error_detail(error_code, reason)
+        base = "Invalid or expired Airtel client credentials"
         raise AuthenticationError(
-            f"Airtel authentication failed: HTTP {response.status_code}"
+            f"{base}: {detail}" if detail else base,
+            status_code=401,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider="Airtel Money",
+        )
+    if status >= 400:
+        body, error_code, reason = _extract_error_details(response)
+        detail = _format_error_detail(error_code, reason)
+        base = f"Airtel authentication failed: HTTP {status}"
+        raise AuthenticationError(
+            f"{base} ({detail})" if detail else base,
+            status_code=status,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider="Airtel Money",
         )
 
     try:
@@ -196,11 +221,19 @@ class AirtelAuth:
                 response._content = bytes(buf)
             finally:
                 response.close()
-        except httpx.TimeoutException:
-            raise PyMomoSDKError("Airtel authentication request timed out") from None
-        except httpx.RequestError:
+        except httpx.TimeoutException as exc:
+            exc_name = type(exc).__name__
             raise PyMomoSDKError(
-                "Airtel authentication request connection error"
+                f"Airtel authentication request timed out ({exc_name})",
+                reason=exc_name,
+                provider="Airtel Money",
+            ) from None
+        except httpx.RequestError as exc:
+            exc_name = type(exc).__name__
+            raise PyMomoSDKError(
+                f"Airtel authentication request connection error ({exc_name})",
+                reason=exc_name,
+                provider="Airtel Money",
             ) from None
 
         token, expires_in_int = _parse_airtel_token_payload(response)

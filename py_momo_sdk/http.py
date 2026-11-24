@@ -286,7 +286,8 @@ class HttpClient:
                     "ResponseTooLargeError",
                 )
                 raise
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -299,8 +300,13 @@ class HttpClient:
                 if attempt + 1 < attempts:
                     time.sleep(_compute_retry_delay(attempt, self._retry_backoff, None))
                     continue
-                raise PyMomoSDKError(timeout_msg) from None
-            except httpx.RequestError:
+                raise PyMomoSDKError(
+                    f"{timeout_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider=self._provider_name,
+                ) from None
+            except httpx.RequestError as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -313,7 +319,11 @@ class HttpClient:
                 if attempt + 1 < attempts:
                     time.sleep(_compute_retry_delay(attempt, self._retry_backoff, None))
                     continue
-                raise PyMomoSDKError(conn_msg) from None
+                raise PyMomoSDKError(
+                    f"{conn_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider=self._provider_name,
+                ) from None
 
             self._emit_telemetry(
                 method,
@@ -468,6 +478,179 @@ def parse_model(response: httpx.Response, model_cls: type[ModelT]) -> ModelT:
         ) from None
 
 
+def _clean_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, int) and type(value) is not bool:
+        return str(value)
+    return None
+
+
+def _summarize_validation_details(raw: Any) -> str | None:
+    if isinstance(raw, list) and raw:
+        items: list[str] = []
+        for entry in raw[:5]:
+            if isinstance(entry, str) and entry.strip():
+                items.append(entry.strip())
+            elif isinstance(entry, dict):
+                loc = entry.get("loc") or entry.get("field") or entry.get("param")
+                msg = (
+                    entry.get("msg")
+                    or entry.get("message")
+                    or entry.get("reason")
+                    or entry.get("detail")
+                )
+                if isinstance(loc, list):
+                    loc_str = ".".join(str(p) for p in loc)
+                elif isinstance(loc, str):
+                    loc_str = loc
+                else:
+                    loc_str = ""
+                if isinstance(msg, str) and msg.strip():
+                    items.append(
+                        f"{loc_str}: {msg.strip()}" if loc_str else msg.strip()
+                    )
+        if items:
+            return "; ".join(items)
+    elif isinstance(raw, dict) and raw:
+        parts: list[str] = []
+        for k, v in list(raw.items())[:5]:
+            if isinstance(v, list) and v:
+                parts.append(f"{k}: {', '.join(str(x) for x in v[:3])}")
+            elif isinstance(v, str) and v.strip():
+                parts.append(f"{k}: {v.strip()}")
+        if parts:
+            return "; ".join(parts)
+    return None
+
+
+def _extract_error_details(
+    response: httpx.Response,
+) -> tuple[dict[str, Any], str | None, str | None]:
+    """Extract ``(body, error_code, reason)`` across all supported gateway error schemas."""
+    body: dict[str, Any] = {}
+    parsed_json = False
+    try:
+        parsed = response.json()
+        parsed_json = True
+        if isinstance(parsed, dict):
+            body = parsed
+    except ValueError:
+        body = {}
+
+    if not body:
+        if parsed_json:
+            return {}, None, None
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/html" in content_type or "application/xhtml" in content_type:
+            return {}, None, None
+        try:
+            raw_text = (response.text or "").strip()
+        except Exception:
+            raw_text = ""
+        if raw_text and not raw_text.lstrip().lower().startswith(
+            ("<!doctype", "<html", "<head", "<body")
+        ):
+            excerpt = raw_text[:240].strip()
+            return {}, None, excerpt or None
+        return {}, None, None
+
+    error_code: str | None = None
+    reason: str | None = None
+
+    # 1. Nested Airtel-style data.transaction.message
+    data_obj = body.get("data")
+    if isinstance(data_obj, dict):
+        tx_obj = data_obj.get("transaction")
+        if isinstance(tx_obj, dict):
+            reason = _clean_text(tx_obj.get("message")) or reason
+
+    # 2. Nested status object (Airtel)
+    status_obj = body.get("status")
+    if isinstance(status_obj, dict):
+        error_code = (
+            _clean_text(status_obj.get("result_code"))
+            or _clean_text(status_obj.get("code"))
+            or error_code
+        )
+        reason = _clean_text(status_obj.get("message")) or reason
+
+    # 3. Nested error / reason dict (MTN / OAuth / gateway wrappers)
+    for container_key in ("error", "reason"):
+        nested = body.get(container_key)
+        if isinstance(nested, dict):
+            error_code = (
+                _clean_text(nested.get("code"))
+                or _clean_text(nested.get("errorCode"))
+                or error_code
+            )
+            reason = (
+                _clean_text(nested.get("message"))
+                or _clean_text(nested.get("description"))
+                or _clean_text(nested.get("detail"))
+                or reason
+            )
+
+    # 4. Top-level error code keys (MTN, Daraja, Wave, Orange, Paystack)
+    if error_code is None:
+        for code_key in (
+            "code",
+            "errorCode",
+            "result_code",
+            "error_code",
+            "ResponseCode",
+        ):
+            val = _clean_text(body.get(code_key))
+            if val is not None:
+                error_code = val
+                break
+
+    # 5. Top-level message / reason keys
+    if reason is None:
+        for msg_key in (
+            "message",
+            "errorMessage",
+            "error_description",
+            "description",
+            "ResponseDescription",
+            "detail",
+            "reason",
+        ):
+            val = body.get(msg_key)
+            if isinstance(val, str) and val.strip():
+                reason = val.strip()
+                break
+
+    # 6. Structured validation details / errors (Wave details, Paystack/Flutterwave errors)
+    details_summary = _summarize_validation_details(
+        body.get("details")
+    ) or _summarize_validation_details(body.get("errors"))
+    if details_summary:
+        if reason and details_summary not in reason:
+            reason = f"{reason} ({details_summary})"
+        elif not reason:
+            reason = details_summary
+
+    # 7. OAuth2 top-level string "error" (e.g., Orange {"error": "invalid_client"})
+    top_error = body.get("error")
+    if isinstance(top_error, str) and top_error.strip():
+        if error_code is None and reason is not None:
+            error_code = top_error.strip()
+        elif reason is None:
+            reason = top_error.strip()
+
+    return body, error_code, reason
+
+
+def _format_error_detail(error_code: str | None, reason: str | None) -> str | None:
+    if error_code and reason:
+        if error_code in reason:
+            return reason
+        return f"{error_code}: {reason}"
+    return reason or error_code
+
+
 def _extract_error_message(body: dict[str, Any], default: str) -> str:
     """Extract a human-readable error message from gateway-specific JSON bodies."""
     for key in ("message", "errorMessage", "error_description", "description"):
@@ -483,32 +666,123 @@ def _raise_for_status(
     provider_name: str | None = None,
     reference_id: str | None = None,
 ) -> None:
-    """Map HTTP status codes to custom exception classes."""
-    if 200 <= response.status_code < 300:
+    """Map HTTP status codes to structured custom exception classes."""
+    status = response.status_code
+    if 200 <= status < 300:
         return
-    if 300 <= response.status_code < 400:
-        raise PyMomoSDKError(f"Unexpected redirect HTTP status: {response.status_code}")
-    body: dict[str, Any] = {}
-    try:
-        parsed = response.json()
-        if isinstance(parsed, dict):
-            body = parsed
-    except ValueError:
-        body = {}
-
-    if response.status_code == 400:
-        msg = _extract_error_message(body, "Bad request")
-        raise BadRequestError(msg, response_body=body)
-    if response.status_code == 401:
-        raise AuthenticationError("Invalid or expired credentials")
-    if response.status_code == 404:
-        raise ResourceNotFoundError("Resource not found")
-    if response.status_code == 409:
-        conflict_msg = _extract_error_message(
-            body, "Conflict: duplicate request reference"
+    if 300 <= status < 400:
+        raise PyMomoSDKError(
+            f"Unexpected redirect HTTP status: {status}",
+            status_code=status,
+            reference_id=reference_id,
+            provider=provider_name,
         )
-        raise ConflictError(conflict_msg, reference_id=reference_id)
-    if response.status_code >= 500:
-        label = provider_name or "Upstream API"
-        raise PyMomoSDKServerError(f"{label} server error: {response.status_code}")
-    raise PyMomoSDKError(f"Unexpected HTTP status: {response.status_code}")
+
+    body, error_code, reason = _extract_error_details(response)
+    detail = _format_error_detail(error_code, reason)
+    label = provider_name or "Upstream API"
+
+    if status == 400:
+        msg = detail or "Bad request"
+        raise BadRequestError(
+            msg,
+            response_body=body,
+            reference_id=reference_id,
+            status_code=400,
+            error_code=error_code,
+            reason=reason or msg,
+            provider=provider_name,
+        )
+    if status == 401:
+        base = "Invalid or expired credentials"
+        msg = f"{base}: {detail}" if detail else base
+        raise AuthenticationError(
+            msg,
+            reference_id=reference_id,
+            status_code=401,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider=provider_name,
+        )
+    if status == 403:
+        base = f"{label} forbidden (HTTP 403)"
+        msg = f"{base}: {detail}" if detail else base
+        raise PyMomoSDKError(
+            msg,
+            reference_id=reference_id,
+            status_code=403,
+            error_code=error_code,
+            reason=reason or detail or "Forbidden",
+            response_body=body,
+            provider=provider_name,
+        )
+    if status == 404:
+        base = "Resource not found"
+        msg = f"{base}: {detail}" if detail else base
+        raise ResourceNotFoundError(
+            msg,
+            reference_id=reference_id,
+            status_code=404,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider=provider_name,
+        )
+    if status == 409:
+        conflict_msg = detail or "Conflict: duplicate request reference"
+        raise ConflictError(
+            conflict_msg,
+            reference_id=reference_id,
+            status_code=409,
+            error_code=error_code,
+            reason=reason or conflict_msg,
+            response_body=body,
+            provider=provider_name,
+        )
+    if status == 422:
+        msg = detail or "Unprocessable entity (HTTP 422)"
+        raise BadRequestError(
+            msg,
+            response_body=body,
+            reference_id=reference_id,
+            status_code=422,
+            error_code=error_code,
+            reason=reason or msg,
+            provider=provider_name,
+        )
+    if status == 429:
+        base = f"{label} rate limit exceeded (HTTP 429)"
+        msg = f"{base}: {detail}" if detail else base
+        raise PyMomoSDKError(
+            msg,
+            reference_id=reference_id,
+            status_code=429,
+            error_code=error_code,
+            reason=reason or detail or "Rate limit exceeded",
+            response_body=body,
+            provider=provider_name,
+        )
+    if status >= 500:
+        base = f"{label} server error: {status}"
+        msg = f"{base} ({detail})" if detail else base
+        raise PyMomoSDKServerError(
+            msg,
+            reference_id=reference_id,
+            status_code=status,
+            error_code=error_code,
+            reason=reason or detail,
+            response_body=body,
+            provider=provider_name,
+        )
+    base = f"Unexpected HTTP status: {status}"
+    msg = f"{base} ({detail})" if detail else base
+    raise PyMomoSDKError(
+        msg,
+        reference_id=reference_id,
+        status_code=status,
+        error_code=error_code,
+        reason=reason or detail,
+        response_body=body,
+        provider=provider_name,
+    )

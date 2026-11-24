@@ -104,11 +104,19 @@ class AsyncAirtelAuth:
                 response._content = bytes(buf)
             finally:
                 await response.aclose()
-        except httpx.TimeoutException:
-            raise PyMomoSDKError("Airtel authentication request timed out") from None
-        except httpx.RequestError:
+        except httpx.TimeoutException as exc:
+            exc_name = type(exc).__name__
             raise PyMomoSDKError(
-                "Airtel authentication request connection error"
+                f"Airtel authentication request timed out ({exc_name})",
+                reason=exc_name,
+                provider="Airtel Money",
+            ) from None
+        except httpx.RequestError as exc:
+            exc_name = type(exc).__name__
+            raise PyMomoSDKError(
+                f"Airtel authentication request connection error ({exc_name})",
+                reason=exc_name,
+                provider="Airtel Money",
             ) from None
 
         token, expires_in_int = _parse_airtel_token_payload(response)
