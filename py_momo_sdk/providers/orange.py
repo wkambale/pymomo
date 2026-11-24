@@ -315,6 +315,18 @@ class OrangeMoneyClient:
             self._cache.set("orange_money", tok.access_token, tok.expires_in)
             return tok.access_token
 
+    def _auth_headers(self, *, reference_id: str | None = None) -> dict[str, str]:
+        try:
+            token = self._get_token()
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and reference_id is not None:
+                exc.reference_id = reference_id
+            raise
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
     def create_web_payment(
         self,
         amount: str,
@@ -372,16 +384,14 @@ class OrangeMoneyClient:
         response = self._http.request(
             "POST",
             f"{self._config.api_path_prefix}/webpayment",
-            headers={
-                "Authorization": f"Bearer {self._get_token()}",
-                "Content-Type": "application/json",
-            },
+            headers=self._auth_headers(reference_id=ref),
             json=payload,
             product_name="orange_money",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=ref,
         )
-        res = parse_json_dict(response)
+        res = parse_json_dict(response, reference_id=ref)
         pay_token = res.get("pay_token")
         if isinstance(pay_token, str) and pay_token.strip():
             self._record_payment_context(
@@ -408,10 +418,7 @@ class OrangeMoneyClient:
         response = self._http.request(
             "POST",
             f"{self._config.api_path_prefix}/transactionstatus",
-            headers={
-                "Authorization": f"Bearer {self._get_token()}",
-                "Content-Type": "application/json",
-            },
+            headers=self._auth_headers(reference_id=order_id),
             json={
                 "order_id": order_id,
                 "amount": formatted_amount,
@@ -421,8 +428,9 @@ class OrangeMoneyClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
             idempotent=True,
+            reference_id=order_id,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=order_id)
 
     def close(self) -> None:
         self._http.close()
@@ -509,6 +517,18 @@ class AsyncOrangeMoneyClient:
             self._cache.set("orange_money", tok.access_token, tok.expires_in)
             return tok.access_token
 
+    async def _auth_headers(self, *, reference_id: str | None = None) -> dict[str, str]:
+        try:
+            token = await self._get_token()
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and reference_id is not None:
+                exc.reference_id = reference_id
+            raise
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
     async def create_web_payment(
         self,
         amount: str,
@@ -565,16 +585,14 @@ class AsyncOrangeMoneyClient:
         response = await self._http.request(
             "POST",
             f"{self._config.api_path_prefix}/webpayment",
-            headers={
-                "Authorization": f"Bearer {await self._get_token()}",
-                "Content-Type": "application/json",
-            },
+            headers=await self._auth_headers(reference_id=ref),
             json=payload,
             product_name="orange_money",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=ref,
         )
-        res = parse_json_dict(response)
+        res = parse_json_dict(response, reference_id=ref)
         pay_token = res.get("pay_token")
         if isinstance(pay_token, str) and pay_token.strip():
             self._record_payment_context(
@@ -600,10 +618,7 @@ class AsyncOrangeMoneyClient:
         response = await self._http.request(
             "POST",
             f"{self._config.api_path_prefix}/transactionstatus",
-            headers={
-                "Authorization": f"Bearer {await self._get_token()}",
-                "Content-Type": "application/json",
-            },
+            headers=await self._auth_headers(reference_id=order_id),
             json={
                 "order_id": order_id,
                 "amount": formatted_amount,
@@ -613,8 +628,9 @@ class AsyncOrangeMoneyClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
             idempotent=True,
+            reference_id=order_id,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=order_id)
 
     async def close(self) -> None:
         await self._http.close()

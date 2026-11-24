@@ -362,3 +362,62 @@ def test_issue_80_ssrf_traversal_ports_headers_and_immutability() -> None:
             HttpClient("https://sandbox.momodeveloper.mtn.com", 30.0, client=evil)
     finally:
         evil.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_settlement_preserves_reference_id_issue_115() -> None:
+    """Verify wait_for_settlement and async_wait_for_settlement attach reference_id on failure and timeout (#115)."""
+    from py_momo_sdk.exceptions import PyMomoSDKError, TransactionFailedError
+    from py_momo_sdk.models import TransactionResult, TransactionStatus
+    from py_momo_sdk.utils import async_wait_for_settlement, wait_for_settlement
+
+    failed_tx = TransactionResult(
+        status=TransactionStatus.failed,
+        reason="APPROVAL_REJECTED",
+    )
+    with pytest.raises(TransactionFailedError) as exc_fail:
+        wait_for_settlement(
+            lambda: failed_tx,
+            raise_on_failed=True,
+            reference_id="mtn-ref-999",
+        )
+    assert exc_fail.value.reference_id == "mtn-ref-999"
+    assert exc_fail.value.reason == "APPROVAL_REJECTED"
+
+    pending_tx = TransactionResult(status=TransactionStatus.pending)
+    with pytest.raises(PyMomoSDKError, match="timed out") as exc_to:
+        wait_for_settlement(
+            lambda: pending_tx,
+            timeout=0.05,
+            interval=0.1,
+            sleep_fn=lambda _: None,
+            reference_id="mtn-ref-timeout",
+        )
+    assert exc_to.value.reference_id == "mtn-ref-timeout"
+
+    async def _poll_failed() -> TransactionResult:
+        return failed_tx
+
+    with pytest.raises(TransactionFailedError) as exc_afail:
+        await async_wait_for_settlement(
+            _poll_failed,
+            raise_on_failed=True,
+            reference_id="mtn-aref-888",
+        )
+    assert exc_afail.value.reference_id == "mtn-aref-888"
+
+    async def _poll_pending() -> TransactionResult:
+        return pending_tx
+
+    async def _noop_sleep(_: float) -> None:
+        return None
+
+    with pytest.raises(PyMomoSDKError, match="timed out") as exc_ato:
+        await async_wait_for_settlement(
+            _poll_pending,
+            timeout=0.05,
+            interval=0.1,
+            sleep_fn=_noop_sleep,
+            reference_id="mtn-aref-timeout",
+        )
+    assert exc_ato.value.reference_id == "mtn-aref-timeout"

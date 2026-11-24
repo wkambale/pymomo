@@ -134,6 +134,8 @@ def handle_cli_exceptions(func: F) -> F:
         except PyMomoSDKError as e:
             msg = str(e)
             msg = msg[0].upper() + msg[1:] if msg else "An unexpected error occurred."
+            if e.reference_id and e.reference_id not in msg:
+                msg = f"{msg} (reference_id: {e.reference_id})"
             typer.echo(f"Error: {msg}", err=True)
             raise typer.Exit(code=1) from None
         except ValueError as e:

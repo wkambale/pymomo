@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
+from py_momo_sdk.exceptions import PyMomoSDKError
 from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_model
 from py_momo_sdk.providers.models import (
     BalanceResult,
@@ -292,9 +293,15 @@ class MpesaClient:
             self._cache.set("mpesa", token_resp.access_token, token_resp.expires_in)
             return token_resp.access_token
 
-    def _auth_headers(self) -> dict[str, str]:
+    def _auth_headers(self, *, reference_id: str | None = None) -> dict[str, str]:
+        try:
+            token = self._get_token()
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and reference_id is not None:
+                exc.reference_id = reference_id
+            raise
         return {
-            "Authorization": f"Bearer {self._get_token()}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
@@ -338,7 +345,7 @@ class MpesaClient:
         response = self._http.request(
             "POST",
             "/mpesa/stkpush/v1/processrequest",
-            headers=self._auth_headers(),
+            headers=self._auth_headers(reference_id=validated_ref),
             json={
                 "BusinessShortCode": self._config.short_code,
                 "Password": password,
@@ -355,8 +362,9 @@ class MpesaClient:
             product_name="mpesa",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=validated_ref,
         )
-        return parse_model(response, MpesaStkPushResponse)
+        return parse_model(response, MpesaStkPushResponse, reference_id=validated_ref)
 
     def stk_query(self, checkout_request_id: str) -> MpesaStkQueryResponse:
         """Query the status of an STK Push transaction."""
@@ -371,7 +379,7 @@ class MpesaClient:
         response = self._http.request(
             "POST",
             "/mpesa/stkpushquery/v1/query",
-            headers=self._auth_headers(),
+            headers=self._auth_headers(reference_id=cleaned_id),
             json={
                 "BusinessShortCode": self._config.short_code,
                 "Password": password,
@@ -382,8 +390,9 @@ class MpesaClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
             idempotent=True,
+            reference_id=cleaned_id,
         )
-        return parse_model(response, MpesaStkQueryResponse)
+        return parse_model(response, MpesaStkQueryResponse, reference_id=cleaned_id)
 
     def b2c_transfer(
         self,
@@ -433,7 +442,7 @@ class MpesaClient:
         response = self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
-            headers=self._auth_headers(),
+            headers=self._auth_headers(reference_id=orig_id),
             json={
                 "OriginatorConversationID": orig_id,
                 "InitiatorName": self._config.initiator_name,
@@ -450,8 +459,9 @@ class MpesaClient:
             product_name="mpesa",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=orig_id,
         )
-        return parse_model(response, MpesaB2CResponse)
+        return parse_model(response, MpesaB2CResponse, reference_id=orig_id)
 
     def close(self) -> None:
         self._http.close()
@@ -522,8 +532,13 @@ class AsyncMpesaClient:
             self._cache.set("mpesa", token_resp.access_token, token_resp.expires_in)
             return token_resp.access_token
 
-    async def _auth_headers(self) -> dict[str, str]:
-        token = await self._get_token()
+    async def _auth_headers(self, *, reference_id: str | None = None) -> dict[str, str]:
+        try:
+            token = await self._get_token()
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and reference_id is not None:
+                exc.reference_id = reference_id
+            raise
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -568,7 +583,7 @@ class AsyncMpesaClient:
         response = await self._http.request(
             "POST",
             "/mpesa/stkpush/v1/processrequest",
-            headers=await self._auth_headers(),
+            headers=await self._auth_headers(reference_id=validated_ref),
             json={
                 "BusinessShortCode": self._config.short_code,
                 "Password": password,
@@ -585,8 +600,9 @@ class AsyncMpesaClient:
             product_name="mpesa",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=validated_ref,
         )
-        return parse_model(response, MpesaStkPushResponse)
+        return parse_model(response, MpesaStkPushResponse, reference_id=validated_ref)
 
     async def stk_query(self, checkout_request_id: str) -> MpesaStkQueryResponse:
         if not isinstance(checkout_request_id, str) or not checkout_request_id.strip():
@@ -600,7 +616,7 @@ class AsyncMpesaClient:
         response = await self._http.request(
             "POST",
             "/mpesa/stkpushquery/v1/query",
-            headers=await self._auth_headers(),
+            headers=await self._auth_headers(reference_id=cleaned_id),
             json={
                 "BusinessShortCode": self._config.short_code,
                 "Password": password,
@@ -611,8 +627,9 @@ class AsyncMpesaClient:
             token_cache=self._cache,
             token_refresher=self._get_token,
             idempotent=True,
+            reference_id=cleaned_id,
         )
-        return parse_model(response, MpesaStkQueryResponse)
+        return parse_model(response, MpesaStkQueryResponse, reference_id=cleaned_id)
 
     async def b2c_transfer(
         self,
@@ -661,7 +678,7 @@ class AsyncMpesaClient:
         response = await self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
-            headers=await self._auth_headers(),
+            headers=await self._auth_headers(reference_id=orig_id),
             json={
                 "OriginatorConversationID": orig_id,
                 "InitiatorName": self._config.initiator_name,
@@ -678,8 +695,9 @@ class AsyncMpesaClient:
             product_name="mpesa",
             token_cache=self._cache,
             token_refresher=self._get_token,
+            reference_id=orig_id,
         )
-        return parse_model(response, MpesaB2CResponse)
+        return parse_model(response, MpesaB2CResponse, reference_id=orig_id)
 
     async def close(self) -> None:
         await self._http.close()

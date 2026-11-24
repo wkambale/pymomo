@@ -224,8 +224,9 @@ class FlutterwaveClient:
             "/v3/payments",
             headers=self._headers(),
             json=payload,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     def verify_by_reference(self, tx_ref: str) -> dict[str, Any]:
         """Verify a Flutterwave transaction by ``tx_ref``."""
@@ -234,8 +235,9 @@ class FlutterwaveClient:
             "GET",
             f"/v3/transactions/verify_by_reference?tx_ref={encoded}",
             headers=self._headers(),
+            reference_id=tx_ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=tx_ref)
 
     def create_transfer(
         self,
@@ -278,8 +280,9 @@ class FlutterwaveClient:
             "/v3/transfers",
             headers=self._headers(),
             json=payload,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     def get_transfer(self, transfer_id: str) -> dict[str, Any]:
         """Retrieve a Flutterwave transfer by ID."""
@@ -288,8 +291,9 @@ class FlutterwaveClient:
             "GET",
             f"/v3/transfers/{encoded}",
             headers=self._headers(),
+            reference_id=transfer_id,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=transfer_id)
 
     def get_balance(self, currency: str | None = None) -> dict[str, Any]:
         """Retrieve Flutterwave wallet balance for a currency."""
@@ -381,8 +385,9 @@ class AsyncFlutterwaveClient:
             "/v3/payments",
             headers=self._headers(),
             json=payload,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     async def verify_by_reference(self, tx_ref: str) -> dict[str, Any]:
         encoded = _encode_flw_query_ref(tx_ref)
@@ -390,8 +395,9 @@ class AsyncFlutterwaveClient:
             "GET",
             f"/v3/transactions/verify_by_reference?tx_ref={encoded}",
             headers=self._headers(),
+            reference_id=tx_ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=tx_ref)
 
     async def create_transfer(
         self,
@@ -433,8 +439,9 @@ class AsyncFlutterwaveClient:
             "/v3/transfers",
             headers=self._headers(),
             json=payload,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     async def get_transfer(self, transfer_id: str) -> dict[str, Any]:
         encoded = encode_path_segment(transfer_id, field_name="transfer_id")
@@ -442,8 +449,9 @@ class AsyncFlutterwaveClient:
             "GET",
             f"/v3/transfers/{encoded}",
             headers=self._headers(),
+            reference_id=transfer_id,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=transfer_id)
 
     async def get_balance(self, currency: str | None = None) -> dict[str, Any]:
         iso = validate_currency(currency or self._config.default_currency)

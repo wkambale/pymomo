@@ -343,10 +343,26 @@ class PaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempted_refs.append((candidate.name, effective_request.reference_id))
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
+                    if exc.reference_id is None and attempt_ref is not None:
+                        exc.reference_id = attempt_ref
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
                     raise
+            except PyMomoSDKError as exc:
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                if exc.reference_id is None and attempt_ref is not None:
+                    exc.reference_id = attempt_ref
+                if attempted_refs:
+                    attempted_refs.append((candidate.name, attempt_ref))
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
+                raise
         raise last_exc or PyMomoSDKError("All payment providers failed")
 
     def disburse(
@@ -392,10 +408,26 @@ class PaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempted_refs.append((candidate.name, effective_request.reference_id))
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
+                    if exc.reference_id is None and attempt_ref is not None:
+                        exc.reference_id = attempt_ref
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
                     raise
+            except PyMomoSDKError as exc:
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                if exc.reference_id is None and attempt_ref is not None:
+                    exc.reference_id = attempt_ref
+                if attempted_refs:
+                    attempted_refs.append((candidate.name, attempt_ref))
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
+                raise
         raise last_exc or PyMomoSDKError("All payment providers failed")
 
     def get_status(
@@ -604,10 +636,26 @@ class AsyncPaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempted_refs.append((candidate.name, effective_request.reference_id))
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
+                    if exc.reference_id is None and attempt_ref is not None:
+                        exc.reference_id = attempt_ref
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
                     raise
+            except PyMomoSDKError as exc:
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                if exc.reference_id is None and attempt_ref is not None:
+                    exc.reference_id = attempt_ref
+                if attempted_refs:
+                    attempted_refs.append((candidate.name, attempt_ref))
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
+                raise
         raise last_exc or PyMomoSDKError("All payment providers failed")
 
     async def disburse(
@@ -652,10 +700,26 @@ class AsyncPaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempted_refs.append((candidate.name, effective_request.reference_id))
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
+                    if exc.reference_id is None and attempt_ref is not None:
+                        exc.reference_id = attempt_ref
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
                     raise
+            except PyMomoSDKError as exc:
+                attempt_ref = exc.reference_id or effective_request.reference_id
+                if exc.reference_id is None and attempt_ref is not None:
+                    exc.reference_id = attempt_ref
+                if attempted_refs:
+                    attempted_refs.append((candidate.name, attempt_ref))
+                    exc.attempted_references = [
+                        {"provider": p, "reference_id": r} for p, r in attempted_refs
+                    ]
+                raise
         raise last_exc or PyMomoSDKError("All payment providers failed")
 
     async def get_status(

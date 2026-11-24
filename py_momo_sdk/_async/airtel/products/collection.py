@@ -61,6 +61,7 @@ class AsyncAirtelCollection:
             "POST",
             "/merchant/v1/payments/",
             json=payload.model_dump(by_alias=True, mode="json", exclude_none=True),
+            reference_id=ref,
         )
         if response.content:
             try:
@@ -78,5 +79,8 @@ class AsyncAirtelCollection:
         response = await self._client.request(
             "GET",
             f"/standard/v1/payments/{encoded}",
+            reference_id=reference_id,
         )
-        return parse_model(response, AirtelTransactionResponse)
+        return parse_model(
+            response, AirtelTransactionResponse, reference_id=reference_id
+        )

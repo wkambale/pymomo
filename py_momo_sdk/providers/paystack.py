@@ -282,16 +282,20 @@ class PaystackClient:
             headers=self._headers(),
             json=payload,
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     def verify_transaction(self, reference: str) -> dict[str, Any]:
         """Verify a Paystack transaction by reference."""
         encoded = encode_path_segment(reference, field_name="reference")
         response = self._http.request(
-            "GET", f"/transaction/verify/{encoded}", headers=self._headers()
+            "GET",
+            f"/transaction/verify/{encoded}",
+            headers=self._headers(),
+            reference_id=reference,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=reference)
 
     def initiate_transfer(
         self,
@@ -322,16 +326,20 @@ class PaystackClient:
                 "reason": reason,
             },
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     def verify_transfer(self, reference: str) -> dict[str, Any]:
         """Verify a Paystack transfer by reference."""
         encoded = encode_path_segment(reference, field_name="reference")
         response = self._http.request(
-            "GET", f"/transfer/verify/{encoded}", headers=self._headers()
+            "GET",
+            f"/transfer/verify/{encoded}",
+            headers=self._headers(),
+            reference_id=reference,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=reference)
 
     def get_balance(self) -> dict[str, Any]:
         """Retrieve Paystack account balances."""
@@ -421,15 +429,19 @@ class AsyncPaystackClient:
             headers=self._headers(),
             json=payload,
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     async def verify_transaction(self, reference: str) -> dict[str, Any]:
         encoded = encode_path_segment(reference, field_name="reference")
         response = await self._http.request(
-            "GET", f"/transaction/verify/{encoded}", headers=self._headers()
+            "GET",
+            f"/transaction/verify/{encoded}",
+            headers=self._headers(),
+            reference_id=reference,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=reference)
 
     async def initiate_transfer(
         self,
@@ -459,15 +471,19 @@ class AsyncPaystackClient:
                 "reason": reason,
             },
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=ref)
 
     async def verify_transfer(self, reference: str) -> dict[str, Any]:
         encoded = encode_path_segment(reference, field_name="reference")
         response = await self._http.request(
-            "GET", f"/transfer/verify/{encoded}", headers=self._headers()
+            "GET",
+            f"/transfer/verify/{encoded}",
+            headers=self._headers(),
+            reference_id=reference,
         )
-        return parse_json_dict(response)
+        return parse_json_dict(response, reference_id=reference)
 
     async def get_balance(self) -> dict[str, Any]:
         response = await self._http.request("GET", "/balance", headers=self._headers())

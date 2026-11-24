@@ -242,8 +242,9 @@ class WaveClient:
             headers=self._headers(idempotency_key=ref),
             json=payload,
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_model(response, WaveCheckoutSession)
+        return parse_model(response, WaveCheckoutSession, reference_id=ref)
 
     def get_checkout_session(self, session_id: str) -> WaveCheckoutSession:
         """Retrieve a Wave checkout session by ID."""
@@ -252,8 +253,9 @@ class WaveClient:
             "GET",
             f"/v1/checkout/sessions/{encoded}",
             headers=self._headers(),
+            reference_id=session_id,
         )
-        return parse_model(response, WaveCheckoutSession)
+        return parse_model(response, WaveCheckoutSession, reference_id=session_id)
 
     def create_payout(
         self,
@@ -293,8 +295,9 @@ class WaveClient:
             headers=self._headers(idempotency_key=ref),
             json=payload,
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_model(response, WavePayoutResponse)
+        return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     def get_payout(self, payout_id: str) -> WavePayoutResponse:
         """Retrieve a Wave payout status by ID."""
@@ -303,8 +306,9 @@ class WaveClient:
             "GET",
             f"/v1/payout/{encoded}",
             headers=self._headers(),
+            reference_id=payout_id,
         )
-        return parse_model(response, WavePayoutResponse)
+        return parse_model(response, WavePayoutResponse, reference_id=payout_id)
 
     def get_balance(self) -> WaveBalanceResponse:
         """Retrieve the Wave merchant balance."""
@@ -404,8 +408,9 @@ class AsyncWaveClient:
                 "client_reference": ref,
             },
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_model(response, WaveCheckoutSession)
+        return parse_model(response, WaveCheckoutSession, reference_id=ref)
 
     async def get_checkout_session(self, session_id: str) -> WaveCheckoutSession:
         encoded = encode_path_segment(session_id, field_name="session_id")
@@ -413,8 +418,9 @@ class AsyncWaveClient:
             "GET",
             f"/v1/checkout/sessions/{encoded}",
             headers=self._headers(),
+            reference_id=session_id,
         )
-        return parse_model(response, WaveCheckoutSession)
+        return parse_model(response, WaveCheckoutSession, reference_id=session_id)
 
     async def create_payout(
         self,
@@ -453,8 +459,9 @@ class AsyncWaveClient:
             headers=self._headers(idempotency_key=ref),
             json=payload,
             idempotent=True,
+            reference_id=ref,
         )
-        return parse_model(response, WavePayoutResponse)
+        return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     async def get_payout(self, payout_id: str) -> WavePayoutResponse:
         encoded = encode_path_segment(payout_id, field_name="payout_id")
@@ -462,8 +469,9 @@ class AsyncWaveClient:
             "GET",
             f"/v1/payout/{encoded}",
             headers=self._headers(),
+            reference_id=payout_id,
         )
-        return parse_model(response, WavePayoutResponse)
+        return parse_model(response, WavePayoutResponse, reference_id=payout_id)
 
     async def get_balance(self) -> WaveBalanceResponse:
         response = await self._http.request(

@@ -660,3 +660,53 @@ def test_cli_issue_90_exits_validation_secret_files_and_commands(
     )
     assert air_res.exit_code == 0
     assert json.loads(air_res.stdout)["data"]["wallet"]["balance"] == "9900"
+
+
+def test_cli_error_output_includes_reference_id_and_reason_issue_115(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify CLI stderr includes both upstream reason and payment reference_id on failed writes (#115)."""
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={
+            "access_token": "tok",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+        json={"code": "INVALID_CALLBACK_URL_HOST", "message": "Host mismatch"},
+        status_code=400,
+    )
+    ref = "11111111-2222-4333-8444-555555555555"
+    result = runner.invoke(
+        app,
+        [
+            "collection",
+            "request-to-pay",
+            "256771234567",
+            "100",
+            "EUR",
+            "order-1",
+            "--reference-id",
+            ref,
+            "--subscription-key",
+            "key",
+            "--api-user",
+            "e4d6934c-6fa1-49b4-9c59-bf558661b17c",
+            "--api-key",
+            "apikey",
+        ],
+    )
+    assert result.exit_code == 1
+    try:
+        err_output = result.stderr
+    except ValueError:
+        err_output = result.stdout
+    assert "INVALID_CALLBACK_URL_HOST" in err_output
+    assert "Host mismatch" in err_output
+    assert f"(reference_id: {ref})" in err_output

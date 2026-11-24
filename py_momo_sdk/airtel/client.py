@@ -333,12 +333,13 @@ class AirtelClient:
         json: Any,
         timeout_msg: str,
         conn_msg: str,
+        reference_id: str | None = None,
     ) -> httpx.Response:
         can_retry = self._config.max_retries > 0 and _is_retryable_request(
             method, headers
         )
         attempts = (self._config.max_retries + 1) if can_retry else 1
-        correlation_id = _get_header_ci(headers, "X-Reference-Id")
+        correlation_id = reference_id or _get_header_ci(headers, "X-Reference-Id")
 
         for attempt in range(attempts):
             started = time.monotonic()
@@ -346,7 +347,7 @@ class AirtelClient:
                 response = self._execute_bounded(
                     method, path, headers=headers, json=json
                 )
-            except _ResponseTooLargeError:
+            except _ResponseTooLargeError as exc:
                 self._emit_telemetry(
                     method,
                     path,
@@ -356,6 +357,10 @@ class AirtelClient:
                     correlation_id,
                     "ResponseTooLargeError",
                 )
+                if exc.reference_id is None and correlation_id is not None:
+                    exc.reference_id = correlation_id
+                if exc.provider is None:
+                    exc.provider = "Airtel Money"
                 raise
             except httpx.TimeoutException as exc:
                 exc_name = type(exc).__name__
@@ -375,6 +380,7 @@ class AirtelClient:
                     continue
                 raise PyMomoSDKError(
                     f"{timeout_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider="Airtel Money",
                 ) from None
@@ -396,6 +402,7 @@ class AirtelClient:
                     continue
                 raise PyMomoSDKError(
                     f"{conn_msg} ({exc_name})",
+                    reference_id=correlation_id,
                     reason=exc_name,
                     provider="Airtel Money",
                 ) from None
@@ -419,7 +426,9 @@ class AirtelClient:
                 continue
             return response
 
-        raise PyMomoSDKError(conn_msg)
+        raise PyMomoSDKError(
+            conn_msg, reference_id=correlation_id, provider="Airtel Money"
+        )
 
     def request(
         self,
@@ -428,17 +437,28 @@ class AirtelClient:
         *,
         headers: dict[str, str] | None = None,
         json: Any = None,
+        reference_id: str | None = None,
     ) -> httpx.Response:
         """Execute HTTP request with automatic headers, authentication, and retry logic."""
         if not isinstance(method, str) or not method.isascii() or not method.isalpha():
-            raise PyMomoSDKError("HTTP method must be a valid ASCII token")
+            raise PyMomoSDKError(
+                "HTTP method must be a valid ASCII token",
+                reference_id=reference_id,
+                provider="Airtel Money",
+            )
         method = method.upper()
         validate_request_path(path)
         req_headers = _merge_airtel_headers(
             self._config.country, self._config.currency, headers
         )
+        effective_ref = reference_id or _get_header_ci(req_headers, "X-Reference-Id")
 
-        token = self._auth.get_token(self._http)
+        try:
+            token = self._auth.get_token(self._http)
+        except PyMomoSDKError as exc:
+            if exc.reference_id is None and effective_ref is not None:
+                exc.reference_id = effective_ref
+            raise
         req_headers["Authorization"] = f"Bearer {token}"
 
         safe_path = _sanitize_telemetry_path(path)
@@ -451,6 +471,7 @@ class AirtelClient:
             json=json,
             timeout_msg=f"Airtel request timed out: {method} {safe_path}",
             conn_msg=f"Airtel connection error: {method} {safe_path}",
+            reference_id=effective_ref,
         )
 
         if response.status_code == 401:
@@ -461,7 +482,10 @@ class AirtelClient:
                 new_token = self._auth.get_token(self._http)
             except (PyMomoSDKError, ValueError):
                 raise AuthenticationError(
-                    "Airtel authentication failed during token refresh"
+                    "Airtel authentication failed during token refresh",
+                    reference_id=effective_ref,
+                    status_code=401,
+                    provider="Airtel Money",
                 ) from None
 
             retry_headers = req_headers.copy()
@@ -475,9 +499,10 @@ class AirtelClient:
                 json=json,
                 timeout_msg=f"Airtel request timed out on retry: {method} {safe_path}",
                 conn_msg=f"Airtel connection error on retry: {method} {safe_path}",
+                reference_id=effective_ref,
             )
 
-        _raise_for_airtel_status(response)
+        _raise_for_airtel_status(response, reference_id=effective_ref)
         return response
 
     def close(self) -> None:
