@@ -650,3 +650,394 @@ def test_http_retry_safety_401_retry_after_and_attribution_issue_82() -> None:
         hc.request("GET", "/big", headers={})
     assert len(events) == 1
     assert events[0].error_type == "ResponseTooLargeError"
+
+
+def test_structured_upstream_error_extraction_all_gateways_issue_116() -> None:
+    """Verify _raise_for_status surfaces structured codes, reasons, and status details across all gateway schemas (#116)."""
+    from py_momo_sdk.exceptions import AuthenticationError
+    from py_momo_sdk.http import _raise_for_status
+
+    # 1. MTN 400 with code + message
+    with pytest.raises(BadRequestError) as exc_mtn_400:
+        _raise_for_status(
+            httpx.Response(
+                400,
+                json={
+                    "code": "INVALID_CALLBACK_URL_HOST",
+                    "message": "Callback URL host mismatch",
+                },
+            ),
+            provider_name="MTN MoMo",
+            reference_id="ref-mtn-1",
+        )
+    assert exc_mtn_400.value.status_code == 400
+    assert exc_mtn_400.value.error_code == "INVALID_CALLBACK_URL_HOST"
+    assert exc_mtn_400.value.reason == "Callback URL host mismatch"
+    assert exc_mtn_400.value.provider == "MTN MoMo"
+    assert exc_mtn_400.value.reference_id == "ref-mtn-1"
+    assert "INVALID_CALLBACK_URL_HOST" in str(exc_mtn_400.value)
+    assert "Callback URL host mismatch" in str(exc_mtn_400.value)
+
+    # 2. MTN 400 with code only (no message field)
+    with pytest.raises(BadRequestError) as exc_mtn_code_only:
+        _raise_for_status(
+            httpx.Response(400, json={"code": "PAYER_NOT_FOUND"}),
+            provider_name="MTN MoMo",
+        )
+    assert exc_mtn_code_only.value.error_code == "PAYER_NOT_FOUND"
+    assert "PAYER_NOT_FOUND" in str(exc_mtn_code_only.value)
+
+    # 3. MTN 500 with structured error details
+    with pytest.raises(PyMomoSDKServerError) as exc_mtn_500:
+        _raise_for_status(
+            httpx.Response(
+                500,
+                json={
+                    "code": "INTERNAL_PROCESSING_ERROR",
+                    "message": "Downstream ledger busy",
+                },
+            ),
+            provider_name="MTN MoMo",
+        )
+    assert exc_mtn_500.value.status_code == 500
+    assert exc_mtn_500.value.error_code == "INTERNAL_PROCESSING_ERROR"
+    assert exc_mtn_500.value.reason == "Downstream ledger busy"
+    assert "MTN MoMo server error: 500" in str(exc_mtn_500.value)
+    assert "INTERNAL_PROCESSING_ERROR: Downstream ledger busy" in str(exc_mtn_500.value)
+
+    # 4. M-Pesa 400 with errorCode + errorMessage
+    with pytest.raises(BadRequestError) as exc_mpesa:
+        _raise_for_status(
+            httpx.Response(
+                400,
+                json={
+                    "errorCode": "400.002.02",
+                    "errorMessage": "Bad Request - Invalid Amount",
+                },
+            ),
+            provider_name="M-Pesa",
+        )
+    assert exc_mpesa.value.error_code == "400.002.02"
+    assert exc_mpesa.value.reason == "Bad Request - Invalid Amount"
+    assert "400.002.02: Bad Request - Invalid Amount" in str(exc_mpesa.value)
+
+    # 5. Wave 422 with code + message + validation details -> BadRequestError(status_code=422)
+    with pytest.raises(BadRequestError) as exc_wave_422:
+        _raise_for_status(
+            httpx.Response(
+                422,
+                json={
+                    "code": "validation-error",
+                    "message": "Invalid checkout payload",
+                    "details": [{"loc": ["amount"], "msg": "must be positive"}],
+                },
+            ),
+            provider_name="Wave",
+        )
+    assert exc_wave_422.value.status_code == 422
+    assert exc_wave_422.value.error_code == "validation-error"
+    assert "amount: must be positive" in (exc_wave_422.value.reason or "")
+    assert "validation-error" in str(exc_wave_422.value)
+
+    # 6. Paystack / Flutterwave 400 with message + errors dict
+    with pytest.raises(BadRequestError) as exc_paystack:
+        _raise_for_status(
+            httpx.Response(
+                400,
+                json={
+                    "status": False,
+                    "message": "Validation failed",
+                    "errors": {"email": ["must be a valid email"]},
+                },
+            ),
+            provider_name="Paystack",
+        )
+    assert "email: must be a valid email" in str(exc_paystack.value)
+
+    # 7. Orange OAuth 401 with error + error_description
+    with pytest.raises(AuthenticationError) as exc_orange_401:
+        _raise_for_status(
+            httpx.Response(
+                401,
+                json={
+                    "error": "invalid_client",
+                    "error_description": "Client secret expired",
+                },
+            ),
+            provider_name="Orange Money",
+        )
+    assert exc_orange_401.value.status_code == 401
+    assert exc_orange_401.value.error_code == "invalid_client"
+    assert exc_orange_401.value.reason == "Client secret expired"
+    assert (
+        "Invalid or expired credentials: invalid_client: Client secret expired"
+        in str(exc_orange_401.value)
+    )
+
+    # 8. HTTP 403, 404, 409, 429 preserve details and status_code
+    with pytest.raises(PyMomoSDKError) as exc_403:
+        _raise_for_status(
+            httpx.Response(
+                403,
+                json={
+                    "code": "FORBIDDEN_SCOPE",
+                    "message": "Missing disbursement scope",
+                },
+            ),
+            provider_name="MTN MoMo",
+        )
+    assert exc_403.value.status_code == 403
+    assert exc_403.value.error_code == "FORBIDDEN_SCOPE"
+    assert "MTN MoMo forbidden (HTTP 403)" in str(exc_403.value)
+    assert "FORBIDDEN_SCOPE: Missing disbursement scope" in str(exc_403.value)
+
+    with pytest.raises(ResourceNotFoundError) as exc_404:
+        _raise_for_status(
+            httpx.Response(
+                404,
+                json={"code": "RESOURCE_NOT_FOUND", "message": "Reference not found"},
+            ),
+            provider_name="MTN MoMo",
+        )
+    assert exc_404.value.status_code == 404
+    assert exc_404.value.error_code == "RESOURCE_NOT_FOUND"
+    assert "RESOURCE_NOT_FOUND: Reference not found" in str(exc_404.value)
+
+    with pytest.raises(ConflictError) as exc_409:
+        _raise_for_status(
+            httpx.Response(
+                409,
+                json={
+                    "code": "DUPLICATE_REFERENCE",
+                    "message": "Reference already used",
+                },
+            ),
+            provider_name="MTN MoMo",
+            reference_id="dup-ref-409",
+        )
+    assert exc_409.value.status_code == 409
+    assert exc_409.value.reference_id == "dup-ref-409"
+    assert "DUPLICATE_REFERENCE: Reference already used" in str(exc_409.value)
+
+    with pytest.raises(PyMomoSDKError) as exc_429:
+        _raise_for_status(
+            httpx.Response(
+                429, json={"code": "RATE_LIMITED", "message": "Too many requests"}
+            ),
+            provider_name="Wave",
+        )
+    assert exc_429.value.status_code == 429
+    assert exc_429.value.error_code == "RATE_LIMITED"
+    assert "429" in str(exc_429.value)
+    assert "RATE_LIMITED: Too many requests" in str(exc_429.value)
+
+    # 9. Plain-text error body surfaced cleanly; HTML error page suppressed
+    with pytest.raises(PyMomoSDKServerError) as exc_text:
+        _raise_for_status(
+            httpx.Response(503, text="Upstream maintenance window active"),
+            provider_name="Wave",
+        )
+    assert "Upstream maintenance window active" in str(exc_text.value)
+    assert exc_text.value.reason == "Upstream maintenance window active"
+
+    with pytest.raises(PyMomoSDKServerError) as exc_html:
+        _raise_for_status(
+            httpx.Response(
+                502,
+                text="<!DOCTYPE html><html><body>502 Bad Gateway</body></html>",
+                headers={"content-type": "text/html; charset=utf-8"},
+            ),
+            provider_name="Wave",
+        )
+    assert exc_html.value.reason is None
+    assert "<html" not in str(exc_html.value).lower()
+    assert str(exc_html.value) == "Wave server error: 502"
+
+
+@pytest.mark.asyncio
+async def test_airtel_structured_errors_and_transport_subtypes_issue_116() -> None:
+    """Verify Airtel HTTP errors, HTTP 200 status rejections, auth errors, and transport subtypes (#116)."""
+    from py_momo_sdk._async.airtel.auth import AsyncAirtelAuth
+    from py_momo_sdk.airtel.auth import AirtelAuth, _parse_airtel_token_payload
+    from py_momo_sdk.airtel.client import _raise_for_airtel_status
+    from py_momo_sdk.airtel.models import check_airtel_response_status
+    from py_momo_sdk.exceptions import AuthenticationError, TransactionFailedError
+
+    # 1. Airtel HTTP 400 / 422 / 500 with nested status & data.transaction.message
+    with pytest.raises(BadRequestError) as exc_a400:
+        _raise_for_airtel_status(
+            httpx.Response(
+                400,
+                json={
+                    "status": {
+                        "result_code": "DP00800001006",
+                        "message": "Invalid MSISDN format",
+                    }
+                },
+            ),
+            reference_id="airtel-ref-1",
+        )
+    assert exc_a400.value.status_code == 400
+    assert exc_a400.value.error_code == "DP00800001006"
+    assert exc_a400.value.provider == "Airtel Money"
+    assert exc_a400.value.reference_id == "airtel-ref-1"
+    assert "DP00800001006: Invalid MSISDN format" in str(exc_a400.value)
+
+    with pytest.raises(BadRequestError) as exc_a422:
+        _raise_for_airtel_status(
+            httpx.Response(
+                422,
+                json={
+                    "status": {"code": "422", "message": "Unprocessable transaction"}
+                },
+            )
+        )
+    assert exc_a422.value.status_code == 422
+    assert exc_a422.value.provider == "Airtel Money"
+
+    with pytest.raises(PyMomoSDKServerError) as exc_a500:
+        _raise_for_airtel_status(
+            httpx.Response(
+                500,
+                json={
+                    "status": {
+                        "result_code": "DP00800001099",
+                        "message": "Switch offline",
+                    }
+                },
+            )
+        )
+    assert exc_a500.value.status_code == 500
+    assert exc_a500.value.error_code == "DP00800001099"
+    assert "Airtel server error: 500" in str(exc_a500.value)
+    assert "Switch offline" in str(exc_a500.value)
+
+    # 2. Airtel HTTP 200 status.success=false with result_code -> structured fields
+    with pytest.raises(TransactionFailedError) as exc_a200_fail:
+        check_airtel_response_status(
+            {
+                "data": {
+                    "transaction": {"status": "TF", "message": "Insufficient funds"}
+                },
+                "status": {
+                    "success": False,
+                    "result_code": "DP00800001001",
+                    "message": "Transaction failed",
+                },
+            },
+            reference_id="airtel-tx-1",
+        )
+    assert exc_a200_fail.value.reference_id == "airtel-tx-1"
+    assert exc_a200_fail.value.status_code == 200
+    assert exc_a200_fail.value.error_code == "DP00800001001"
+    assert exc_a200_fail.value.provider == "Airtel Money"
+    assert "DP00800001001: Insufficient funds" in str(exc_a200_fail.value)
+
+    with pytest.raises(BadRequestError) as exc_a200_bad:
+        check_airtel_response_status(
+            {
+                "status": {
+                    "success": False,
+                    "code": "400",
+                    "result_code": "DP00800001006",
+                    "message": "Invalid amount",
+                }
+            },
+            reference_id="airtel-tx-2",
+        )
+    assert exc_a200_bad.value.reference_id == "airtel-tx-2"
+    assert exc_a200_bad.value.status_code == 200
+    assert exc_a200_bad.value.error_code == "DP00800001006"
+    assert "DP00800001006: Invalid amount" in str(exc_a200_bad.value)
+
+    with pytest.raises(PyMomoSDKError) as exc_a200_generic:
+        check_airtel_response_status(
+            {
+                "status": {
+                    "success": False,
+                    "result_code": "DP00800001099",
+                    "message": "Partner limit exceeded",
+                }
+            },
+            reference_id="airtel-tx-3",
+        )
+    assert exc_a200_generic.value.reference_id == "airtel-tx-3"
+    assert exc_a200_generic.value.status_code == 200
+    assert exc_a200_generic.value.error_code == "DP00800001099"
+    assert "DP00800001099: Partner limit exceeded" in str(exc_a200_generic.value)
+
+    # 3. Airtel token endpoint 401 & 500 include gateway reason
+    with pytest.raises(AuthenticationError) as exc_tok_401:
+        _parse_airtel_token_payload(
+            httpx.Response(
+                401,
+                json={"error": "invalid_client", "error_description": "Wrong secret"},
+            )
+        )
+    assert exc_tok_401.value.status_code == 401
+    assert exc_tok_401.value.error_code == "invalid_client"
+    assert "Invalid or expired Airtel client credentials" in str(exc_tok_401.value)
+    assert "Wrong secret" in str(exc_tok_401.value)
+
+    with pytest.raises(AuthenticationError) as exc_tok_500:
+        _parse_airtel_token_payload(
+            httpx.Response(500, json={"message": "Auth gateway unavailable"})
+        )
+    assert exc_tok_500.value.status_code == 500
+    assert "Airtel authentication failed: HTTP 500" in str(exc_tok_500.value)
+    assert "Auth gateway unavailable" in str(exc_tok_500.value)
+
+    # 4. Sync and async transport timeout/connection subtypes include safe class name without chaining __cause__
+    with (
+        HttpClient("https://example.com", 5.0, provider_name="Wave") as hc,
+        patch.object(
+            hc._client, "send", side_effect=httpx.ReadTimeout("secret-internal-detail")
+        ),
+        pytest.raises(PyMomoSDKError) as exc_sync_to,
+    ):
+        hc.request("GET", "/check", headers={})
+    assert "(ReadTimeout)" in str(exc_sync_to.value)
+    assert exc_sync_to.value.reason == "ReadTimeout"
+    assert exc_sync_to.value.provider == "Wave"
+    assert exc_sync_to.value.__cause__ is None
+    assert "secret-internal-detail" not in str(exc_sync_to.value)
+
+    async with AsyncHttpClient("https://example.com", 5.0, provider_name="Wave") as ahc:
+        with (
+            patch.object(
+                ahc._client,
+                "send",
+                side_effect=httpx.ConnectError("internal-host-info"),
+            ),
+            pytest.raises(PyMomoSDKError) as exc_async_conn,
+        ):
+            await ahc.request("GET", "/check", headers={})
+    assert "(ConnectError)" in str(exc_async_conn.value)
+    assert exc_async_conn.value.reason == "ConnectError"
+    assert exc_async_conn.value.provider == "Wave"
+    assert exc_async_conn.value.__cause__ is None
+
+    # 5. Airtel sync & async auth timeout includes subtype name without leaking secret
+    auth_sync = AirtelAuth("cid", "csec", "https://openapiuat.airtel.africa")
+    with (
+        httpx.Client(base_url="https://openapiuat.airtel.africa") as raw_sync,
+        patch.object(raw_sync, "send", side_effect=httpx.ConnectTimeout("boom")),
+        pytest.raises(PyMomoSDKError) as exc_as,
+    ):
+        auth_sync.get_token(raw_sync)
+    assert "(ConnectTimeout)" in str(exc_as.value)
+    assert exc_as.value.provider == "Airtel Money"
+    assert exc_as.value.__cause__ is None
+
+    auth_async = AsyncAirtelAuth("cid", "csec", "https://openapiuat.airtel.africa")
+    async with httpx.AsyncClient(
+        base_url="https://openapiuat.airtel.africa"
+    ) as raw_async:
+        with (
+            patch.object(raw_async, "send", side_effect=httpx.ReadTimeout("boom")),
+            pytest.raises(PyMomoSDKError) as exc_aa,
+        ):
+            await auth_async.get_token(raw_async)
+    assert "(ReadTimeout)" in str(exc_aa.value)
+    assert exc_aa.value.provider == "Airtel Money"
+    assert exc_aa.value.__cause__ is None

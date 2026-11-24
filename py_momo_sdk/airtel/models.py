@@ -67,6 +67,7 @@ def check_airtel_response_status(
     status_obj = data.get("status")
     status_success: bool | None = None
     status_code_str: str | None = None
+    result_code_str: str | None = None
     status_msg: str | None = None
     if isinstance(status_obj, dict):
         raw_success = status_obj.get("success")
@@ -75,6 +76,9 @@ def check_airtel_response_status(
         raw_code = status_obj.get("code")
         if isinstance(raw_code, str) and raw_code.strip():
             status_code_str = raw_code.strip()
+        raw_res_code = status_obj.get("result_code")
+        if isinstance(raw_res_code, str) and raw_res_code.strip():
+            result_code_str = raw_res_code.strip()
         raw_msg = status_obj.get("message")
         if isinstance(raw_msg, str) and raw_msg.strip():
             status_msg = raw_msg.strip()
@@ -92,15 +96,51 @@ def check_airtel_response_status(
             if isinstance(raw_tx_msg, str) and raw_tx_msg.strip():
                 tx_msg = raw_tx_msg.strip()
 
-    reason = tx_msg or status_msg or "Airtel transaction rejected"
+    error_code = result_code_str or status_code_str
+    base_reason = tx_msg or status_msg
+    if error_code and base_reason and error_code not in base_reason:
+        reason = f"{error_code}: {base_reason}"
+    else:
+        reason = base_reason or error_code or "Airtel transaction rejected"
+
     if status_success is False:
         if reference_id is not None and tx_status in _AIRTEL_TERMINAL_FAILURE_STATUSES:
-            raise TransactionFailedError(reference_id=reference_id, reason=reason)
+            raise TransactionFailedError(
+                reference_id=reference_id,
+                reason=reason,
+                status_code=200,
+                error_code=error_code,
+                response_body=data,
+                provider="Airtel Money",
+            )
         if status_code_str == "400":
-            raise BadRequestError(reason, response_body=data)
-        raise PyMomoSDKError(reason)
+            raise BadRequestError(
+                reason,
+                response_body=data,
+                reference_id=reference_id,
+                status_code=200,
+                error_code=error_code,
+                reason=reason,
+                provider="Airtel Money",
+            )
+        raise PyMomoSDKError(
+            reason,
+            reference_id=reference_id,
+            status_code=200,
+            error_code=error_code,
+            reason=reason,
+            response_body=data,
+            provider="Airtel Money",
+        )
     if reference_id is not None and tx_status in _AIRTEL_TERMINAL_FAILURE_STATUSES:
-        raise TransactionFailedError(reference_id=reference_id, reason=reason)
+        raise TransactionFailedError(
+            reference_id=reference_id,
+            reason=reason,
+            status_code=200,
+            error_code=error_code,
+            response_body=data,
+            provider="Airtel Money",
+        )
 
 
 # --- Request models ---

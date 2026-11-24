@@ -197,7 +197,8 @@ class AsyncHttpClient:
                     "ResponseTooLargeError",
                 )
                 raise
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -212,8 +213,13 @@ class AsyncHttpClient:
                         _compute_retry_delay(attempt, self._retry_backoff, None)
                     )
                     continue
-                raise PyMomoSDKError(timeout_msg) from None
-            except httpx.RequestError:
+                raise PyMomoSDKError(
+                    f"{timeout_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider=self._provider_name,
+                ) from None
+            except httpx.RequestError as exc:
+                exc_name = type(exc).__name__
                 self._emit_telemetry(
                     method,
                     path,
@@ -228,7 +234,11 @@ class AsyncHttpClient:
                         _compute_retry_delay(attempt, self._retry_backoff, None)
                     )
                     continue
-                raise PyMomoSDKError(conn_msg) from None
+                raise PyMomoSDKError(
+                    f"{conn_msg} ({exc_name})",
+                    reason=exc_name,
+                    provider=self._provider_name,
+                ) from None
 
             self._emit_telemetry(
                 method,
