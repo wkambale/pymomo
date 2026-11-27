@@ -108,7 +108,7 @@ async def test_async_airtel_disbursement_and_balance(httpx_mock: HTTPXMock) -> N
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {
@@ -146,7 +146,7 @@ async def test_async_airtel_401_retry_and_guards(httpx_mock: HTTPXMock) -> None:
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         status_code=401,
     )
     httpx_mock.add_response(
@@ -157,7 +157,7 @@ async def test_async_airtel_401_retry_and_guards(httpx_mock: HTTPXMock) -> None:
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {
@@ -221,7 +221,7 @@ async def test_async_airtel_http_error_mappings_and_header_guards(
     for code in (400, 404, 409, 502):
         httpx_mock.add_response(
             method="GET",
-            url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+            url="https://openapiuat.airtel.africa/standard/v1/users/balance",
             json={"message": f"err {code}"},
             status_code=code,
         )

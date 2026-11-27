@@ -631,7 +631,7 @@ def test_cli_issue_90_exits_validation_secret_files_and_commands(
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "status": {"code": "200", "message": "OK", "result_code": "00"},
             "data": {
