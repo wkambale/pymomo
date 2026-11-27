@@ -2760,3 +2760,257 @@ async def test_issue_134_paystack_transfer_ref_and_endpoints(
             reference="paystack_tr_ref_134_as",
         )
         assert atr["data"]["reference"] == "paystack_tr_ref_134_as"
+
+
+@pytest.mark.asyncio
+async def test_issue_135_flutterwave_numeric_transfers_and_momo_endpoints(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #135: numeric transfer amount, regional fields, direct momo charges, verify by id, refund, and transfer lookup by reference."""
+    import json
+
+    cfg = FlutterwaveConfig(
+        secret_key="FLWSECK_TEST_135",
+        default_customer_email="payer@example.com",
+        default_account_bank="MPS",
+        redirect_url="https://merchant.example.com/flw-return",
+    )
+
+    with FlutterwaveClient(cfg) as client:
+        # Input validation checks
+        with pytest.raises(ValueError, match="charge_type"):
+            client.charge_mobile_money("card", "5000", "UGX", "256771234567")
+        with pytest.raises(ValueError, match="charge_type"):
+            client.charge_mobile_money(
+                "mobile_money_uganda&evil=1", "5000", "UGX", "256771234567"
+            )
+        with pytest.raises(ValueError, match="transaction_id"):
+            client.verify_transaction_by_id(True)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="transaction_id"):
+            client.verify_transaction_by_id(0)
+        with pytest.raises(ValueError, match="transaction_id"):
+            client.refund_transaction("")
+        with pytest.raises(ValueError, match="beneficiary_name"):
+            client.create_transfer(
+                "5000", "UGX", "256771234567", beneficiary_name="   "
+            )
+        with pytest.raises(ValueError, match="destination_branch_code"):
+            client.create_transfer(
+                "5000", "UGX", "256771234567", destination_branch_code="  "
+            )
+        with pytest.raises(ValueError, match="meta"):
+            client.create_transfer(
+                "5000",
+                "UGX",
+                "256771234567",
+                meta=["not-a-dict"],  # type: ignore[list-item]
+            )
+        with pytest.raises(ValueError, match="comments"):
+            client.refund_transaction(999, comments="  ")
+
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.flutterwave.com/v3/transfers",
+            json={
+                "status": "success",
+                "data": {"id": 13501, "reference": "flw-tr-135-sync", "status": "NEW"},
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.flutterwave.com/v3/transfers?reference=flw-tr-135-sync",
+            json={
+                "status": "success",
+                "data": [
+                    {
+                        "id": 13501,
+                        "reference": "flw-tr-135-sync",
+                        "status": "SUCCESSFUL",
+                    }
+                ],
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.flutterwave.com/v3/charges?type=mobile_money_uganda",
+            json={
+                "status": "success",
+                "data": {"id": 88135, "tx_ref": "flw-mm-135", "status": "pending"},
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.flutterwave.com/v3/transactions/88135/verify",
+            json={
+                "status": "success",
+                "data": {"id": 88135, "status": "successful", "currency": "UGX"},
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.flutterwave.com/v3/transactions/88135/refund",
+            json={"status": "success", "data": {"id": 99135, "status": "completed"}},
+            status_code=200,
+        )
+
+        tr = client.create_transfer(
+            "15000",
+            "UGX",
+            "256771234567",
+            reference="flw-tr-135-sync",
+            beneficiary_name="Grace Namono",
+            destination_branch_code="UG001",
+            debit_currency="UGX",
+            meta=[{"sender": "Kikuubo Shop", "mobile_number": "256700000001"}],
+        )
+        assert tr["data"]["id"] == 13501
+
+        reconciled = client.get_transfer_by_reference("flw-tr-135-sync")
+        assert reconciled["data"][0]["status"] == "SUCCESSFUL"
+
+        charge = client.charge_mobile_money(
+            "mobile_money_uganda",
+            "2500.50",
+            "KES",
+            "+256 771 234 567",
+            tx_ref="flw-mm-135",
+            network="MTN",
+            fullname="Grace Namono",
+            country="UG",
+        )
+        assert charge["data"]["id"] == 88135
+
+        verified = client.verify_transaction_by_id(88135)
+        assert verified["data"]["status"] == "successful"
+
+        refunded = client.refund_transaction(
+            88135, amount="500.25", comments="Partial customer refund"
+        )
+        assert refunded["data"]["status"] == "completed"
+
+        reqs = httpx_mock.get_requests()
+        tr_body = json.loads(
+            next(
+                r for r in reqs if r.url.path == "/v3/transfers" and r.method == "POST"
+            )
+            .read()
+            .decode("utf-8")
+        )
+        assert tr_body["amount"] == 15000
+        assert isinstance(tr_body["amount"], int)
+        assert tr_body["beneficiary_name"] == "Grace Namono"
+        assert tr_body["destination_branch_code"] == "UG001"
+        assert tr_body["debit_currency"] == "UGX"
+        assert tr_body["meta"] == [
+            {"sender": "Kikuubo Shop", "mobile_number": "256700000001"}
+        ]
+
+        ch_body = json.loads(
+            next(r for r in reqs if r.url.path == "/v3/charges").read().decode("utf-8")
+        )
+        assert ch_body["amount"] == 2500.5
+        assert isinstance(ch_body["amount"], float)
+        assert ch_body["phone_number"] == "256771234567"
+        assert ch_body["network"] == "MTN"
+
+        rf_body = json.loads(
+            next(r for r in reqs if r.url.path == "/v3/transactions/88135/refund")
+            .read()
+            .decode("utf-8")
+        )
+        assert rf_body["amount"] == 500.25
+        assert rf_body["comments"] == "Partial customer refund"
+
+    # Async parity
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.flutterwave.com/v3/transfers",
+        json={
+            "status": "success",
+            "data": {"id": 13502, "reference": "flw-tr-135-async", "status": "NEW"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transfers?reference=flw-tr-135-async",
+        json={
+            "status": "success",
+            "data": [
+                {"id": 13502, "reference": "flw-tr-135-async", "status": "SUCCESSFUL"}
+            ],
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.flutterwave.com/v3/charges?type=mpesa",
+        json={
+            "status": "success",
+            "data": {"id": 88136, "tx_ref": "flw-mm-135-a", "status": "pending"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transactions/88136/verify",
+        json={
+            "status": "success",
+            "data": {"id": 88136, "status": "successful", "currency": "KES"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.flutterwave.com/v3/transactions/88136/refund",
+        json={"status": "success", "data": {"id": 99136, "status": "completed"}},
+        status_code=200,
+    )
+
+    async with AsyncFlutterwaveClient(cfg) as aclient:
+        with pytest.raises(ValueError, match="beneficiary_name"):
+            await aclient.create_transfer(
+                "100", "KES", "254712345678", beneficiary_name=" "
+            )
+        with pytest.raises(ValueError, match="destination_branch_code"):
+            await aclient.create_transfer(
+                "100", "KES", "254712345678", destination_branch_code=" "
+            )
+        with pytest.raises(ValueError, match="comments"):
+            await aclient.refund_transaction("88136", comments=" ")
+
+        atr = await aclient.create_transfer(
+            "200.50",
+            "KES",
+            "254712345678",
+            reference="flw-tr-135-async",
+            beneficiary_name="John Doe",
+            destination_branch_code="KE01",
+            debit_currency="KES",
+            meta={"sender": "Async Merchant"},
+        )
+        assert atr["data"]["id"] == 13502
+
+        arec = await aclient.get_transfer_by_reference("flw-tr-135-async")
+        assert arec["data"][0]["status"] == "SUCCESSFUL"
+
+        ach = await aclient.charge_mobile_money(
+            "mpesa",
+            "300",
+            "KES",
+            "254712345678",
+            tx_ref="flw-mm-135-a",
+            voucher="V123",
+            redirect_url="https://merchant.example.com/cb",
+        )
+        assert ach["data"]["id"] == 88136
+
+        aver = await aclient.verify_transaction_by_id("88136")
+        assert aver["data"]["status"] == "successful"
+
+        aref = await aclient.refund_transaction("88136", amount="100")
+        assert aref["data"]["status"] == "completed"
