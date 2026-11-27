@@ -215,10 +215,42 @@ def create_mock_server(
         def _refresh_timeout(self) -> bool:
             remaining = self._deadline - time.monotonic()
             if remaining <= 0:
+                self.close_connection = True
                 self._send_json(408, {"message": "Request timeout"})
                 return False
             self.connection.settimeout(remaining)
             return True
+
+        def _read_exact(self, length: int) -> bytes | None:
+            buf = bytearray()
+            read_step = getattr(self.rfile, "read1", self.rfile.read)
+            while len(buf) < length:
+                if not self._refresh_timeout():
+                    return None
+                try:
+                    chunk = read_step(min(length - len(buf), 8192))
+                except TimeoutError:
+                    self.close_connection = True
+                    self._send_json(408, {"message": "Request timeout"})
+                    return None
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) < length and time.monotonic() >= self._deadline:
+                    self.close_connection = True
+                    self._send_json(408, {"message": "Request timeout"})
+                    return None
+            return bytes(buf)
+
+        def _readline_bounded(self, limit: int) -> bytes | None:
+            if not self._refresh_timeout():
+                return None
+            try:
+                return self.rfile.readline(limit)
+            except TimeoutError:
+                self.close_connection = True
+                self._send_json(408, {"message": "Request timeout"})
+                return None
 
         def _send_json(self, code: int, payload: Any) -> None:
             body = json.dumps(payload).encode("utf-8")
@@ -231,9 +263,9 @@ def create_mock_server(
         def _read_chunked_body(self) -> bytes | None:
             buf = bytearray()
             while True:
-                if not self._refresh_timeout():
+                size_line = self._readline_bounded(128)
+                if size_line is None:
                     return None
-                size_line = self.rfile.readline(128)
                 if not size_line or not size_line.endswith(b"\n"):
                     self._send_json(400, {"message": "Malformed chunked encoding"})
                     return None
@@ -252,22 +284,24 @@ def create_mock_server(
                 if chunk_size == 0:
                     # Consume trailing headers / final CRLF
                     while True:
-                        if not self._refresh_timeout():
+                        trailer = self._readline_bounded(1024)
+                        if trailer is None:
                             return None
-                        trailer = self.rfile.readline(1024)
                         if not trailer or trailer in (b"\r\n", b"\n"):
                             break
                     return bytes(buf)
                 if len(buf) + chunk_size > max_body_bytes:
                     self._send_json(413, {"message": "Payload too large"})
                     return None
-                if not self._refresh_timeout():
+                chunk_data = self._read_exact(chunk_size)
+                if chunk_data is None:
                     return None
-                chunk_data = self.rfile.read(chunk_size)
                 if len(chunk_data) < chunk_size:
                     self._send_json(400, {"message": "Truncated chunked request body"})
                     return None
-                crlf = self.rfile.read(2)
+                crlf = self._read_exact(2)
+                if crlf is None:
+                    return None
                 if crlf != b"\r\n":
                     self._send_json(400, {"message": "Malformed chunk terminator"})
                     return None
@@ -305,9 +339,9 @@ def create_mock_server(
                 return None
             if length == 0:
                 return b""
-            if not self._refresh_timeout():
+            raw = self._read_exact(length)
+            if raw is None:
                 return None
-            raw = self.rfile.read(length)
             if len(raw) < length:
                 self._send_json(400, {"message": "Truncated request body"})
                 return None

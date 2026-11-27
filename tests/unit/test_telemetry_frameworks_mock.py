@@ -903,3 +903,39 @@ def test_mock_server_issue_90_ipv6_chunked_dos_conflict_and_routes() -> None:
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_issue_128_mock_server_slow_drip_body_deadline() -> None:
+    """Verify Issue #128: slow-drip Content-Length bodies time out with HTTP 408 within total deadline."""
+    import socket
+    import time
+
+    srv, _state, _thread = start_mock_server_thread(port=0, request_timeout=0.25)
+    port = srv.server_address[1]
+    try:
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", port), timeout=2.0) as sock:
+            sock.settimeout(2.0)
+            headers = (
+                b"POST /collection/v1_0/requesttopay HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: 20\r\n"
+                b"\r\n"
+            )
+            sock.sendall(headers)
+            # Drip 1 byte every 60ms (faster than 250ms per-read timeout,
+            # but total 20 bytes would take 1.2s >> 0.25s deadline)
+            for _ in range(15):
+                try:
+                    sock.sendall(b"{")
+                except OSError:
+                    break
+                time.sleep(0.06)
+            resp = sock.recv(1024)
+        elapsed = time.monotonic() - started
+        assert b"408" in resp
+        assert elapsed < 1.5
+    finally:
+        srv.shutdown()
+        srv.server_close()
