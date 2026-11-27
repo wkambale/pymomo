@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import threading
 import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
-from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.exceptions import PyMomoSDKError, PyMomoSDKServerError
 from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_model
 from py_momo_sdk.providers.models import (
     BalanceResult,
@@ -63,6 +64,8 @@ _VALID_MPESA_COMMAND_IDS = frozenset(
     {"BusinessPayment", "SalaryPayment", "PromotionPayment"}
 )
 _MAX_MPESA_ACCOUNT_REFERENCE_LEN = 12
+_MAX_MPESA_TRANSACTION_DESC_LEN = 13
+_DARAJA_STK_PROCESSING_CODE = "500.001.1001"
 
 
 def _to_mpesa_int_amount(amount: str) -> int:
@@ -87,6 +90,178 @@ def _validate_account_reference(account_reference: str) -> str:
             f"account_reference must not exceed {_MAX_MPESA_ACCOUNT_REFERENCE_LEN} characters"
         )
     return cleaned
+
+
+def _validate_transaction_desc(transaction_desc: str) -> str:
+    if not isinstance(transaction_desc, str) or not transaction_desc.strip():
+        raise ValueError("transaction_desc must be a non-empty string")
+    cleaned = validate_header_value(
+        transaction_desc.strip(), field_name="transaction_desc"
+    )
+    if len(cleaned) > _MAX_MPESA_TRANSACTION_DESC_LEN:
+        raise ValueError(
+            f"transaction_desc must not exceed {_MAX_MPESA_TRANSACTION_DESC_LEN} characters"
+        )
+    return cleaned
+
+
+def encrypt_mpesa_security_credential(
+    initiator_password: str, certificate_pem: str
+) -> str:
+    """Encrypt an M-Pesa Daraja initiator password with Safaricom's X.509 certificate (RSA PKCS#1 v1.5).
+
+    Accepts either a PEM-encoded X.509 certificate (``-----BEGIN CERTIFICATE-----``)
+    or a PEM-encoded RSA public key. Requires the optional ``cryptography`` package.
+    """
+    if not isinstance(initiator_password, str) or not initiator_password.strip():
+        raise ValueError("initiator_password must be a non-empty string")
+    validate_header_value(initiator_password, field_name="initiator_password")
+    if not isinstance(certificate_pem, str) or not certificate_pem.strip():
+        raise ValueError("certificate_pem must be a non-empty PEM string")
+
+    try:
+        x509_mod = importlib.import_module("cryptography.x509")
+        serialization = importlib.import_module(
+            "cryptography.hazmat.primitives.serialization"
+        )
+        padding_mod = importlib.import_module(
+            "cryptography.hazmat.primitives.asymmetric.padding"
+        )
+        rsa_mod = importlib.import_module(
+            "cryptography.hazmat.primitives.asymmetric.rsa"
+        )
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Install 'cryptography' (pip install py-momo-sdk[airtel]) to encrypt M-Pesa SecurityCredential"
+        ) from exc
+
+    pem_bytes = certificate_pem.encode("utf-8")
+    if "BEGIN CERTIFICATE" in certificate_pem:
+        pub_key = x509_mod.load_pem_x509_certificate(pem_bytes).public_key()
+    else:
+        pub_key = serialization.load_pem_public_key(pem_bytes)
+    if not isinstance(pub_key, rsa_mod.RSAPublicKey):
+        raise TypeError("certificate_pem must contain an RSA public key")
+    ciphertext: bytes = pub_key.encrypt(
+        initiator_password.encode("utf-8"),
+        padding_mod.PKCS1v15(),
+    )
+    return base64.b64encode(ciphertext).decode("ascii")
+
+
+def parse_mpesa_stk_callback(payload: dict[str, Any]) -> PaymentResult:
+    """Parse a Daraja STK Push callback (``Body.stkCallback``) into a ``PaymentResult``."""
+    if not isinstance(payload, dict):
+        raise ValueError("STK callback payload must be a dict")
+    body = payload.get("Body")
+    callback = body.get("stkCallback") if isinstance(body, dict) else None
+    if not isinstance(callback, dict):
+        raise ValueError("STK callback payload missing Body.stkCallback object")
+
+    checkout_id = str(callback.get("CheckoutRequestID") or "").strip()
+    merchant_id = str(callback.get("MerchantRequestID") or "").strip()
+    result_code = callback.get("ResultCode")
+    result_desc = str(callback.get("ResultDesc") or "").strip() or None
+
+    code_str = "" if result_code is None else str(result_code).strip()
+    if code_str == "0":
+        status = NormalizedStatus.SUCCEEDED
+    elif not code_str:
+        status = NormalizedStatus.PENDING
+    else:
+        status = NormalizedStatus.FAILED
+
+    amount: str | None = None
+    receipt: str | None = None
+    metadata = callback.get("CallbackMetadata")
+    items = metadata.get("Item") if isinstance(metadata, dict) else None
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("Name") or "")
+            val = item.get("Value")
+            if val is None:
+                continue
+            if name == "Amount":
+                amount = str(val)
+            elif name == "MpesaReceiptNumber":
+                receipt = str(val)
+
+    return PaymentResult(
+        provider="mpesa",
+        reference_id=checkout_id or merchant_id,
+        status=status,
+        amount=amount,
+        currency="KES" if amount is not None else None,
+        provider_transaction_id=receipt,
+        external_id=merchant_id or None,
+        reason=result_desc,
+        raw=payload,
+    )
+
+
+def parse_mpesa_b2c_callback(payload: dict[str, Any]) -> PaymentResult:
+    """Parse a Daraja B2C / async ResultURL callback (``Result``) into a ``PaymentResult``."""
+    if not isinstance(payload, dict):
+        raise ValueError("B2C callback payload must be a dict")
+    result_obj = payload.get("Result")
+    if not isinstance(result_obj, dict):
+        raise ValueError("B2C callback payload missing Result object")
+
+    conv_id = str(result_obj.get("ConversationID") or "").strip()
+    orig_id = str(result_obj.get("OriginatorConversationID") or "").strip()
+    tx_id = str(result_obj.get("TransactionID") or "").strip() or None
+    result_code = result_obj.get("ResultCode")
+    result_desc = str(result_obj.get("ResultDesc") or "").strip() or None
+
+    code_str = "" if result_code is None else str(result_code).strip()
+    if code_str == "0":
+        status = NormalizedStatus.SUCCEEDED
+    elif not code_str:
+        status = NormalizedStatus.PENDING
+    else:
+        status = NormalizedStatus.FAILED
+
+    amount: str | None = None
+    receipt: str | None = tx_id
+    params_obj = result_obj.get("ResultParameters")
+    param_list = (
+        params_obj.get("ResultParameter") if isinstance(params_obj, dict) else None
+    )
+    if isinstance(param_list, list):
+        for entry in param_list:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("Key") or "")
+            val = entry.get("Value")
+            if val is None:
+                continue
+            if key in {"TransactionAmount", "Amount"}:
+                amount = str(val)
+            elif key == "TransactionReceipt":
+                receipt = str(val)
+
+    return PaymentResult(
+        provider="mpesa",
+        reference_id=conv_id or orig_id,
+        status=status,
+        amount=amount,
+        currency="KES" if amount is not None else None,
+        provider_transaction_id=receipt,
+        external_id=orig_id or None,
+        reason=result_desc,
+        raw=payload,
+    )
+
+
+def _is_daraja_processing_error(exc: PyMomoSDKServerError) -> bool:
+    if exc.status_code != 500:
+        return False
+    if exc.error_code == _DARAJA_STK_PROCESSING_CODE:
+        return True
+    raw_code = exc.response_body.get("errorCode")
+    return isinstance(raw_code, str) and raw_code.strip() == _DARAJA_STK_PROCESSING_CODE
 
 
 @dataclass
@@ -269,6 +444,7 @@ class MpesaClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="M-Pesa",
+            allow_localhost=(config.environment == "sandbox"),
         )
 
     def _get_token(self) -> str:
@@ -319,6 +495,7 @@ class MpesaClient:
         """Initiate an M-Pesa STK Push (Lipa Na M-Pesa Online) prompt."""
         int_amount = _to_mpesa_int_amount(amount)
         validated_ref = _validate_account_reference(account_reference)
+        validated_desc = _validate_transaction_desc(transaction_desc)
         resolved_tx_type = transaction_type or self._config.transaction_type
         if resolved_tx_type not in _VALID_MPESA_TRANSACTION_TYPES:
             raise ValueError(
@@ -357,7 +534,7 @@ class MpesaClient:
                 "PhoneNumber": msisdn,
                 "CallBackURL": cb,
                 "AccountReference": validated_ref,
-                "TransactionDesc": transaction_desc,
+                "TransactionDesc": validated_desc,
             },
             product_name="mpesa",
             token_cache=self._cache,
@@ -376,22 +553,31 @@ class MpesaClient:
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
-        response = self._http.request(
-            "POST",
-            "/mpesa/stkpushquery/v1/query",
-            headers=self._auth_headers(reference_id=cleaned_id),
-            json={
-                "BusinessShortCode": self._config.short_code,
-                "Password": password,
-                "Timestamp": timestamp,
-                "CheckoutRequestID": cleaned_id,
-            },
-            product_name="mpesa",
-            token_cache=self._cache,
-            token_refresher=self._get_token,
-            idempotent=True,
-            reference_id=cleaned_id,
-        )
+        try:
+            response = self._http.request(
+                "POST",
+                "/mpesa/stkpushquery/v1/query",
+                headers=self._auth_headers(reference_id=cleaned_id),
+                json={
+                    "BusinessShortCode": self._config.short_code,
+                    "Password": password,
+                    "Timestamp": timestamp,
+                    "CheckoutRequestID": cleaned_id,
+                },
+                product_name="mpesa",
+                token_cache=self._cache,
+                token_refresher=self._get_token,
+                idempotent=True,
+                reference_id=cleaned_id,
+            )
+        except PyMomoSDKServerError as exc:
+            if _is_daraja_processing_error(exc):
+                return MpesaStkQueryResponse(
+                    CheckoutRequestID=cleaned_id,
+                    ResultCode=None,
+                    ResultDesc=exc.reason or "The transaction is being processed",
+                )
+            raise
         return parse_model(response, MpesaStkQueryResponse, reference_id=cleaned_id)
 
     def b2c_transfer(
@@ -463,6 +649,167 @@ class MpesaClient:
         )
         return parse_model(response, MpesaB2CResponse, reference_id=orig_id)
 
+    def _resolve_async_daraja_params(
+        self,
+        *,
+        callback_url: str | None,
+        queue_timeout_url: str | None,
+        operation: str,
+    ) -> tuple[str, str, str, str]:
+        if not self._config.security_credential:
+            raise ValueError(f"security_credential is required for M-Pesa {operation}")
+        if not self._config.initiator_name:
+            raise ValueError(f"initiator_name is required for M-Pesa {operation}")
+        allow_localhost = self._config.environment == "sandbox"
+        if callback_url is not None:
+            validate_callback_url(callback_url, allow_localhost=allow_localhost)
+        if queue_timeout_url is not None:
+            validate_callback_url(queue_timeout_url, allow_localhost=allow_localhost)
+        cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError(f"callback_url is required for M-Pesa {operation}")
+        timeout_cb = queue_timeout_url or self._config.queue_timeout_url or cb
+        return (
+            self._config.initiator_name,
+            self._config.security_credential,
+            cb,
+            timeout_cb,
+        )
+
+    def query_transaction_status(
+        self,
+        transaction_id: str,
+        *,
+        identifier_type: str = "4",
+        remarks: str = "Status query",
+        occasion: str = "Status",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+        originator_conversation_id: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Query the status of any M-Pesa transaction via ``POST /mpesa/transactionstatus/v1/query``."""
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            raise ValueError("transaction_id must be a non-empty string")
+        cleaned_tx = validate_header_value(
+            transaction_id.strip(), field_name="transaction_id"
+        )
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="transaction status queries",
+        )
+        payload: dict[str, Any] = {
+            "Initiator": initiator,
+            "SecurityCredential": sec_cred,
+            "CommandID": "TransactionStatusQuery",
+            "TransactionID": cleaned_tx,
+            "PartyA": self._config.short_code,
+            "IdentifierType": identifier_type,
+            "ResultURL": cb,
+            "QueueTimeOutURL": timeout_cb,
+            "Remarks": remarks,
+            "Occasion": occasion,
+        }
+        if originator_conversation_id is not None:
+            payload["OriginatorConversationID"] = validate_header_value(
+                originator_conversation_id.strip(),
+                field_name="originator_conversation_id",
+            )
+        response = self._http.request(
+            "POST",
+            "/mpesa/transactionstatus/v1/query",
+            headers=self._auth_headers(reference_id=cleaned_tx),
+            json=payload,
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            idempotent=True,
+            reference_id=cleaned_tx,
+        )
+        return parse_model(response, MpesaB2CResponse, reference_id=cleaned_tx)
+
+    def query_account_balance(
+        self,
+        *,
+        identifier_type: str = "4",
+        remarks: str = "Balance query",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Initiate an async Daraja account balance query (``POST /mpesa/accountbalance/v1/query``)."""
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="account balance queries",
+        )
+        response = self._http.request(
+            "POST",
+            "/mpesa/accountbalance/v1/query",
+            headers=self._auth_headers(),
+            json={
+                "Initiator": initiator,
+                "SecurityCredential": sec_cred,
+                "CommandID": "AccountBalance",
+                "PartyA": self._config.short_code,
+                "IdentifierType": identifier_type,
+                "Remarks": remarks,
+                "QueueTimeOutURL": timeout_cb,
+                "ResultURL": cb,
+            },
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            idempotent=True,
+        )
+        return parse_model(response, MpesaB2CResponse)
+
+    def reverse_transaction(
+        self,
+        transaction_id: str,
+        amount: str,
+        *,
+        receiver_identifier_type: str = "11",
+        remarks: str = "Reversal",
+        occasion: str = "Reversal",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Initiate an M-Pesa transaction reversal (``POST /mpesa/reversal/v1/request``)."""
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            raise ValueError("transaction_id must be a non-empty string")
+        cleaned_tx = validate_header_value(
+            transaction_id.strip(), field_name="transaction_id"
+        )
+        int_amount = _to_mpesa_int_amount(amount)
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="reversals",
+        )
+        response = self._http.request(
+            "POST",
+            "/mpesa/reversal/v1/request",
+            headers=self._auth_headers(reference_id=cleaned_tx),
+            json={
+                "Initiator": initiator,
+                "SecurityCredential": sec_cred,
+                "CommandID": "TransactionReversal",
+                "TransactionID": cleaned_tx,
+                "Amount": int_amount,
+                "ReceiverParty": self._config.short_code,
+                "RecieverIdentifierType": receiver_identifier_type,
+                "ResultURL": cb,
+                "QueueTimeOutURL": timeout_cb,
+                "Remarks": remarks,
+                "Occasion": occasion,
+            },
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            reference_id=cleaned_tx,
+        )
+        return parse_model(response, MpesaB2CResponse, reference_id=cleaned_tx)
+
     def close(self) -> None:
         self._http.close()
 
@@ -499,6 +846,7 @@ class AsyncMpesaClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="M-Pesa",
+            allow_localhost=(config.environment == "sandbox"),
         )
 
     def _get_token_lock(self) -> asyncio.Lock:
@@ -557,6 +905,7 @@ class AsyncMpesaClient:
     ) -> MpesaStkPushResponse:
         int_amount = _to_mpesa_int_amount(amount)
         validated_ref = _validate_account_reference(account_reference)
+        validated_desc = _validate_transaction_desc(transaction_desc)
         resolved_tx_type = transaction_type or self._config.transaction_type
         if resolved_tx_type not in _VALID_MPESA_TRANSACTION_TYPES:
             raise ValueError(
@@ -595,7 +944,7 @@ class AsyncMpesaClient:
                 "PhoneNumber": msisdn,
                 "CallBackURL": cb,
                 "AccountReference": validated_ref,
-                "TransactionDesc": transaction_desc,
+                "TransactionDesc": validated_desc,
             },
             product_name="mpesa",
             token_cache=self._cache,
@@ -613,22 +962,31 @@ class AsyncMpesaClient:
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
-        response = await self._http.request(
-            "POST",
-            "/mpesa/stkpushquery/v1/query",
-            headers=await self._auth_headers(reference_id=cleaned_id),
-            json={
-                "BusinessShortCode": self._config.short_code,
-                "Password": password,
-                "Timestamp": timestamp,
-                "CheckoutRequestID": cleaned_id,
-            },
-            product_name="mpesa",
-            token_cache=self._cache,
-            token_refresher=self._get_token,
-            idempotent=True,
-            reference_id=cleaned_id,
-        )
+        try:
+            response = await self._http.request(
+                "POST",
+                "/mpesa/stkpushquery/v1/query",
+                headers=await self._auth_headers(reference_id=cleaned_id),
+                json={
+                    "BusinessShortCode": self._config.short_code,
+                    "Password": password,
+                    "Timestamp": timestamp,
+                    "CheckoutRequestID": cleaned_id,
+                },
+                product_name="mpesa",
+                token_cache=self._cache,
+                token_refresher=self._get_token,
+                idempotent=True,
+                reference_id=cleaned_id,
+            )
+        except PyMomoSDKServerError as exc:
+            if _is_daraja_processing_error(exc):
+                return MpesaStkQueryResponse(
+                    CheckoutRequestID=cleaned_id,
+                    ResultCode=None,
+                    ResultDesc=exc.reason or "The transaction is being processed",
+                )
+            raise
         return parse_model(response, MpesaStkQueryResponse, reference_id=cleaned_id)
 
     async def b2c_transfer(
@@ -699,6 +1057,167 @@ class AsyncMpesaClient:
         )
         return parse_model(response, MpesaB2CResponse, reference_id=orig_id)
 
+    def _resolve_async_daraja_params(
+        self,
+        *,
+        callback_url: str | None,
+        queue_timeout_url: str | None,
+        operation: str,
+    ) -> tuple[str, str, str, str]:
+        if not self._config.security_credential:
+            raise ValueError(f"security_credential is required for M-Pesa {operation}")
+        if not self._config.initiator_name:
+            raise ValueError(f"initiator_name is required for M-Pesa {operation}")
+        allow_localhost = self._config.environment == "sandbox"
+        if callback_url is not None:
+            validate_callback_url(callback_url, allow_localhost=allow_localhost)
+        if queue_timeout_url is not None:
+            validate_callback_url(queue_timeout_url, allow_localhost=allow_localhost)
+        cb = callback_url or self._config.callback_url
+        if not cb:
+            raise ValueError(f"callback_url is required for M-Pesa {operation}")
+        timeout_cb = queue_timeout_url or self._config.queue_timeout_url or cb
+        return (
+            self._config.initiator_name,
+            self._config.security_credential,
+            cb,
+            timeout_cb,
+        )
+
+    async def query_transaction_status(
+        self,
+        transaction_id: str,
+        *,
+        identifier_type: str = "4",
+        remarks: str = "Status query",
+        occasion: str = "Status",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+        originator_conversation_id: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Query the status of any M-Pesa transaction asynchronously."""
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            raise ValueError("transaction_id must be a non-empty string")
+        cleaned_tx = validate_header_value(
+            transaction_id.strip(), field_name="transaction_id"
+        )
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="transaction status queries",
+        )
+        payload: dict[str, Any] = {
+            "Initiator": initiator,
+            "SecurityCredential": sec_cred,
+            "CommandID": "TransactionStatusQuery",
+            "TransactionID": cleaned_tx,
+            "PartyA": self._config.short_code,
+            "IdentifierType": identifier_type,
+            "ResultURL": cb,
+            "QueueTimeOutURL": timeout_cb,
+            "Remarks": remarks,
+            "Occasion": occasion,
+        }
+        if originator_conversation_id is not None:
+            payload["OriginatorConversationID"] = validate_header_value(
+                originator_conversation_id.strip(),
+                field_name="originator_conversation_id",
+            )
+        response = await self._http.request(
+            "POST",
+            "/mpesa/transactionstatus/v1/query",
+            headers=await self._auth_headers(reference_id=cleaned_tx),
+            json=payload,
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            idempotent=True,
+            reference_id=cleaned_tx,
+        )
+        return parse_model(response, MpesaB2CResponse, reference_id=cleaned_tx)
+
+    async def query_account_balance(
+        self,
+        *,
+        identifier_type: str = "4",
+        remarks: str = "Balance query",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Initiate an async Daraja account balance query asynchronously."""
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="account balance queries",
+        )
+        response = await self._http.request(
+            "POST",
+            "/mpesa/accountbalance/v1/query",
+            headers=await self._auth_headers(),
+            json={
+                "Initiator": initiator,
+                "SecurityCredential": sec_cred,
+                "CommandID": "AccountBalance",
+                "PartyA": self._config.short_code,
+                "IdentifierType": identifier_type,
+                "Remarks": remarks,
+                "QueueTimeOutURL": timeout_cb,
+                "ResultURL": cb,
+            },
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            idempotent=True,
+        )
+        return parse_model(response, MpesaB2CResponse)
+
+    async def reverse_transaction(
+        self,
+        transaction_id: str,
+        amount: str,
+        *,
+        receiver_identifier_type: str = "11",
+        remarks: str = "Reversal",
+        occasion: str = "Reversal",
+        callback_url: str | None = None,
+        queue_timeout_url: str | None = None,
+    ) -> MpesaB2CResponse:
+        """Initiate an M-Pesa transaction reversal asynchronously."""
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            raise ValueError("transaction_id must be a non-empty string")
+        cleaned_tx = validate_header_value(
+            transaction_id.strip(), field_name="transaction_id"
+        )
+        int_amount = _to_mpesa_int_amount(amount)
+        initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
+            callback_url=callback_url,
+            queue_timeout_url=queue_timeout_url,
+            operation="reversals",
+        )
+        response = await self._http.request(
+            "POST",
+            "/mpesa/reversal/v1/request",
+            headers=await self._auth_headers(reference_id=cleaned_tx),
+            json={
+                "Initiator": initiator,
+                "SecurityCredential": sec_cred,
+                "CommandID": "TransactionReversal",
+                "TransactionID": cleaned_tx,
+                "Amount": int_amount,
+                "ReceiverParty": self._config.short_code,
+                "RecieverIdentifierType": receiver_identifier_type,
+                "ResultURL": cb,
+                "QueueTimeOutURL": timeout_cb,
+                "Remarks": remarks,
+                "Occasion": occasion,
+            },
+            product_name="mpesa",
+            token_cache=self._cache,
+            token_refresher=self._get_token,
+            reference_id=cleaned_tx,
+        )
+        return parse_model(response, MpesaB2CResponse, reference_id=cleaned_tx)
+
     async def close(self) -> None:
         await self._http.close()
 
@@ -752,7 +1271,9 @@ class MpesaProvider:
             amount=request.amount,
             phone_number=request.payer_msisdn,
             account_reference=acct_ref,
-            transaction_desc=request.payer_message or "Payment",
+            transaction_desc=((request.payer_message or "").strip() or "Payment")[
+                :_MAX_MPESA_TRANSACTION_DESC_LEN
+            ],
             callback_url=request.callback_url,
         )
         status = (
@@ -853,7 +1374,9 @@ class AsyncMpesaProvider:
             amount=request.amount,
             phone_number=request.payer_msisdn,
             account_reference=acct_ref,
-            transaction_desc=request.payer_message or "Payment",
+            transaction_desc=((request.payer_message or "").strip() or "Payment")[
+                :_MAX_MPESA_TRANSACTION_DESC_LEN
+            ],
             callback_url=request.callback_url,
         )
         status = (

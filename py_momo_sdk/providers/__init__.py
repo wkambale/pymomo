@@ -26,6 +26,9 @@ from py_momo_sdk.providers.mpesa import (
     MpesaProvider,
     MpesaStkPushResponse,
     MpesaStkQueryResponse,
+    encrypt_mpesa_security_credential,
+    parse_mpesa_b2c_callback,
+    parse_mpesa_stk_callback,
 )
 from py_momo_sdk.providers.mtn import AsyncMtnMomoProvider, MtnMomoProvider
 from py_momo_sdk.providers.orange import (
@@ -105,4 +108,7 @@ __all__ = [
     "WavePayoutResponse",
     "WaveProvider",
     "discover_provider_plugins",
+    "encrypt_mpesa_security_credential",
+    "parse_mpesa_b2c_callback",
+    "parse_mpesa_stk_callback",
 ]
