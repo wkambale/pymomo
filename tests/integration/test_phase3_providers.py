@@ -2106,3 +2106,208 @@ async def test_issue_129_paystack_transfer_and_init_never_auto_retry(
 
     # Exactly 1 attempt per endpoint (0 retries despite max_retries=2)
     assert len(httpx_mock.get_requests()) == 2
+
+
+@pytest.mark.asyncio
+async def test_issue_132_mpesa_daraja_pending_500_desc_and_apis(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #132: Daraja 500.001.1001 pending mapping, 13-char TransactionDesc, Daraja APIs, and callbacks."""
+    import json
+
+    from py_momo_sdk import (
+        AsyncMpesaClient,
+        MpesaClient,
+        MpesaConfig,
+        MpesaProvider,
+        NormalizedStatus,
+        PaymentRequest,
+        PyMomoSDKServerError,
+        parse_mpesa_b2c_callback,
+        parse_mpesa_stk_callback,
+    )
+
+    cfg = MpesaConfig(
+        consumer_key="ck",
+        consumer_secret="cs",
+        short_code="174379",
+        passkey="pk",
+        callback_url="https://merchant.example.com/mpesa/cb",
+        security_credential="enc-sec-cred",
+    )
+
+    # 1. TransactionDesc > 13 chars rejected directly; MpesaProvider caps payer_message safely
+    with MpesaClient(cfg) as mc, pytest.raises(ValueError, match="13 characters"):
+        mc.stk_push("100", "254712345678", transaction_desc="TooLongDescription")
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "mp-tok-132", "expires_in": "3599"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        json={
+            "MerchantRequestID": "mr-132",
+            "CheckoutRequestID": "ws_CO_132",
+            "ResponseCode": "0",
+            "ResponseDescription": "Success",
+        },
+        status_code=200,
+    )
+    # Daraja returns HTTP 500 with errorCode 500.001.1001 while STK push is still pending
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+        json={
+            "requestId": "req-132",
+            "errorCode": "500.001.1001",
+            "errorMessage": "The transaction is being processed",
+        },
+        status_code=500,
+    )
+    # Genuine non-500.001.1001 HTTP 500 still raises PyMomoSDKServerError
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+        json={"errorCode": "500.001.9999", "errorMessage": "Internal failure"},
+        status_code=500,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query",
+        json={"ConversationID": "AG_TS_1", "ResponseCode": "0"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/accountbalance/v1/query",
+        json={"ConversationID": "AG_BAL_1", "ResponseCode": "0"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/reversal/v1/request",
+        json={"ConversationID": "AG_REV_1", "ResponseCode": "0"},
+        status_code=200,
+    )
+
+    with MpesaClient(cfg) as mc:
+        prov = MpesaProvider(mc)
+        col = prov.collect(
+            PaymentRequest(
+                amount="250",
+                currency="KES",
+                payer_msisdn="254712345678",
+                payer_message="Longer Than Thirteen Chars",
+            )
+        )
+        assert col.reference_id == "ws_CO_132"
+        stk_req = next(
+            r
+            for r in httpx_mock.get_requests()
+            if r.url.path == "/mpesa/stkpush/v1/processrequest"
+        )
+        assert len(json.loads(stk_req.read().decode("utf-8"))["TransactionDesc"]) <= 13
+
+        st = prov.get_status("ws_CO_132")
+        assert st.status == NormalizedStatus.PENDING
+        assert "being processed" in (st.reason or "")
+
+        with pytest.raises(PyMomoSDKServerError):
+            mc.stk_query("ws_CO_132")
+
+        assert mc.query_transaction_status("NLJ7RT61SV").conversation_id == "AG_TS_1"
+        assert mc.query_account_balance().conversation_id == "AG_BAL_1"
+        assert mc.reverse_transaction("NLJ7RT61SV", "250").conversation_id == "AG_REV_1"
+
+    # Async parity for 500.001.1001 and Daraja endpoints
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "mp-atok-132", "expires_in": "3599"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+        json={
+            "errorCode": "500.001.1001",
+            "errorMessage": "The transaction is being processed",
+        },
+        status_code=500,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query",
+        json={"ConversationID": "AG_TS_2", "ResponseCode": "0"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/accountbalance/v1/query",
+        json={"ConversationID": "AG_BAL_2", "ResponseCode": "0"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/reversal/v1/request",
+        json={"ConversationID": "AG_REV_2", "ResponseCode": "0"},
+        status_code=200,
+    )
+    async with AsyncMpesaClient(cfg) as amc:
+        aq = await amc.stk_query("ws_CO_132")
+        assert aq.result_code is None
+        assert (
+            await amc.query_transaction_status("NLJ7RT61SV")
+        ).conversation_id == "AG_TS_2"
+        assert (await amc.query_account_balance()).conversation_id == "AG_BAL_2"
+        assert (
+            await amc.reverse_transaction("NLJ7RT61SV", "250")
+        ).conversation_id == "AG_REV_2"
+
+    # Typed callback parsers
+    stk_cb = parse_mpesa_stk_callback(
+        {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "mr-1",
+                    "CheckoutRequestID": "ws_CO_1",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {"Name": "Amount", "Value": 250},
+                            {"Name": "MpesaReceiptNumber", "Value": "NLJ7RT61SV"},
+                        ]
+                    },
+                }
+            }
+        }
+    )
+    assert stk_cb.is_successful()
+    assert stk_cb.provider_transaction_id == "NLJ7RT61SV"
+    assert stk_cb.amount == "250"
+
+    b2c_cb = parse_mpesa_b2c_callback(
+        {
+            "Result": {
+                "ConversationID": "AG_1",
+                "OriginatorConversationID": "orig-1",
+                "ResultCode": 0,
+                "ResultDesc": "Processed",
+                "TransactionID": "TXB2C1",
+                "ResultParameters": {
+                    "ResultParameter": [
+                        {"Key": "TransactionAmount", "Value": 500},
+                        {"Key": "TransactionReceipt", "Value": "TXB2C1"},
+                    ]
+                },
+            }
+        }
+    )
+    assert b2c_cb.is_successful()
+    assert b2c_cb.provider_transaction_id == "TXB2C1"
+    assert b2c_cb.amount == "500"

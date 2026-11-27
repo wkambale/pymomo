@@ -116,6 +116,9 @@ from py_momo_sdk.providers import (
     WaveClient,
     WaveConfig,
     WaveProvider,
+    encrypt_mpesa_security_credential,
+    parse_mpesa_b2c_callback,
+    parse_mpesa_stk_callback,
 )
 from py_momo_sdk.sandbox import SandboxProvisioner
 from py_momo_sdk.telemetry import (
@@ -241,6 +244,9 @@ __all__ = [
     "create_mock_server",
     "detect_carrier_from_msisdn",
     "encrypt_airtel_pin",
+    "encrypt_mpesa_security_credential",
+    "parse_mpesa_b2c_callback",
+    "parse_mpesa_stk_callback",
     "sign_airtel_payload",
     "start_mock_server_thread",
     "verify_constant_time_token",
