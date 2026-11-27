@@ -183,3 +183,29 @@ def test_structured_error_fields_and_response_body_redaction_issue_116() -> None
     assert failed.error_code == "DP00800001001"
     assert failed.provider == "Airtel Money"
     assert failed.reason == "Insufficient balance"
+
+
+def test_issue_124_redacts_camelcase_kebab_and_orange_tokens() -> None:
+    """Verify Issue #124: camelCase/kebab-case secrets and Orange pay_token/notif_token are redacted."""
+    body = {
+        "accessToken": "tok-1",
+        "refreshToken": "tok-2",
+        "clientSecret": "sec-1",
+        "consumerSecret": "sec-2",
+        "subscriptionKey": "sub-1",
+        "secretKey": "sk-1",
+        "merchantKey": "mk-1",
+        "pay_token": "om-pay-1",
+        "payToken": "om-pay-2",
+        "notif_token": "om-notif-1",
+        "notifToken": "om-notif-2",
+        "ocp-apim-subscription-key": "apim-1",
+        "verif-hash": "flw-hash",
+        "safeField": "keep-me",
+    }
+    err = BadRequestError("Upstream error", response_body=body)
+    for sensitive_key in body:
+        if sensitive_key == "safeField":
+            assert err.response_body[sensitive_key] == "keep-me"
+        else:
+            assert err.response_body[sensitive_key] == "<redacted>", sensitive_key
