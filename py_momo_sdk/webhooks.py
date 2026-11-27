@@ -170,41 +170,49 @@ class WebhookHandler:
         ):
             raise WebhookVerificationError("Invalid reference time for webhook check")
 
-        parts = signature_header.split(",")
+        trimmed_header = signature_header.strip()
+        if any(ch.isspace() for ch in trimmed_header):
+            raise WebhookVerificationError("Malformed timestamped webhook signature")
+
+        parts = trimmed_header.split(",")
         if len(parts) > _MAX_SIGNATURE_PARTS:
             raise WebhookVerificationError("Malformed timestamped webhook signature")
 
+        expected_hex_len = digest_fn().digest_size * 2
         timestamp_str: str | None = None
         signatures: list[str] = []
         for part in parts:
-            stripped_part = part.strip()
-            if not stripped_part:
+            if not part:
                 raise WebhookVerificationError(
                     "Malformed timestamped webhook signature"
                 )
-            key, sep, val = stripped_part.partition("=")
-            if not sep or not key.strip():
+            key, sep, val = part.partition("=")
+            if not sep or not key or not val:
                 raise WebhookVerificationError(
                     "Malformed timestamped webhook signature"
                 )
-            key = key.strip()
             if key == "t":
                 if timestamp_str is not None:
                     raise WebhookVerificationError(
                         "Duplicate timestamp in webhook signature"
                     )
-                timestamp_str = val.strip()
+                timestamp_str = val
             elif key == "v1":
                 if len(signatures) >= _MAX_V1_SIGNATURES:
                     raise WebhookVerificationError(
                         "Too many signature values in webhook header"
                     )
-                sig_val = val.strip().lower()
-                if not sig_val:
+                if len(val) != expected_hex_len or not all(
+                    c in "0123456789abcdef" for c in val
+                ):
                     raise WebhookVerificationError(
                         "Malformed timestamped webhook signature"
                     )
-                signatures.append(sig_val)
+                signatures.append(val)
+            else:
+                raise WebhookVerificationError(
+                    "Malformed timestamped webhook signature"
+                )
 
         if timestamp_str is None or not signatures:
             raise WebhookVerificationError("Malformed timestamped webhook signature")
@@ -233,25 +241,23 @@ class WebhookHandler:
         signed_payload = (
             f"{timestamp_str}{timestamp_separator}".encode("ascii") + raw_bytes
         )
-        expected_bytes = (
-            hmac.new(
-                secret.encode("utf-8"),
-                signed_payload,
-                digest_fn,
-            )
-            .hexdigest()
-            .encode("ascii")
-        )
+        expected_hex = hmac.new(
+            secret.encode("utf-8"),
+            signed_payload,
+            digest_fn,
+        ).hexdigest()
+        expected_bytes = expected_hex.encode("ascii")
 
         matched = False
         for sig in signatures:
-            if hmac.compare_digest(expected_bytes, sig.encode("utf-8")):
+            if hmac.compare_digest(expected_bytes, sig.encode("ascii")):
                 matched = True
         if not matched:
             raise WebhookVerificationError("Webhook signature verification failed")
 
+        canonical_signature = f"t={timestamp_str},v1={expected_hex}"
         if replay_check is not None and not replay_check(
-            signature_header, raw_bytes, ts
+            canonical_signature, raw_bytes, ts
         ):
             raise WebhookVerificationError("Webhook signature replay detected")
 
