@@ -626,7 +626,7 @@ def test_collection_create_oauth2_token_sync(
     """Test exchanging a CIBA auth_req_id for an OAuth2 token synchronously."""
     httpx_mock.add_response(
         method="POST",
-        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/token/",
         json={
             "access_token": "ciba-user-access-token",
             "token_type": "Bearer",
@@ -664,7 +664,7 @@ async def test_collection_create_oauth2_token_async(
     """Test exchanging a CIBA auth_req_id for an OAuth2 token asynchronously."""
     httpx_mock.add_response(
         method="POST",
-        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/token/",
         json={
             "access_token": "ciba-async-token",
             "token_type": "Bearer",
@@ -749,3 +749,135 @@ def test_collection_malformed_token_response_raises_auth_error(
     )
     with pytest.raises(AuthenticationError, match="Invalid token response"):
         client.collection.get_balance()
+
+
+@pytest.mark.asyncio
+async def test_issue_130_mtn_ciba_userinfo_delivery_notification_and_preapproval(
+    client: PyMomoSDK, async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
+) -> None:
+    """Verify Issue #130: One API URL, consented userinfo, delivery notification, and PreApproval."""
+    from py_momo_sdk import (
+        MTN_UGANDA,
+        ONE_API_PRODUCTION_BASE_URL,
+        PyMomoSDKConfig,
+    )
+
+    assert ONE_API_PRODUCTION_BASE_URL == "https://momoapi.momo.africa"
+    one_api_cfg = PyMomoSDKConfig(
+        environment=MTN_UGANDA, base_url=ONE_API_PRODUCTION_BASE_URL
+    )
+    assert one_api_cfg.base_url == "https://momoapi.momo.africa"
+
+    # 1. Consented userinfo (sync + async) via GET /collection/oauth2/v1_0/userinfo
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/v1_0/userinfo",
+        json={"sub": "sub-130", "name": "Consented User", "locale": "en_UG"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/v1_0/userinfo",
+        json={"sub": "sub-130-async", "name": "Async Consented User"},
+        status_code=200,
+    )
+    info = client.collection.get_user_info_with_consent("user-consent-bearer-token")
+    assert info.name == "Consented User"
+    ainfo = await async_client.collection.get_user_info_with_consent(
+        "async-consent-bearer-token"
+    )
+    assert ainfo.sub == "sub-130-async"
+    with pytest.raises(ValueError, match="oauth2_access_token"):
+        client.collection.get_user_info_with_consent("   ")
+
+    # 2. Delivery notification (sync + async)
+    ref_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+    mock_token_response(httpx_mock)
+    mock_token_response(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{ref_id}/deliverynotification",
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{ref_id}/deliverynotification",
+        status_code=200,
+    )
+    client.collection.send_delivery_notification(
+        ref_id, "Payment received", language="en"
+    )
+    await async_client.collection.send_delivery_notification(
+        ref_id, "Payment received async", language="fr"
+    )
+    with pytest.raises(ValueError, match="language"):
+        client.collection.send_delivery_notification(ref_id, "Hi", language="english")
+
+    # 3. PreApproval create / status / cancel (sync + async)
+    pre_ref = "11111111-2222-4333-8444-555555555555"
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval",
+        status_code=202,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval/{pre_ref}",
+        json={
+            "payerCurrency": "UGX",
+            "validityTime": 3600,
+            "status": "APPROVED",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="DELETE",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval/{pre_ref}",
+        status_code=200,
+    )
+    created_ref = client.collection.create_preapproval(
+        payer_msisdn="+256771234567",
+        payer_currency="UGX",
+        validity_time=3600,
+        payer_message="Monthly subscription",
+        reference_id=pre_ref,
+    )
+    assert created_ref == pre_ref
+    pre_status = client.collection.get_preapproval_status(pre_ref)
+    assert pre_status.is_approved() is True
+    assert pre_status.is_pending() is False
+    assert pre_status.is_failed() is False
+    client.collection.cancel_preapproval(pre_ref)
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval",
+        status_code=202,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval/{pre_ref}",
+        json={
+            "status": "FAILED",
+            "reason": {"code": "APPROVAL_REJECTED", "message": "User declined"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="DELETE",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval/{pre_ref}",
+        status_code=200,
+    )
+    assert (
+        await async_client.collection.create_preapproval(
+            payer_msisdn="256771234567",
+            payer_currency="UGX",
+            validity_time=1800,
+            reference_id=pre_ref,
+        )
+        == pre_ref
+    )
+    apre_status = await async_client.collection.get_preapproval_status(pre_ref)
+    assert apre_status.is_failed() is True
+    assert apre_status.reason_code == "APPROVAL_REJECTED"
+    await async_client.collection.cancel_preapproval(pre_ref)

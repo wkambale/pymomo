@@ -32,6 +32,7 @@ MTN_RWANDA = "mtnrwanda"
 
 SANDBOX_BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 PRODUCTION_BASE_URL = "https://proxy.momoapi.mtn.com"
+ONE_API_PRODUCTION_BASE_URL = "https://momoapi.momo.africa"
 
 
 @dataclass(frozen=True)

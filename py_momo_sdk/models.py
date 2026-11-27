@@ -166,6 +166,76 @@ class BcAuthorizeRequest(BaseModel):
     login_hint: str = Field(alias="login_hint")
 
 
+class PreApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    payer: Party
+    payer_currency: str = Field(alias="payerCurrency")
+    payer_message: str = Field(default="", alias="payerMessage")
+    validity_time: int = Field(alias="validityTime", gt=0)
+
+    @field_validator("payer_currency")
+    @classmethod
+    def _check_payer_currency(cls, value: str) -> str:
+        return validate_currency(value)
+
+    @field_validator("payer_message")
+    @classmethod
+    def _check_payer_message(cls, value: str) -> str:
+        return _validate_note_text(value, field_name="payer_message")
+
+    @field_validator("validity_time", mode="before")
+    @classmethod
+    def _check_validity_time(cls, value: object) -> object:
+        if type(value) in (bool, float):
+            raise ValueError("validity_time must be a positive integer")
+        if isinstance(value, int) and value <= 0:
+            raise ValueError("validity_time must be a positive integer")
+        return value
+
+
+class PreApprovalResult(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    payer: Party | None = None
+    payer_currency: str | None = Field(default=None, alias="payerCurrency")
+    payer_message: str | None = Field(default=None, alias="payerMessage")
+    validity_time: int | None = Field(default=None, alias="validityTime")
+    status: str
+    reason: str | None = None
+    reason_code: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_error_reason(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("reason"), dict):
+            reason_obj = data["reason"]
+            code = reason_obj.get("code")
+            msg = reason_obj.get("message")
+            code_str = code.strip() if isinstance(code, str) and code.strip() else None
+            msg_str = msg.strip() if isinstance(msg, str) and msg.strip() else None
+            updated = dict(data)
+            if code_str and msg_str:
+                updated["reason"] = f"{code_str}: {msg_str}"
+            elif code_str or msg_str:
+                updated["reason"] = code_str or msg_str
+            else:
+                updated["reason"] = None
+            if code_str and "reason_code" not in updated:
+                updated["reason_code"] = code_str
+            return updated
+        return data
+
+    def is_approved(self) -> bool:
+        return self.status.upper() in {"APPROVED", "SUCCESSFUL"}
+
+    def is_pending(self) -> bool:
+        return self.status.upper() == "PENDING"
+
+    def is_failed(self) -> bool:
+        return self.status.upper() in {"FAILED", "REJECTED", "EXPIRED", "CANCELLED"}
+
+
 # --- Response models ---
 
 

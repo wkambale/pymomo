@@ -900,7 +900,7 @@ async def test_mtn_products_missing_sync_and_async_endpoints(
     )
     httpx_mock.add_response(
         method="POST",
-        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/token/",
         json={
             "access_token": "refreshed-user-tok",
             "token_type": "Bearer",
@@ -929,7 +929,7 @@ async def test_mtn_products_missing_sync_and_async_endpoints(
     # Async collection bc_authorize validation & oauth2 refresh grant
     httpx_mock.add_response(
         method="POST",
-        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/oauth2/token/",
+        url="https://sandbox.momodeveloper.mtn.com/collection/oauth2/token/",
         json={
             "access_token": "async-refreshed-tok",
             "token_type": "Bearer",
