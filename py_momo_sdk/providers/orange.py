@@ -99,7 +99,18 @@ _ORANGE_CAPABILITIES = ProviderCapabilities(
     supports_disbursement=False,
     supports_balance=False,
     supports_webhook_hmac=False,
-    currencies=("XOF", "XAF", "OUV"),
+    currencies=(
+        "XOF",
+        "XAF",
+        "OUV",
+        "CDF",
+        "GNF",
+        "LRD",
+        "MGA",
+        "SLE",
+        "BWP",
+        "USD",
+    ),
 )
 
 
