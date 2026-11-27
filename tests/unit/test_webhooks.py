@@ -261,3 +261,69 @@ def test_webhook_issue_89_dos_ipv6_cidr_strict_parsing_and_replay() -> None:
         )
         is True
     )
+
+
+def test_webhook_issue_120_strict_parsing_and_canonical_replay_key() -> None:
+    """Verify Issue #120: strict timestamped header parsing and canonical replay_check key."""
+    payload = b'{"event":"payment.completed","amount":"5000"}'
+    secret = "whsec_issue_120"
+    ts = 1700000120
+    valid_sig = hmac.new(
+        secret.encode("utf-8"), f"{ts}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+    canonical = f"t={ts},v1={valid_sig}"
+
+    # Malformed variants rejected before reaching replay_check
+    malformed_headers = [
+        f"t={ts}, v1={valid_sig}",
+        f"t = {ts},v1={valid_sig}",
+        f"t={ts},v1={valid_sig},extra=1",
+        f"t={ts},v1={valid_sig.upper()}",
+        f"t={ts},v1=not-hex",
+        f"t={ts},v1={valid_sig[:-2]}",
+        f"t={ts},v1={valid_sig},",
+    ]
+    for bad_hdr in malformed_headers:
+        with pytest.raises(WebhookVerificationError, match="Malformed"):
+            WebhookHandler.verify_timestamped_hmac_signature(
+                payload, bad_hdr, secret, now=ts
+            )
+
+    # replay_check always receives the canonical key, preventing bypass via reordering,
+    # leading/trailing whitespace, or extra rotated dummy v1 values
+    seen: set[str] = set()
+    recorded_keys: list[str] = []
+
+    def _replay_guard(sig_key: str, body: bytes, timestamp: int) -> bool:
+        del body, timestamp
+        recorded_keys.append(sig_key)
+        if sig_key in seen:
+            return False
+        seen.add(sig_key)
+        return True
+
+    WebhookHandler.verify_timestamped_hmac_signature(
+        payload,
+        f"t={ts},v1={valid_sig}",
+        secret,
+        replay_check=_replay_guard,
+        now=ts,
+    )
+    assert recorded_keys == [canonical]
+
+    replay_mutations = [
+        f"v1={valid_sig},t={ts}",
+        f"  t={ts},v1={valid_sig}  ",
+        f"t={ts},v1={'0' * 64},v1={valid_sig}",
+        f"t={ts},v1={valid_sig},v1={'a' * 64}",
+    ]
+    for mutated in replay_mutations:
+        with pytest.raises(WebhookVerificationError, match="replay"):
+            WebhookHandler.verify_timestamped_hmac_signature(
+                payload,
+                mutated,
+                secret,
+                replay_check=_replay_guard,
+                now=ts,
+            )
+    assert all(k == canonical for k in recorded_keys)
