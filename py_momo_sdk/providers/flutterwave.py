@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -145,10 +147,58 @@ def _validate_flw_account_number(account_number: str) -> str:
     return validate_header_value(account_number.strip(), field_name="account_number")
 
 
-def _encode_flw_query_ref(tx_ref: str) -> str:
+_FLW_MOBILE_MONEY_CHARGE_TYPE_RE = re.compile(
+    r"^(mpesa|mobile_money_[a-z][a-z_]{1,30})$"
+)
+
+
+def _to_flw_numeric_amount(validated_amount: str) -> int | float:
+    """Convert a validated decimal amount string to a JSON number for Flutterwave v3."""
+    dec = Decimal(validated_amount)
+    if dec == dec.to_integral_value():
+        return int(dec)
+    return float(dec)
+
+
+def _validate_flw_charge_type(charge_type: str) -> str:
+    if not isinstance(charge_type, str) or not charge_type.strip():
+        raise ValueError("charge_type must be a non-empty string")
+    cleaned = charge_type.strip().lower()
+    if not _FLW_MOBILE_MONEY_CHARGE_TYPE_RE.fullmatch(cleaned):
+        raise ValueError(
+            "charge_type must be 'mpesa' or a valid 'mobile_money_<market>' charge type"
+        )
+    return cleaned
+
+
+def _validate_flw_transaction_id(transaction_id: str | int) -> tuple[str, str]:
+    if type(transaction_id) is bool:
+        raise ValueError("transaction_id must be a non-empty string or integer")
+    if isinstance(transaction_id, int):
+        if transaction_id <= 0:
+            raise ValueError("transaction_id must be a positive integer")
+        cleaned = str(transaction_id)
+    elif isinstance(transaction_id, str) and transaction_id.strip():
+        cleaned = transaction_id.strip()
+    else:
+        raise ValueError("transaction_id must be a non-empty string or integer")
+    return cleaned, encode_path_segment(cleaned, field_name="transaction_id")
+
+
+def _validate_flw_meta(
+    meta: dict[str, Any] | list[dict[str, Any]],
+) -> dict[str, Any] | list[dict[str, Any]]:
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, list) and all(isinstance(item, dict) for item in meta):
+        return meta
+    raise ValueError("meta must be a dict or a list of dicts")
+
+
+def _encode_flw_query_ref(tx_ref: str, *, field_name: str = "tx_ref") -> str:
     if not isinstance(tx_ref, str) or not tx_ref.strip():
-        raise ValueError("tx_ref must be a non-empty string")
-    cleaned = validate_header_value(tx_ref.strip(), field_name="tx_ref")
+        raise ValueError(f"{field_name} must be a non-empty string")
+    cleaned = validate_header_value(tx_ref.strip(), field_name=field_name)
     return quote(cleaned, safe="")
 
 
@@ -267,6 +317,104 @@ class FlutterwaveClient:
         )
         return parse_json_dict(response, reference_id=tx_ref)
 
+    def verify_transaction_by_id(self, transaction_id: str | int) -> dict[str, Any]:
+        """Verify a Flutterwave transaction by numeric transaction ID (``GET /v3/transactions/{id}/verify``)."""
+        raw_id, encoded = _validate_flw_transaction_id(transaction_id)
+        response = self._http.request(
+            "GET",
+            f"/v3/transactions/{encoded}/verify",
+            headers=self._headers(),
+            reference_id=raw_id,
+        )
+        return parse_json_dict(response, reference_id=raw_id)
+
+    def charge_mobile_money(
+        self,
+        charge_type: str,
+        amount: str,
+        currency: str,
+        phone_number: str,
+        *,
+        email: str | None = None,
+        tx_ref: str | None = None,
+        network: str | None = None,
+        fullname: str | None = None,
+        voucher: str | None = None,
+        country: str | None = None,
+        redirect_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Initiate a direct Flutterwave Mobile Money push charge (``POST /v3/charges?type=...``)."""
+        validated_type = _validate_flw_charge_type(charge_type)
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        resolved_email = email or self._config.default_customer_email
+        if not resolved_email:
+            raise ValueError(
+                "email or FlutterwaveConfig.default_customer_email is required for Flutterwave charges"
+            )
+        validated_email = validate_email_address(resolved_email)
+        if redirect_url is not None:
+            validate_callback_url(
+                redirect_url, allow_localhost=self._config.allow_localhost
+            )
+        resolved_redirect = redirect_url or self._config.redirect_url
+        ref = tx_ref or generate_reference_id()
+        clean_msisdn = normalise_msisdn(phone_number)
+        payload: dict[str, Any] = {
+            "tx_ref": ref,
+            "amount": _to_flw_numeric_amount(validated_amount),
+            "currency": validated_currency,
+            "email": validated_email,
+            "phone_number": clean_msisdn,
+        }
+        for key, val in (
+            ("network", network),
+            ("fullname", fullname),
+            ("voucher", voucher),
+            ("country", country),
+        ):
+            if val is not None:
+                if not isinstance(val, str) or not val.strip():
+                    raise ValueError(f"{key} must not be blank")
+                payload[key] = validate_header_value(val.strip(), field_name=key)
+        if resolved_redirect is not None:
+            payload["redirect_url"] = resolved_redirect
+        response = self._http.request(
+            "POST",
+            f"/v3/charges?type={validated_type}",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=ref,
+        )
+        return parse_json_dict(response, reference_id=ref)
+
+    def refund_transaction(
+        self,
+        transaction_id: str | int,
+        *,
+        amount: str | None = None,
+        comments: str | None = None,
+    ) -> dict[str, Any]:
+        """Refund a Flutterwave transaction (``POST /v3/transactions/{id}/refund``)."""
+        raw_id, encoded = _validate_flw_transaction_id(transaction_id)
+        payload: dict[str, Any] = {}
+        if amount is not None:
+            payload["amount"] = _to_flw_numeric_amount(validate_amount(amount))
+        if comments is not None:
+            if not isinstance(comments, str) or not comments.strip():
+                raise ValueError("comments must not be blank")
+            payload["comments"] = comments.strip()
+        response = self._http.request(
+            "POST",
+            f"/v3/transactions/{encoded}/refund",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=raw_id,
+        )
+        return parse_json_dict(response, reference_id=raw_id)
+
     def create_transfer(
         self,
         amount: str,
@@ -277,6 +425,10 @@ class FlutterwaveClient:
         reference: str | None = None,
         narration: str = "Payout",
         callback_url: str | None = None,
+        beneficiary_name: str | None = None,
+        destination_branch_code: str | None = None,
+        debit_currency: str | None = None,
+        meta: dict[str, Any] | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Initiate a Flutterwave transfer."""
         validated_amount = validate_amount(amount)
@@ -298,18 +450,38 @@ class FlutterwaveClient:
         payload: dict[str, Any] = {
             "account_bank": validated_bank,
             "account_number": validated_account,
-            "amount": validated_amount,
+            "amount": _to_flw_numeric_amount(validated_amount),
             "currency": validated_currency,
             "narration": narration,
             "reference": ref,
         }
         if callback_url is not None:
             payload["callback_url"] = callback_url
+        if beneficiary_name is not None:
+            if not isinstance(beneficiary_name, str) or not beneficiary_name.strip():
+                raise ValueError("beneficiary_name must not be blank")
+            payload["beneficiary_name"] = validate_header_value(
+                beneficiary_name.strip(), field_name="beneficiary_name"
+            )
+        if destination_branch_code is not None:
+            if (
+                not isinstance(destination_branch_code, str)
+                or not destination_branch_code.strip()
+            ):
+                raise ValueError("destination_branch_code must not be blank")
+            payload["destination_branch_code"] = validate_header_value(
+                destination_branch_code.strip(), field_name="destination_branch_code"
+            )
+        if debit_currency is not None:
+            payload["debit_currency"] = validate_currency(debit_currency)
+        if meta is not None:
+            payload["meta"] = _validate_flw_meta(meta)
         response = self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
             json=payload,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
@@ -324,6 +496,17 @@ class FlutterwaveClient:
             reference_id=transfer_id,
         )
         return parse_json_dict(response, reference_id=transfer_id)
+
+    def get_transfer_by_reference(self, reference: str) -> dict[str, Any]:
+        """Reconcile a Flutterwave transfer by merchant reference (``GET /v3/transfers?reference=...``)."""
+        encoded = _encode_flw_query_ref(reference, field_name="reference")
+        response = self._http.request(
+            "GET",
+            f"/v3/transfers?reference={encoded}",
+            headers=self._headers(),
+            reference_id=reference,
+        )
+        return parse_json_dict(response, reference_id=reference)
 
     def get_balance(self, currency: str | None = None) -> dict[str, Any]:
         """Retrieve Flutterwave wallet balance for a currency."""
@@ -432,6 +615,106 @@ class AsyncFlutterwaveClient:
         )
         return parse_json_dict(response, reference_id=tx_ref)
 
+    async def verify_transaction_by_id(
+        self, transaction_id: str | int
+    ) -> dict[str, Any]:
+        """Verify a Flutterwave transaction by numeric transaction ID asynchronously."""
+        raw_id, encoded = _validate_flw_transaction_id(transaction_id)
+        response = await self._http.request(
+            "GET",
+            f"/v3/transactions/{encoded}/verify",
+            headers=self._headers(),
+            reference_id=raw_id,
+        )
+        return parse_json_dict(response, reference_id=raw_id)
+
+    async def charge_mobile_money(
+        self,
+        charge_type: str,
+        amount: str,
+        currency: str,
+        phone_number: str,
+        *,
+        email: str | None = None,
+        tx_ref: str | None = None,
+        network: str | None = None,
+        fullname: str | None = None,
+        voucher: str | None = None,
+        country: str | None = None,
+        redirect_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Initiate a direct Flutterwave Mobile Money push charge asynchronously."""
+        validated_type = _validate_flw_charge_type(charge_type)
+        validated_amount = validate_amount(amount)
+        validated_currency = validate_currency(currency)
+        resolved_email = email or self._config.default_customer_email
+        if not resolved_email:
+            raise ValueError(
+                "email or FlutterwaveConfig.default_customer_email is required for Flutterwave charges"
+            )
+        validated_email = validate_email_address(resolved_email)
+        if redirect_url is not None:
+            validate_callback_url(
+                redirect_url, allow_localhost=self._config.allow_localhost
+            )
+        resolved_redirect = redirect_url or self._config.redirect_url
+        ref = tx_ref or generate_reference_id()
+        clean_msisdn = normalise_msisdn(phone_number)
+        payload: dict[str, Any] = {
+            "tx_ref": ref,
+            "amount": _to_flw_numeric_amount(validated_amount),
+            "currency": validated_currency,
+            "email": validated_email,
+            "phone_number": clean_msisdn,
+        }
+        for key, val in (
+            ("network", network),
+            ("fullname", fullname),
+            ("voucher", voucher),
+            ("country", country),
+        ):
+            if val is not None:
+                if not isinstance(val, str) or not val.strip():
+                    raise ValueError(f"{key} must not be blank")
+                payload[key] = validate_header_value(val.strip(), field_name=key)
+        if resolved_redirect is not None:
+            payload["redirect_url"] = resolved_redirect
+        response = await self._http.request(
+            "POST",
+            f"/v3/charges?type={validated_type}",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=ref,
+        )
+        return parse_json_dict(response, reference_id=ref)
+
+    async def refund_transaction(
+        self,
+        transaction_id: str | int,
+        *,
+        amount: str | None = None,
+        comments: str | None = None,
+    ) -> dict[str, Any]:
+        """Refund a Flutterwave transaction asynchronously."""
+        raw_id, encoded = _validate_flw_transaction_id(transaction_id)
+        payload: dict[str, Any] = {}
+        if amount is not None:
+            payload["amount"] = _to_flw_numeric_amount(validate_amount(amount))
+        if comments is not None:
+            if not isinstance(comments, str) or not comments.strip():
+                raise ValueError("comments must not be blank")
+            payload["comments"] = comments.strip()
+        response = await self._http.request(
+            "POST",
+            f"/v3/transactions/{encoded}/refund",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=raw_id,
+        )
+        return parse_json_dict(response, reference_id=raw_id)
+
     async def create_transfer(
         self,
         amount: str,
@@ -442,6 +725,10 @@ class AsyncFlutterwaveClient:
         reference: str | None = None,
         narration: str = "Payout",
         callback_url: str | None = None,
+        beneficiary_name: str | None = None,
+        destination_branch_code: str | None = None,
+        debit_currency: str | None = None,
+        meta: dict[str, Any] | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
@@ -462,18 +749,38 @@ class AsyncFlutterwaveClient:
         payload: dict[str, Any] = {
             "account_bank": validated_bank,
             "account_number": validated_account,
-            "amount": validated_amount,
+            "amount": _to_flw_numeric_amount(validated_amount),
             "currency": validated_currency,
             "narration": narration,
             "reference": ref,
         }
         if callback_url is not None:
             payload["callback_url"] = callback_url
+        if beneficiary_name is not None:
+            if not isinstance(beneficiary_name, str) or not beneficiary_name.strip():
+                raise ValueError("beneficiary_name must not be blank")
+            payload["beneficiary_name"] = validate_header_value(
+                beneficiary_name.strip(), field_name="beneficiary_name"
+            )
+        if destination_branch_code is not None:
+            if (
+                not isinstance(destination_branch_code, str)
+                or not destination_branch_code.strip()
+            ):
+                raise ValueError("destination_branch_code must not be blank")
+            payload["destination_branch_code"] = validate_header_value(
+                destination_branch_code.strip(), field_name="destination_branch_code"
+            )
+        if debit_currency is not None:
+            payload["debit_currency"] = validate_currency(debit_currency)
+        if meta is not None:
+            payload["meta"] = _validate_flw_meta(meta)
         response = await self._http.request(
             "POST",
             "/v3/transfers",
             headers=self._headers(),
             json=payload,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
@@ -487,6 +794,17 @@ class AsyncFlutterwaveClient:
             reference_id=transfer_id,
         )
         return parse_json_dict(response, reference_id=transfer_id)
+
+    async def get_transfer_by_reference(self, reference: str) -> dict[str, Any]:
+        """Reconcile a Flutterwave transfer by merchant reference asynchronously."""
+        encoded = _encode_flw_query_ref(reference, field_name="reference")
+        response = await self._http.request(
+            "GET",
+            f"/v3/transfers?reference={encoded}",
+            headers=self._headers(),
+            reference_id=reference,
+        )
+        return parse_json_dict(response, reference_id=reference)
 
     async def get_balance(self, currency: str | None = None) -> dict[str, Any]:
         iso = validate_currency(currency or self._config.default_currency)
