@@ -2064,3 +2064,45 @@ async def test_issue_122_production_disallows_localhost_urls() -> None:
             fc.create_transfer(
                 "1000", "UGX", "256771234567", callback_url="http://localhost/cb"
             )
+
+
+@pytest.mark.asyncio
+async def test_issue_129_paystack_transfer_and_init_never_auto_retry(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #129: Paystack POST /transfer and POST /transaction/initialize never auto-retry."""
+    from py_momo_sdk import PyMomoSDKServerError
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transfer",
+        json={"status": False, "message": "Upstream gateway timeout"},
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transaction/initialize",
+        json={"status": False, "message": "Service unavailable"},
+        status_code=503,
+    )
+
+    cfg = PaystackConfig(secret_key="sk_test_129", max_retries=2, retry_backoff=0.001)
+    with PaystackClient(cfg) as pc:
+        with pytest.raises(PyMomoSDKServerError) as exc_tr:
+            pc.initiate_transfer(
+                "100", "NGN", "RCP_12345", reference="trf_issue129_sync_01"
+            )
+        assert exc_tr.value.reference_id == "trf_issue129_sync_01"
+
+    async with AsyncPaystackClient(cfg) as apc:
+        with pytest.raises(PyMomoSDKServerError) as exc_init:
+            await apc.initialize_transaction(
+                "user@example.com",
+                "100",
+                "NGN",
+                reference="init_issue129_async_01",
+            )
+        assert exc_init.value.reference_id == "init_issue129_async_01"
+
+    # Exactly 1 attempt per endpoint (0 retries despite max_retries=2)
+    assert len(httpx_mock.get_requests()) == 2
