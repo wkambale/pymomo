@@ -112,3 +112,20 @@ def test_conditional_token_invalidation_prevents_stale_eviction() -> None:
     assert airtel_cache.get() == "airtel-fresh"
     airtel_cache.invalidate(expected_token="airtel-fresh")
     assert airtel_cache.get() is None
+
+
+def test_issue_126_token_cache_no_namespace_delimiter_collision() -> None:
+    """Verify Issue #126: distinct (namespace, product) tuples never collide on ':'."""
+    cache = TokenCache()
+    cache.set("c", "tok-left", 3600, namespace="a:b")
+    cache.set("b:c", "tok-right", 3600, namespace="a")
+    cache.set("a:b", "tok-root", 3600, namespace="")
+
+    assert cache.get("c", namespace="a:b") == "tok-left"
+    assert cache.get("b:c", namespace="a") == "tok-right"
+    assert cache.get("a:b", namespace="") == "tok-root"
+
+    cache.invalidate("c", namespace="a:b")
+    assert cache.get("c", namespace="a:b") is None
+    assert cache.get("b:c", namespace="a") == "tok-right"
+    assert cache.get("a:b", namespace="") == "tok-root"

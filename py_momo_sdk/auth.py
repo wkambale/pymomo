@@ -25,12 +25,12 @@ class TokenCache:
     """Thread-safe in-memory OAuth token cache with optional namespace isolation."""
 
     def __init__(self) -> None:
-        self._cache: dict[str, _CachedToken] = {}
+        self._cache: dict[tuple[str, str], _CachedToken] = {}
         self._lock = threading.Lock()
 
     @staticmethod
-    def _make_key(product: str, namespace: str) -> str:
-        return f"{namespace}:{product}" if namespace else product
+    def _make_key(product: str, namespace: str) -> tuple[str, str]:
+        return (namespace, product)
 
     def get(self, product: str, *, namespace: str = "") -> str | None:
         """Return a valid cached token or None if absent or expired."""
@@ -99,7 +99,9 @@ class TokenCache:
 
     def __repr__(self) -> str:
         with self._lock:
-            products = sorted(self._cache.keys())
+            products = sorted(
+                f"{ns}:{prod}" if ns else prod for ns, prod in self._cache
+            )
         return f"TokenCache(products={products!r})"
 
     def __str__(self) -> str:
