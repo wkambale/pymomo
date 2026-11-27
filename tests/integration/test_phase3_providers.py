@@ -2311,3 +2311,141 @@ async def test_issue_132_mpesa_daraja_pending_500_desc_and_apis(
     assert b2c_cb.is_successful()
     assert b2c_cb.provider_transaction_id == "TXB2C1"
     assert b2c_cb.amount == "500"
+
+
+@pytest.mark.asyncio
+async def test_issue_133_orange_order_id_limit_notif_token_and_txnid(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #133: <=30-char default order_id, length limits, notif_token verification, and txnid."""
+    import json
+
+    from py_momo_sdk import WebhookVerificationError
+
+    cfg = OrangeMoneyConfig(
+        client_id="cid-133",
+        client_secret="csec-133",
+        merchant_key="mk-133",
+        return_url="https://merchant.example.com/ret",
+        cancel_url="https://merchant.example.com/can",
+        notif_url="https://merchant.example.com/notif",
+    )
+
+    # Length bounds enforced for order_id (>30), reference (>30), and URL (>120)
+    with pytest.raises(ValueError, match="30 characters"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="sec",
+            merchant_key="mk",
+            reference="R" * 31,
+        )
+    with pytest.raises(ValueError, match="120 characters"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="sec",
+            merchant_key="mk",
+            notif_url="https://merchant.example.com/" + ("a" * 100),
+        )
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-tok-133", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        json={
+            "status": 201,
+            "pay_token": "pt-133-sync",
+            "notif_token": "nt-secret-133",
+            "payment_url": "https://webpayment.orange.com/pay/pt-133-sync",
+        },
+        status_code=201,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/transactionstatus",
+        json={"status": "SUCCESS", "txnid": "OMTX133999"},
+        status_code=200,
+    )
+
+    with OrangeMoneyClient(cfg) as omc:
+        with pytest.raises(ValueError, match="30 characters"):
+            omc.create_web_payment("500", "XOF", order_id="o" * 31)
+
+        prov = OrangeMoneyProvider(omc)
+        col = prov.collect(
+            PaymentRequest(amount="500", currency="XOF", payer_msisdn="221771234567")
+        )
+        assert col.external_id is not None
+        assert len(col.external_id) <= 30
+
+        wp_req = next(
+            r for r in httpx_mock.get_requests() if r.url.path.endswith("/webpayment")
+        )
+        sent_order_id = json.loads(wp_req.read().decode("utf-8"))["order_id"]
+        assert len(sent_order_id) <= 30
+
+        # Constant-time notif_token verification using stored token
+        omc.verify_webhook_notification(
+            {
+                "status": "SUCCESS",
+                "notif_token": "nt-secret-133",
+                "txnid": "OMTX133999",
+            },
+            pay_token="pt-133-sync",
+        )
+        with pytest.raises(WebhookVerificationError):
+            omc.verify_webhook_notification(
+                {"status": "SUCCESS", "notif_token": "wrong-token"},
+                pay_token="pt-133-sync",
+            )
+        with pytest.raises(WebhookVerificationError):
+            omc.verify_webhook_notification(
+                {"status": "SUCCESS", "notif_token": "nt-secret-133"},
+                pay_token="unknown-pay-token",
+            )
+
+        # Status maps txnid -> provider_transaction_id
+        st = prov.get_status("pt-133-sync")
+        assert st.is_successful()
+        assert st.provider_transaction_id == "OMTX133999"
+
+    # Async parity
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-atok-133", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        json={
+            "status": 201,
+            "pay_token": "pt-133-async",
+            "notif_token": "nt-async-133",
+            "payment_url": "https://webpayment.orange.com/pay/pt-133-async",
+        },
+        status_code=201,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/transactionstatus",
+        json={"status": "SUCCESS", "txnid": "OMTX133ASYNC"},
+        status_code=200,
+    )
+    async with AsyncOrangeMoneyClient(cfg) as aomc:
+        aprov = AsyncOrangeMoneyProvider(aomc)
+        acol = await aprov.collect(
+            PaymentRequest(amount="500", currency="XOF", payer_msisdn="221771234567")
+        )
+        assert acol.external_id is not None and len(acol.external_id) <= 30
+        aomc.verify_webhook_notification(
+            {"status": "SUCCESS", "notif_token": "nt-async-133"},
+            pay_token="pt-133-async",
+        )
+        ast = await aprov.get_status("pt-133-async")
+        assert ast.provider_transaction_id == "OMTX133ASYNC"

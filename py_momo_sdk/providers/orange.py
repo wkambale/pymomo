@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import uuid
 import weakref
 from dataclasses import dataclass
 from decimal import Decimal
@@ -12,7 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from py_momo_sdk._async.http import AsyncHttpClient
 from py_momo_sdk.auth import TokenCache
-from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.exceptions import PyMomoSDKError, WebhookVerificationError
+from py_momo_sdk.frameworks import verify_constant_time_token
 from py_momo_sdk.http import (
     DEFAULT_MAX_RESPONSE_BYTES,
     HttpClient,
@@ -31,7 +33,6 @@ from py_momo_sdk.providers.models import (
 from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
     build_basic_auth_header,
-    generate_reference_id,
     validate_amount,
     validate_base_url,
     validate_callback_url,
@@ -49,8 +50,48 @@ if TYPE_CHECKING:
 ORANGE_BASE_URL = "https://api.orange.com"
 ORANGE_DEFAULT_API_PATH_PREFIX = "/orange-money-webpay/dev/v1"
 _MAX_PAYMENT_CONTEXT = 4096
+_MAX_ORANGE_ORDER_ID_LEN = 30
+_MAX_ORANGE_REFERENCE_LEN = 30
+_MAX_ORANGE_URL_LEN = 120
 _VALID_ORANGE_ENVIRONMENTS = frozenset({"sandbox", "production"})
 _ORANGE_INTEGER_CURRENCIES = frozenset({"XOF", "XAF", "OUV"})
+
+
+def _generate_orange_order_id() -> str:
+    """Return a compact 30-character random order_id compliant with Orange Money WebPay."""
+    return uuid.uuid4().hex[:_MAX_ORANGE_ORDER_ID_LEN]
+
+
+def _validate_orange_order_id(order_id: str) -> str:
+    if not isinstance(order_id, str) or not order_id.strip():
+        raise ValueError("order_id must be a non-empty string")
+    cleaned = validate_header_value(order_id.strip(), field_name="order_id")
+    if len(cleaned) > _MAX_ORANGE_ORDER_ID_LEN:
+        raise ValueError(
+            f"order_id must not exceed {_MAX_ORANGE_ORDER_ID_LEN} characters"
+        )
+    return cleaned
+
+
+def _validate_orange_reference(reference: str) -> str:
+    if not isinstance(reference, str) or not reference.strip():
+        raise ValueError("reference must not be blank")
+    cleaned = validate_header_value(reference.strip(), field_name="reference")
+    if len(cleaned) > _MAX_ORANGE_REFERENCE_LEN:
+        raise ValueError(
+            f"reference must not exceed {_MAX_ORANGE_REFERENCE_LEN} characters"
+        )
+    return cleaned
+
+
+def _validate_orange_url(url: str, *, allow_localhost: bool) -> str:
+    validate_callback_url(url, allow_localhost=allow_localhost)
+    if len(url) > _MAX_ORANGE_URL_LEN:
+        raise ValueError(
+            f"Orange Money callback URL must not exceed {_MAX_ORANGE_URL_LEN} characters"
+        )
+    return url
+
 
 _ORANGE_CAPABILITIES = ProviderCapabilities(
     provider_id="orange_money",
@@ -80,6 +121,7 @@ class _InMemoryOrangeContextStore:
         self._lock = threading.Lock()
         self._max_entries = max_entries
         self._entries: dict[str, tuple[str, str, str]] = {}
+        self._notif_tokens: dict[str, str] = {}
 
     def set(self, pay_token: str, order_id: str, amount: str, currency: str) -> None:
         with self._lock:
@@ -89,11 +131,26 @@ class _InMemoryOrangeContextStore:
             ):
                 oldest = next(iter(self._entries))
                 del self._entries[oldest]
+                self._notif_tokens.pop(oldest, None)
             self._entries[pay_token] = (order_id, amount, currency)
 
     def get(self, pay_token: str) -> tuple[str, str, str] | None:
         with self._lock:
             return self._entries.get(pay_token)
+
+    def set_notif_token(self, pay_token: str, notif_token: str) -> None:
+        with self._lock:
+            if (
+                pay_token not in self._notif_tokens
+                and len(self._notif_tokens) >= self._max_entries
+            ):
+                oldest = next(iter(self._notif_tokens))
+                del self._notif_tokens[oldest]
+            self._notif_tokens[pay_token] = notif_token
+
+    def get_notif_token(self, pay_token: str) -> str | None:
+        with self._lock:
+            return self._notif_tokens.get(pay_token)
 
 
 def _validate_orange_lang(lang: str) -> str:
@@ -158,18 +215,14 @@ class OrangeMoneyConfig:
             raise ValueError("environment must be 'sandbox' or 'production'")
         self.lang = _validate_orange_lang(self.lang)
         if self.reference is not None:
-            if not isinstance(self.reference, str) or not self.reference.strip():
-                raise ValueError("reference must not be blank")
-            self.reference = validate_header_value(
-                self.reference.strip(), field_name="reference"
-            )
+            self.reference = _validate_orange_reference(self.reference)
         allow_localhost = self.environment == "sandbox"
         if self.return_url is not None:
-            validate_callback_url(self.return_url, allow_localhost=allow_localhost)
+            _validate_orange_url(self.return_url, allow_localhost=allow_localhost)
         if self.cancel_url is not None:
-            validate_callback_url(self.cancel_url, allow_localhost=allow_localhost)
+            _validate_orange_url(self.cancel_url, allow_localhost=allow_localhost)
         if self.notif_url is not None:
-            validate_callback_url(self.notif_url, allow_localhost=allow_localhost)
+            _validate_orange_url(self.notif_url, allow_localhost=allow_localhost)
         if self.api_path_prefix is None:
             if self.environment == "production":
                 raise ValueError(
@@ -277,6 +330,8 @@ class OrangeMoneyClient:
             if context_store is not None
             else _InMemoryOrangeContextStore()
         )
+        self._notif_lock = threading.Lock()
+        self._fallback_notif_tokens: dict[str, str] = {}
         self._http = HttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -290,12 +345,69 @@ class OrangeMoneyClient:
         )
 
     def _record_payment_context(
-        self, pay_token: str, order_id: str, amount: str, currency: str
+        self,
+        pay_token: str,
+        order_id: str,
+        amount: str,
+        currency: str,
+        *,
+        notif_token: str | None = None,
     ) -> None:
         self._context_store.set(pay_token, order_id, amount, currency)
+        if notif_token:
+            setter = getattr(self._context_store, "set_notif_token", None)
+            if callable(setter):
+                setter(pay_token, notif_token)
+            else:
+                with self._notif_lock:
+                    if (
+                        pay_token not in self._fallback_notif_tokens
+                        and len(self._fallback_notif_tokens) >= _MAX_PAYMENT_CONTEXT
+                    ):
+                        oldest = next(iter(self._fallback_notif_tokens))
+                        del self._fallback_notif_tokens[oldest]
+                    self._fallback_notif_tokens[pay_token] = notif_token
 
     def _lookup_payment_context(self, pay_token: str) -> tuple[str, str, str] | None:
         return self._context_store.get(pay_token)
+
+    def _lookup_notif_token(self, pay_token: str) -> str | None:
+        getter = getattr(self._context_store, "get_notif_token", None)
+        if callable(getter):
+            val = getter(pay_token)
+            return val if isinstance(val, str) else None
+        with self._notif_lock:
+            return self._fallback_notif_tokens.get(pay_token)
+
+    def verify_webhook_notification(
+        self,
+        notification: dict[str, Any],
+        *,
+        pay_token: str | None = None,
+        expected_notif_token: str | None = None,
+    ) -> None:
+        """Verify an Orange Money ``notif_url`` callback using its per-transaction ``notif_token``."""
+        if not isinstance(notification, dict):
+            raise WebhookVerificationError("Orange Money notification must be a dict")
+        provided = notification.get("notif_token")
+        if not isinstance(provided, str) or not provided.strip():
+            raise WebhookVerificationError(
+                "Orange Money notification is missing notif_token"
+            )
+        expected = expected_notif_token
+        if expected is None:
+            lookup_key = pay_token or (
+                notification.get("pay_token")
+                if isinstance(notification.get("pay_token"), str)
+                else None
+            )
+            if lookup_key and lookup_key.strip():
+                expected = self._lookup_notif_token(lookup_key.strip())
+        if not isinstance(expected, str) or not expected.strip():
+            raise WebhookVerificationError(
+                "Expected notif_token is unknown for this Orange Money notification"
+            )
+        verify_constant_time_token(provided.strip(), expected.strip())
 
     def _get_token(self) -> str:
         cached = self._cache.get("orange_money")
@@ -355,17 +467,10 @@ class OrangeMoneyClient:
             reference if reference is not None else self._config.reference
         )
         if resolved_ref_label is not None:
-            if (
-                not isinstance(resolved_ref_label, str)
-                or not resolved_ref_label.strip()
-            ):
-                raise ValueError("reference must not be blank")
-            resolved_ref_label = validate_header_value(
-                resolved_ref_label.strip(), field_name="reference"
-            )
+            resolved_ref_label = _validate_orange_reference(resolved_ref_label)
         for u in (return_url, cancel_url, notif_url):
             if u is not None:
-                validate_callback_url(u, allow_localhost=self._config.allow_localhost)
+                _validate_orange_url(u, allow_localhost=self._config.allow_localhost)
         resolved_notif = notif_url or self._config.notif_url
         resolved_return = return_url or self._config.return_url
         resolved_cancel = cancel_url or self._config.cancel_url
@@ -373,8 +478,11 @@ class OrangeMoneyClient:
             raise ValueError(
                 "return_url, cancel_url, and notif_url are required for Orange Money"
             )
-        ref = order_id or generate_reference_id()
-        validate_header_value(ref, field_name="order_id")
+        ref = (
+            _validate_orange_order_id(order_id)
+            if order_id is not None
+            else _generate_orange_order_id()
+        )
         payload: dict[str, Any] = {
             "merchant_key": self._config.merchant_key,
             "currency": validated_currency,
@@ -399,9 +507,19 @@ class OrangeMoneyClient:
         )
         res = parse_json_dict(response, reference_id=ref)
         pay_token = res.get("pay_token")
+        notif_token = res.get("notif_token")
+        cleaned_notif = (
+            notif_token.strip()
+            if isinstance(notif_token, str) and notif_token.strip()
+            else None
+        )
         if isinstance(pay_token, str) and pay_token.strip():
             self._record_payment_context(
-                pay_token.strip(), ref, str(formatted_amount), validated_currency
+                pay_token.strip(),
+                ref,
+                str(formatted_amount),
+                validated_currency,
+                notif_token=cleaned_notif,
             )
         return res
 
@@ -471,6 +589,8 @@ class AsyncOrangeMoneyClient:
             if context_store is not None
             else _InMemoryOrangeContextStore()
         )
+        self._notif_lock = threading.Lock()
+        self._fallback_notif_tokens: dict[str, str] = {}
         self._http = AsyncHttpClient(
             base_url=config.base_url,
             timeout=config.timeout,
@@ -493,12 +613,69 @@ class AsyncOrangeMoneyClient:
             return lock
 
     def _record_payment_context(
-        self, pay_token: str, order_id: str, amount: str, currency: str
+        self,
+        pay_token: str,
+        order_id: str,
+        amount: str,
+        currency: str,
+        *,
+        notif_token: str | None = None,
     ) -> None:
         self._context_store.set(pay_token, order_id, amount, currency)
+        if notif_token:
+            setter = getattr(self._context_store, "set_notif_token", None)
+            if callable(setter):
+                setter(pay_token, notif_token)
+            else:
+                with self._notif_lock:
+                    if (
+                        pay_token not in self._fallback_notif_tokens
+                        and len(self._fallback_notif_tokens) >= _MAX_PAYMENT_CONTEXT
+                    ):
+                        oldest = next(iter(self._fallback_notif_tokens))
+                        del self._fallback_notif_tokens[oldest]
+                    self._fallback_notif_tokens[pay_token] = notif_token
 
     def _lookup_payment_context(self, pay_token: str) -> tuple[str, str, str] | None:
         return self._context_store.get(pay_token)
+
+    def _lookup_notif_token(self, pay_token: str) -> str | None:
+        getter = getattr(self._context_store, "get_notif_token", None)
+        if callable(getter):
+            val = getter(pay_token)
+            return val if isinstance(val, str) else None
+        with self._notif_lock:
+            return self._fallback_notif_tokens.get(pay_token)
+
+    def verify_webhook_notification(
+        self,
+        notification: dict[str, Any],
+        *,
+        pay_token: str | None = None,
+        expected_notif_token: str | None = None,
+    ) -> None:
+        """Verify an Orange Money ``notif_url`` callback using its per-transaction ``notif_token``."""
+        if not isinstance(notification, dict):
+            raise WebhookVerificationError("Orange Money notification must be a dict")
+        provided = notification.get("notif_token")
+        if not isinstance(provided, str) or not provided.strip():
+            raise WebhookVerificationError(
+                "Orange Money notification is missing notif_token"
+            )
+        expected = expected_notif_token
+        if expected is None:
+            lookup_key = pay_token or (
+                notification.get("pay_token")
+                if isinstance(notification.get("pay_token"), str)
+                else None
+            )
+            if lookup_key and lookup_key.strip():
+                expected = self._lookup_notif_token(lookup_key.strip())
+        if not isinstance(expected, str) or not expected.strip():
+            raise WebhookVerificationError(
+                "Expected notif_token is unknown for this Orange Money notification"
+            )
+        verify_constant_time_token(provided.strip(), expected.strip())
 
     async def _get_token(self) -> str:
         cached = self._cache.get("orange_money")
@@ -557,17 +734,10 @@ class AsyncOrangeMoneyClient:
             reference if reference is not None else self._config.reference
         )
         if resolved_ref_label is not None:
-            if (
-                not isinstance(resolved_ref_label, str)
-                or not resolved_ref_label.strip()
-            ):
-                raise ValueError("reference must not be blank")
-            resolved_ref_label = validate_header_value(
-                resolved_ref_label.strip(), field_name="reference"
-            )
+            resolved_ref_label = _validate_orange_reference(resolved_ref_label)
         for u in (return_url, cancel_url, notif_url):
             if u is not None:
-                validate_callback_url(u, allow_localhost=self._config.allow_localhost)
+                _validate_orange_url(u, allow_localhost=self._config.allow_localhost)
         resolved_notif = notif_url or self._config.notif_url
         resolved_return = return_url or self._config.return_url
         resolved_cancel = cancel_url or self._config.cancel_url
@@ -575,8 +745,11 @@ class AsyncOrangeMoneyClient:
             raise ValueError(
                 "return_url, cancel_url, and notif_url are required for Orange Money"
             )
-        ref = order_id or generate_reference_id()
-        validate_header_value(ref, field_name="order_id")
+        ref = (
+            _validate_orange_order_id(order_id)
+            if order_id is not None
+            else _generate_orange_order_id()
+        )
         payload: dict[str, Any] = {
             "merchant_key": self._config.merchant_key,
             "currency": validated_currency,
@@ -601,9 +774,19 @@ class AsyncOrangeMoneyClient:
         )
         res = parse_json_dict(response, reference_id=ref)
         pay_token = res.get("pay_token")
+        notif_token = res.get("notif_token")
+        cleaned_notif = (
+            notif_token.strip()
+            if isinstance(notif_token, str) and notif_token.strip()
+            else None
+        )
         if isinstance(pay_token, str) and pay_token.strip():
             self._record_payment_context(
-                pay_token.strip(), ref, str(formatted_amount), validated_currency
+                pay_token.strip(),
+                ref,
+                str(formatted_amount),
+                validated_currency,
+                notif_token=cleaned_notif,
             )
         return res
 
@@ -674,7 +857,7 @@ class OrangeMoneyProvider:
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
         order_id = (
-            request.reference_id or request.external_id or generate_reference_id()
+            request.reference_id or request.external_id or _generate_orange_order_id()
         )
         res = self._client.create_web_payment(
             amount=request.amount,
@@ -730,12 +913,19 @@ class OrangeMoneyProvider:
             reference_id,
             currency=resolved_currency,
         )
+        raw_txnid = res.get("txnid")
+        txnid = (
+            str(raw_txnid).strip()
+            if raw_txnid is not None and str(raw_txnid).strip()
+            else None
+        )
         return PaymentResult(
             provider=self.name,
             reference_id=reference_id,
             status=_map_orange_status(str(res.get("status", "PENDING"))),
             amount=resolved_amount,
             currency=resolved_currency,
+            provider_transaction_id=txnid,
             external_id=resolved_order_id,
             raw=res,
         )
@@ -773,7 +963,7 @@ class AsyncOrangeMoneyProvider:
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
         order_id = (
-            request.reference_id or request.external_id or generate_reference_id()
+            request.reference_id or request.external_id or _generate_orange_order_id()
         )
         res = await self._client.create_web_payment(
             amount=request.amount,
@@ -829,12 +1019,19 @@ class AsyncOrangeMoneyProvider:
             reference_id,
             currency=resolved_currency,
         )
+        raw_txnid = res.get("txnid")
+        txnid = (
+            str(raw_txnid).strip()
+            if raw_txnid is not None and str(raw_txnid).strip()
+            else None
+        )
         return PaymentResult(
             provider=self.name,
             reference_id=reference_id,
             status=_map_orange_status(str(res.get("status", "PENDING"))),
             amount=resolved_amount,
             currency=resolved_currency,
+            provider_transaction_id=txnid,
             external_id=resolved_order_id,
             raw=res,
         )
