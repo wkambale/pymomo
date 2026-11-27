@@ -328,8 +328,8 @@ class WaveClient:
         restrict_payer_mobile: str | None = None,
     ) -> WaveCheckoutSession:
         """Create a Wave checkout session."""
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         if success_url is not None:
             validate_callback_url(
                 success_url, allow_localhost=self._config.allow_localhost
@@ -430,8 +430,8 @@ class WaveClient:
         aggregated_merchant_id: str | None = None,
     ) -> WavePayoutResponse:
         """Send a Wave payout to a subscriber mobile number."""
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         ref = client_reference or generate_reference_id()
         payload: dict[str, Any] = {
             "receive_amount": validated_amount,
@@ -598,8 +598,8 @@ class AsyncWaveClient:
         error_url: str | None = None,
         restrict_payer_mobile: str | None = None,
     ) -> WaveCheckoutSession:
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         if success_url is not None:
             validate_callback_url(
                 success_url, allow_localhost=self._config.allow_localhost
@@ -698,8 +698,8 @@ class AsyncWaveClient:
         national_id: str | None = None,
         aggregated_merchant_id: str | None = None,
     ) -> WavePayoutResponse:
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         ref = client_reference or generate_reference_id()
         payload: dict[str, Any] = {
             "receive_amount": validated_amount,

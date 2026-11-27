@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from py_momo_sdk.utils import (
     validate_amount,
@@ -119,6 +119,11 @@ class PaymentRequest(BaseModel):
             return None
         return validate_callback_url(value)
 
+    @model_validator(mode="after")
+    def _check_amount_currency_precision(self) -> PaymentRequest:
+        validate_amount(self.amount, currency=self.currency)
+        return self
+
 
 class DisbursementRequest(BaseModel):
     """Normalized disbursement payout request."""
@@ -167,6 +172,11 @@ class DisbursementRequest(BaseModel):
         if value is None:
             return None
         return validate_callback_url(value)
+
+    @model_validator(mode="after")
+    def _check_amount_currency_precision(self) -> DisbursementRequest:
+        validate_amount(self.amount, currency=self.currency)
+        return self
 
 
 class PaymentResult(BaseModel):
