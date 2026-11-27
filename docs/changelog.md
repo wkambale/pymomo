@@ -2,6 +2,40 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## 1.3.2 - 2026-11-27
+
+### Security
+- Rejected unknown keys, malformed hex digests, whitespace, and excess parts in timestamped webhook signatures (`WebhookHandler.verify_timestamped_hmac_signature`), and passed a canonical `t=<ts>,v1=<hex>` key to `replay_check` to prevent replay-deduplication bypasses (#120).
+- Blocked `.localhost` subdomains, IPv4-mapped IPv6 loopback, NAT64/6to4/Teredo/SIIT/deprecated IPv4-compatible/discard IPv6 prefixes, RFC 5737 TEST-NET-2/3, and RFC 3068 6to4 relay ranges in SSRF URL validation (#121).
+- Propagated `allow_localhost` in `HttpClient` / `AsyncHttpClient`, enforced `allow_localhost=(environment == "sandbox")` in `OrangeMoneyConfig`, and added `environment` and live-key guards (`sk_live_`, `FLWSECK-`, `_prod_`) in `PaystackConfig`, `FlutterwaveConfig`, and `WaveConfig` (#122).
+- Validated `client_id`, `client_secret`, `base_url`, and `max_response_bytes` directly in `AirtelAuth` and `AsyncAirtelAuth`, and propagated `allow_localhost` from `AirtelClient` / `AsyncAirtelClient` (#123).
+- Normalized `_` and `-` before matching sensitive keys in `py_momo_sdk/exceptions.py`, redacting camelCase and kebab-case credentials alongside `pay_token`, `notif_token`, `signing_secret`, `verif_hash`, and `private_key` (#124).
+- Protected CLI `sandbox provision --output-file` writes against symlink attacks and world-readable races using `os.lstat`, `os.O_NOFOLLOW`, `os.fstat`, and `os.fchmod(fd, 0o600)` (#125).
+- Replaced string concatenation with structured `(namespace, product)` tuple keys in `TokenCache` to prevent cache-key collisions (#126).
+- Normalized trailing-dot FQDNs and blocked both `proxy.momoapi.mtn.com` and `momoapi.momo.africa` in `SandboxProvisioner` and `AsyncSandboxProvisioner` (#127).
+- Enforced cumulative read deadlines with HTTP `408` responses against slow-drip body DoS in `mock_server.py` (#128).
+- Added optional outbound `Wave-Signature` request signing (`WaveConfig.signing_secret`) over exact raw bytes for Wave `POST /v1/payout` and `POST /v1/payout/{id}/reverse`, and aligned Wave's default `max_future_skew_seconds` in `verify_webhook` to `30` seconds (#136).
+- Enforced zero-decimal currency precision validation (`validate_amount(..., currency=...)`) in `PaymentRequest`, `DisbursementRequest`, `WaveClient` / `AsyncWaveClient`, and `FlutterwaveClient` / `AsyncFlutterwaveClient` (#137).
+
+### Added
+- **MTN MoMo:** Exported `ONE_API_PRODUCTION_BASE_URL` (`https://momoapi.momo.africa`), added `get_user_info_with_consent()` (`/collection/oauth2/v1_0/userinfo`), `send_delivery_notification()`, and PreApproval endpoints (`create_preapproval`, `get_preapproval_status`, `cancel_preapproval`, `PreApprovalRequest`, `PreApprovalResult`) with sync/async parity (#130).
+- **Airtel Money:** Added `collection.refund()`, `client.get_user_info()`, `client.verify_webhook()` (Base64 HMAC-SHA256 via `encoding="base64"` on `WebhookHandler.verify_hmac_signature`), and `sign_airtel_payload()`, and enabled `supports_webhook_hmac=True` (#131).
+- **Safaricom M-Pesa (Daraja):** Added `encrypt_mpesa_security_credential()`, `query_transaction_status()`, `query_account_balance()`, `reverse_transaction()`, `parse_mpesa_stk_callback()`, and `parse_mpesa_b2c_callback()` with sync/async parity (#132).
+- **Orange Money:** Persisted `notif_token` per `pay_token` and added constant-time `verify_webhook_notification()` (#133).
+- **Paystack:** Added `channels` support on `initialize_transaction`, `create_transfer_recipient` (`POST /transferrecipient`), `list_banks` (`GET /bank`), `charge_mobile_money` (`POST /charge`), and `create_refund` (`POST /refund`) with sync/async parity (#134).
+- **Flutterwave:** Added `beneficiary_name`, `destination_branch_code`, `debit_currency`, and `meta` on `create_transfer`, plus `charge_mobile_money` (`POST /v3/charges?type=mobile_money_*` / `mpesa`), `verify_transaction_by_id`, `refund_transaction`, and `get_transfer_by_reference` with sync/async parity (#135).
+- **Wave:** Added `restrict_payer_mobile` on `create_checkout_session`, `refund_checkout_session`, `expire_checkout_session`, `reverse_payout`, `search_checkout_sessions`, and `search_payouts` with sync/async parity (#136).
+
+### Fixed
+- Disabled automatic transient retries (`idempotent=False`) on Paystack `POST /transfer` and `POST /transaction/initialize` (#129).
+- Corrected MTN CIBA OAuth2 token endpoint path to `/collection/oauth2/token/` (#130).
+- Switched Airtel balance queries to `GET /standard/v1/users/balance` with flat and nested payload parsing and included `country`/`currency` in Airtel disbursement `transaction` payloads (#131).
+- Mapped Daraja HTTP `500` `errorCode == "500.001.1001"` to pending in `stk_query` and enforced the 13-character `TransactionDesc` limit (#132).
+- Switched Orange Money default `order_id` to a compact 30-character token, enforced Orange length limits (`order_id <= 30`, `reference <= 30`, callback URLs `<= 120`), and mapped `txnid` to `PaymentResult.provider_transaction_id` (#133).
+- Enforced Paystack's `^[a-z0-9_-]{16,50}$` transfer reference format prior to `POST /transfer` (#134).
+- Serialized Flutterwave v3 transfer, charge, and refund amounts as JSON numbers (`int` / `float`) instead of strings (#135).
+- Aligned `MTN_CAPABILITIES` (`RWF`, `NGN`), `ORANGE_CAPABILITIES` (`CDF`, `GNF`, `LRD`, `MGA`, `SLE`, `BWP`, `USD`), and `WAVE_CAPABILITIES` (`GMD`) currencies with carrier detection (#138).
+
 ## 1.3.1 - 2026-11-24
 
 ### Fixed
