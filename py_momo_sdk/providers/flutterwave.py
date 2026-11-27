@@ -271,8 +271,8 @@ class FlutterwaveClient:
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
         """Create a Flutterwave standard payment link."""
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_email = email or self._config.default_customer_email
         if not resolved_email:
             raise ValueError(
@@ -345,8 +345,8 @@ class FlutterwaveClient:
     ) -> dict[str, Any]:
         """Initiate a direct Flutterwave Mobile Money push charge (``POST /v3/charges?type=...``)."""
         validated_type = _validate_flw_charge_type(charge_type)
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_email = email or self._config.default_customer_email
         if not resolved_email:
             raise ValueError(
@@ -431,8 +431,8 @@ class FlutterwaveClient:
         meta: dict[str, Any] | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Initiate a Flutterwave transfer."""
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_bank = account_bank or self._config.default_account_bank
         if not resolved_bank or not resolved_bank.strip():
             raise ValueError(
@@ -570,8 +570,8 @@ class AsyncFlutterwaveClient:
         tx_ref: str | None = None,
         redirect_url: str | None = None,
     ) -> dict[str, Any]:
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_email = email or self._config.default_customer_email
         if not resolved_email:
             raise ValueError(
@@ -645,8 +645,8 @@ class AsyncFlutterwaveClient:
     ) -> dict[str, Any]:
         """Initiate a direct Flutterwave Mobile Money push charge asynchronously."""
         validated_type = _validate_flw_charge_type(charge_type)
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_email = email or self._config.default_customer_email
         if not resolved_email:
             raise ValueError(
@@ -730,8 +730,8 @@ class AsyncFlutterwaveClient:
         debit_currency: str | None = None,
         meta: dict[str, Any] | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
+        validated_amount = validate_amount(amount, currency=validated_currency)
         resolved_bank = account_bank or self._config.default_account_bank
         if not resolved_bank or not resolved_bank.strip():
             raise ValueError(

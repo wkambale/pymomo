@@ -3316,3 +3316,80 @@ async def test_issue_136_wave_outbound_signing_skew_and_endpoints(
             "wave-sign-secret-136",
             timestamp_separator="",
         )
+
+
+@pytest.mark.asyncio
+async def test_issue_137_zero_decimal_currency_validation() -> None:
+    """Verify Issue #137: reject fractional amounts for zero-decimal currencies across models, Wave, and Flutterwave."""
+    from pydantic import ValidationError
+
+    from py_momo_sdk import AsyncWaveClient, WaveClient, WaveConfig
+
+    for ccy in ("UGX", "XOF", "XAF", "RWF", "GNF"):
+        with pytest.raises(ValidationError, match="zero-decimal"):
+            PaymentRequest(
+                amount="100.50",
+                currency=ccy,
+                payer_msisdn="256771234567",
+            )
+        with pytest.raises(ValidationError, match="zero-decimal"):
+            DisbursementRequest(
+                amount="100.50",
+                currency=ccy,
+                payee_msisdn="256771234567",
+            )
+        # Whole numbers remain accepted
+        req = PaymentRequest(amount="100", currency=ccy, payer_msisdn="256771234567")
+        assert req.amount == "100"
+        dreq = DisbursementRequest(
+            amount="100.00", currency=ccy, payee_msisdn="256771234567"
+        )
+        assert dreq.amount == "100.00"
+
+    # Decimal currencies still allow fractional minor units
+    kes_req = PaymentRequest(
+        amount="100.50", currency="KES", payer_msisdn="254712345678"
+    )
+    assert kes_req.amount == "100.50"
+
+    wave_cfg = WaveConfig(
+        api_key="wave_sn_test_137",
+        success_url="https://merchant.example.com/ok",
+        error_url="https://merchant.example.com/err",
+    )
+    with WaveClient(wave_cfg) as wc:
+        with pytest.raises(ValueError, match="zero-decimal"):
+            wc.create_checkout_session("100.50", "XOF")
+        with pytest.raises(ValueError, match="zero-decimal"):
+            wc.create_payout("100.50", "UGX", "256771234567")
+
+    async with AsyncWaveClient(wave_cfg) as awc:
+        with pytest.raises(ValueError, match="zero-decimal"):
+            await awc.create_checkout_session("100.50", "XOF")
+        with pytest.raises(ValueError, match="zero-decimal"):
+            await awc.create_payout("100.50", "UGX", "256771234567")
+
+    flw_cfg = FlutterwaveConfig(
+        secret_key="FLWSECK_TEST_137",
+        default_customer_email="payer@example.com",
+        default_account_bank="MPS",
+    )
+    with FlutterwaveClient(flw_cfg) as fc:
+        with pytest.raises(ValueError, match="zero-decimal"):
+            fc.create_payment("100.50", "UGX", "256771234567")
+        with pytest.raises(ValueError, match="zero-decimal"):
+            fc.charge_mobile_money(
+                "mobile_money_uganda", "100.50", "UGX", "256771234567"
+            )
+        with pytest.raises(ValueError, match="zero-decimal"):
+            fc.create_transfer("100.50", "RWF", "250781234567")
+
+    async with AsyncFlutterwaveClient(flw_cfg) as afc:
+        with pytest.raises(ValueError, match="zero-decimal"):
+            await afc.create_payment("100.50", "UGX", "256771234567")
+        with pytest.raises(ValueError, match="zero-decimal"):
+            await afc.charge_mobile_money(
+                "mobile_money_uganda", "100.50", "UGX", "256771234567"
+            )
+        with pytest.raises(ValueError, match="zero-decimal"):
+            await afc.create_transfer("100.50", "GNF", "224661234567")
