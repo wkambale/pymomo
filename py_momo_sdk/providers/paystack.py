@@ -309,7 +309,7 @@ class PaystackClient:
             "/transaction/initialize",
             headers=self._headers(),
             json=payload,
-            idempotent=True,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
@@ -353,7 +353,7 @@ class PaystackClient:
                 "reference": ref,
                 "reason": reason,
             },
-            idempotent=True,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
@@ -459,7 +459,7 @@ class AsyncPaystackClient:
             "/transaction/initialize",
             headers=self._headers(),
             json=payload,
-            idempotent=True,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
@@ -501,7 +501,7 @@ class AsyncPaystackClient:
                 "reference": ref,
                 "reason": reason,
             },
-            idempotent=True,
+            idempotent=False,
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
