@@ -55,8 +55,9 @@ class AsyncHttpClient:
         limits: httpx.Limits | None = None,
         telemetry: TelemetryHook | None = None,
         provider_name: str | None = None,
+        allow_localhost: bool = True,
     ) -> None:
-        validated_url = validate_base_url(base_url)
+        validated_url = validate_base_url(base_url, allow_localhost=allow_localhost)
         validated_timeout: float | httpx.Timeout = (
             timeout if isinstance(timeout, httpx.Timeout) else validate_timeout(timeout)
         )
@@ -76,7 +77,7 @@ class AsyncHttpClient:
         if client is not None:
             injected_base = str(client.base_url)
             if injected_base:
-                validate_base_url(injected_base)
+                validate_base_url(injected_base, allow_localhost=allow_localhost)
                 validate_matching_origin(validated_url, injected_base)
             self._client = client
         else:

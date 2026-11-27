@@ -39,6 +39,12 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com"
+_VALID_FLUTTERWAVE_ENVIRONMENTS = frozenset({"sandbox", "production"})
+
+
+def _is_flutterwave_live_key(secret_key: str) -> bool:
+    return secret_key.startswith("FLWSECK-")
+
 
 _FLUTTERWAVE_CAPABILITIES = ProviderCapabilities(
     provider_id="flutterwave",
@@ -65,17 +71,36 @@ class FlutterwaveConfig:
     max_retries: int = 0
     retry_backoff: float = 0.5
     telemetry: TelemetryHook | None = None
+    environment: str | None = None
+
+    @property
+    def allow_localhost(self) -> bool:
+        if self.environment == "production":
+            return False
+        if self.environment == "sandbox":
+            return True
+        return not _is_flutterwave_live_key(self.secret_key)
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
             raise ValueError("secret_key must be a non-empty string")
         validate_header_value(self.secret_key, field_name="secret_key")
+        if (
+            self.environment is not None
+            and self.environment not in _VALID_FLUTTERWAVE_ENVIRONMENTS
+        ):
+            raise ValueError("environment must be 'sandbox' or 'production'")
+        if self.environment == "sandbox" and _is_flutterwave_live_key(self.secret_key):
+            raise ValueError(
+                "Live Flutterwave secret_key must not be used in sandbox environment"
+            )
         if self.webhook_hash is not None:
             if not isinstance(self.webhook_hash, str) or not self.webhook_hash.strip():
                 raise ValueError("webhook_hash must not be blank")
             validate_header_value(self.webhook_hash, field_name="webhook_hash")
+        allow_localhost = self.allow_localhost
         if self.redirect_url is not None:
-            validate_callback_url(self.redirect_url)
+            validate_callback_url(self.redirect_url, allow_localhost=allow_localhost)
         if self.default_customer_email is not None:
             self.default_customer_email = validate_email_address(
                 self.default_customer_email
@@ -87,7 +112,7 @@ class FlutterwaveConfig:
                 self.default_account_bank.strip(), field_name="default_account_bank"
             )
         self.default_currency = validate_currency(self.default_currency)
-        validate_base_url(self.base_url)
+        validate_base_url(self.base_url, allow_localhost=allow_localhost)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
         self.retry_backoff = validate_retry_backoff(self.retry_backoff)
@@ -176,6 +201,7 @@ class FlutterwaveClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Flutterwave",
+            allow_localhost=config.allow_localhost,
         )
 
     def _headers(self) -> dict[str, str]:
@@ -204,7 +230,9 @@ class FlutterwaveClient:
             )
         validated_email = validate_email_address(resolved_email)
         if redirect_url is not None:
-            validate_callback_url(redirect_url)
+            validate_callback_url(
+                redirect_url, allow_localhost=self._config.allow_localhost
+            )
         resolved_redirect = redirect_url or self._config.redirect_url
         ref = tx_ref or generate_reference_id()
         clean_msisdn = normalise_msisdn(phone_number)
@@ -263,7 +291,9 @@ class FlutterwaveClient:
         )
         validated_account = _validate_flw_account_number(account_number)
         if callback_url is not None:
-            validate_callback_url(callback_url)
+            validate_callback_url(
+                callback_url, allow_localhost=self._config.allow_localhost
+            )
         ref = reference or generate_reference_id()
         payload: dict[str, Any] = {
             "account_bank": validated_bank,
@@ -338,6 +368,7 @@ class AsyncFlutterwaveClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Flutterwave",
+            allow_localhost=config.allow_localhost,
         )
 
     def _headers(self) -> dict[str, str]:
@@ -365,7 +396,9 @@ class AsyncFlutterwaveClient:
             )
         validated_email = validate_email_address(resolved_email)
         if redirect_url is not None:
-            validate_callback_url(redirect_url)
+            validate_callback_url(
+                redirect_url, allow_localhost=self._config.allow_localhost
+            )
         resolved_redirect = redirect_url or self._config.redirect_url
         ref = tx_ref or generate_reference_id()
         clean_msisdn = normalise_msisdn(phone_number)
@@ -422,7 +455,9 @@ class AsyncFlutterwaveClient:
         )
         validated_account = _validate_flw_account_number(account_number)
         if callback_url is not None:
-            validate_callback_url(callback_url)
+            validate_callback_url(
+                callback_url, allow_localhost=self._config.allow_localhost
+            )
         ref = reference or generate_reference_id()
         payload: dict[str, Any] = {
             "account_bank": validated_bank,
