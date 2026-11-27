@@ -11,7 +11,7 @@ hide:
   </svg>
   <div class="pm-hero__eyebrow">
     <span class="pm-hero__eyebrow-line" aria-hidden="true"></span>
-    <span>Python SDK version 1.3.1</span>
+    <span>Python SDK version 1.3.2</span>
   </div>
   <h1 class="pm-hero__title">Py MoMo SDK for African Mobile Money and Payment Rails</h1>
   <p class="pm-hero__lead">A strictly typed Python SDK for MTN Mobile Money, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, and Orange Money behind a unified <code>PaymentRouter</code>. Built with synchronous and asynchronous parity, automatic token caching, strict input validation, and verified webhook security.</p>
