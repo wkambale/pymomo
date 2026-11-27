@@ -2449,3 +2449,314 @@ async def test_issue_133_orange_order_id_limit_notif_token_and_txnid(
         )
         ast = await aprov.get_status("pt-133-async")
         assert ast.provider_transaction_id == "OMTX133ASYNC"
+
+
+@pytest.mark.asyncio
+async def test_issue_134_paystack_transfer_ref_and_endpoints(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #134: Paystack transfer ref rules, channels, recipients, banks, momo charge, and refunds."""
+    import json
+
+    cfg = PaystackConfig(
+        secret_key="sk_test_issue134",
+        default_customer_email="buyer@example.com",
+    )
+
+    with PaystackClient(cfg) as client:
+        # Transfer reference must be 16-50 lowercase [a-z0-9_-]
+        for bad_ref in (
+            "short-ref",
+            "UPPERCASE_REF_123456",
+            "invalid.dot.ref_1234",
+            "a" * 51,
+        ):
+            with pytest.raises(ValueError, match="16-50 lowercase"):
+                client.initiate_transfer("10.00", "GHS", "RCP_123", reference=bad_ref)
+        with pytest.raises(ValueError, match="non-empty string"):
+            client.initiate_transfer("10.00", "GHS", "RCP_123", reference="   ")
+
+        # Channels validation
+        with pytest.raises(ValueError, match="channels"):
+            client.initialize_transaction(
+                "buyer@example.com", "10.00", "GHS", channels=[]
+            )
+        with pytest.raises(ValueError, match="channels"):
+            client.initialize_transaction(
+                "buyer@example.com",
+                "10.00",
+                "GHS",
+                channels="mobile_money",  # type: ignore[arg-type]
+            )
+        with pytest.raises(ValueError, match="non-empty"):
+            client.initialize_transaction(
+                "buyer@example.com", "10.00", "GHS", channels=[" "]
+            )
+
+        # Validation on new endpoints
+        with pytest.raises(ValueError, match="recipient_type"):
+            client.create_transfer_recipient("", "Alice", "0551234567", "MTN", "GHS")
+        with pytest.raises(ValueError, match="phone"):
+            client.charge_mobile_money("buyer@example.com", "10.00", "GHS", "", "mtn")
+        with pytest.raises(ValueError, match="provider"):
+            client.charge_mobile_money(
+                "buyer@example.com", "10.00", "GHS", "0551234567", ""
+            )
+        with pytest.raises(ValueError, match="transaction"):
+            client.create_refund("")
+
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.paystack.co/transaction/initialize",
+            json={
+                "status": True,
+                "data": {
+                    "authorization_url": "https://checkout.paystack.com/momo134",
+                    "reference": "ps_init_134_sync",
+                },
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.paystack.co/transferrecipient",
+            json={
+                "status": True,
+                "data": {"recipient_code": "RCP_momo134sync"},
+            },
+            status_code=201,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.paystack.co/bank?country=ghana&currency=GHS&type=mobile_money",
+            json={
+                "status": True,
+                "data": [{"name": "MTN", "code": "MTN", "type": "mobile_money"}],
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.paystack.co/charge",
+            json={
+                "status": True,
+                "data": {"reference": "ps_charge_134", "status": "send_otp"},
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.paystack.co/refund",
+            json={"status": True, "data": {"status": "pending"}},
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.paystack.co/transfer",
+            json={
+                "status": True,
+                "data": {
+                    "reference": "paystack_tr_ref_134_ok",
+                    "status": "success",
+                },
+            },
+            status_code=200,
+        )
+
+        init_res = client.initialize_transaction(
+            "buyer@example.com",
+            "50.00",
+            "GHS",
+            reference="ps_init_134_sync",
+            channels=["mobile_money"],
+        )
+        assert init_res["status"] is True
+
+        rec_res = client.create_transfer_recipient(
+            "mobile_money",
+            "Alice Mensah",
+            "0551234567",
+            "MTN",
+            "GHS",
+            description="Supplier payout",
+        )
+        assert rec_res["data"]["recipient_code"] == "RCP_momo134sync"
+
+        banks_res = client.list_banks(
+            country="ghana", currency="GHS", bank_type="mobile_money"
+        )
+        assert banks_res["data"][0]["code"] == "MTN"
+
+        charge_res = client.charge_mobile_money(
+            "buyer@example.com",
+            "25.00",
+            "GHS",
+            "0551234567",
+            "MTN",
+            reference="ps_charge_134",
+        )
+        assert charge_res["data"]["status"] == "send_otp"
+
+        refund_res = client.create_refund(
+            "ps_charge_134",
+            amount="10.00",
+            currency="GHS",
+            customer_note="Customer requested refund",
+            merchant_note="Partial refund",
+        )
+        assert refund_res["data"]["status"] == "pending"
+
+        tr_res = client.initiate_transfer(
+            "20.00",
+            "GHS",
+            "RCP_momo134sync",
+            reference="paystack_tr_ref_134_ok",
+        )
+        assert tr_res["data"]["reference"] == "paystack_tr_ref_134_ok"
+
+        reqs = httpx_mock.get_requests()
+        init_payload = json.loads(
+            next(r for r in reqs if r.url.path == "/transaction/initialize")
+            .read()
+            .decode("utf-8")
+        )
+        assert init_payload["channels"] == ["mobile_money"]
+
+        charge_payload = json.loads(
+            next(r for r in reqs if r.url.path == "/charge").read().decode("utf-8")
+        )
+        assert charge_payload["amount"] == 2500
+        assert charge_payload["mobile_money"] == {
+            "phone": "0551234567",
+            "provider": "mtn",
+        }
+
+        refund_payload = json.loads(
+            next(r for r in reqs if r.url.path == "/refund").read().decode("utf-8")
+        )
+        assert refund_payload["amount"] == 1000
+        assert refund_payload["currency"] == "GHS"
+
+    # Async parity
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transaction/initialize",
+        json={
+            "status": True,
+            "data": {
+                "authorization_url": "https://checkout.paystack.com/momo134a",
+                "reference": "ps_init_134_async",
+            },
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transferrecipient",
+        json={"status": True, "data": {"recipient_code": "RCP_momo134async"}},
+        status_code=201,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.paystack.co/bank?country=kenya&currency=KES&type=mobile_money",
+        json={"status": True, "data": [{"name": "M-PESA", "code": "MPESA"}]},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/charge",
+        json={
+            "status": True,
+            "data": {"reference": "ps_charge_134_a", "status": "pay_offline"},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/refund",
+        json={"status": True, "data": {"status": "processed"}},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transfer",
+        json={
+            "status": True,
+            "data": {
+                "reference": "paystack_tr_ref_134_as",
+                "status": "success",
+            },
+        },
+        status_code=200,
+    )
+
+    async with AsyncPaystackClient(cfg) as aclient:
+        with pytest.raises(ValueError, match="16-50 lowercase"):
+            await aclient.initiate_transfer(
+                "10.00", "KES", "RCP_123", reference="SHORT"
+            )
+        with pytest.raises(ValueError, match="recipient_type"):
+            await aclient.create_transfer_recipient(
+                "", "Bob", "0712345678", "MPESA", "KES"
+            )
+        with pytest.raises(ValueError, match="phone"):
+            await aclient.charge_mobile_money(
+                "buyer@example.com", "10.00", "KES", "", "mpesa"
+            )
+        with pytest.raises(ValueError, match="provider"):
+            await aclient.charge_mobile_money(
+                "buyer@example.com", "10.00", "KES", "0712345678", ""
+            )
+        with pytest.raises(ValueError, match="transaction"):
+            await aclient.create_refund("")
+
+        ainit = await aclient.initialize_transaction(
+            "buyer@example.com",
+            "50.00",
+            "KES",
+            reference="ps_init_134_async",
+            channels=["mobile_money"],
+        )
+        assert ainit["status"] is True
+
+        arec = await aclient.create_transfer_recipient(
+            "mobile_money",
+            "Bob",
+            "0712345678",
+            "MPESA",
+            "KES",
+            description="Async payout",
+        )
+        assert arec["data"]["recipient_code"] == "RCP_momo134async"
+
+        abanks = await aclient.list_banks(
+            country="kenya", currency="KES", bank_type="mobile_money"
+        )
+        assert abanks["data"][0]["code"] == "MPESA"
+
+        acharge = await aclient.charge_mobile_money(
+            "buyer@example.com",
+            "30.00",
+            "KES",
+            "0712345678",
+            "mpesa",
+            reference="ps_charge_134_a",
+        )
+        assert acharge["data"]["status"] == "pay_offline"
+
+        arefund = await aclient.create_refund(
+            "ps_charge_134_a",
+            amount="15.00",
+            currency="KES",
+            customer_note="Customer requested",
+            merchant_note="Done",
+        )
+        assert arefund["data"]["status"] == "processed"
+
+        atr = await aclient.initiate_transfer(
+            "20.00",
+            "KES",
+            "RCP_momo134async",
+            reference="paystack_tr_ref_134_as",
+        )
+        assert atr["data"]["reference"] == "paystack_tr_ref_134_as"

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -207,6 +210,9 @@ def _map_paystack_status(raw_status: str) -> NormalizedStatus:
     return NormalizedStatus.PENDING
 
 
+_PAYSTACK_TRANSFER_REF_RE = re.compile(r"^[a-z0-9_-]{16,50}$")
+
+
 def _validate_paystack_reference(reference: str | None) -> str:
     if reference is None:
         return generate_reference_id()
@@ -215,6 +221,30 @@ def _validate_paystack_reference(reference: str | None) -> str:
     cleaned = reference.strip()
     encode_path_segment(cleaned, field_name="reference")
     return cleaned
+
+
+def _validate_paystack_transfer_reference(reference: str | None) -> str:
+    if reference is None:
+        return generate_reference_id()
+    if not isinstance(reference, str) or not reference.strip():
+        raise ValueError("reference must be a non-empty string")
+    cleaned = reference.strip()
+    if not _PAYSTACK_TRANSFER_REF_RE.fullmatch(cleaned):
+        raise ValueError(
+            "Paystack transfer reference must be 16-50 lowercase characters matching [a-z0-9_-]"
+        )
+    return cleaned
+
+
+def _validate_paystack_channels(channels: Sequence[str]) -> list[str]:
+    if isinstance(channels, (str, bytes)) or not channels:
+        raise ValueError("channels must be a non-empty sequence of channel strings")
+    cleaned_channels: list[str] = []
+    for ch in channels:
+        if not isinstance(ch, str) or not ch.strip():
+            raise ValueError("each Paystack channel must be a non-empty string")
+        cleaned_channels.append(validate_header_value(ch.strip(), field_name="channel"))
+    return cleaned_channels
 
 
 def _map_paystack_status_response(
@@ -285,6 +315,7 @@ class PaystackClient:
         *,
         reference: str | None = None,
         callback_url: str | None = None,
+        channels: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Initialize a Paystack transaction (amounts converted to minor units)."""
         validated_email = validate_email_address(email)
@@ -304,6 +335,8 @@ class PaystackClient:
         }
         if resolved_cb is not None:
             payload["callback_url"] = resolved_cb
+        if channels is not None:
+            payload["channels"] = _validate_paystack_channels(channels)
         response = self._http.request(
             "POST",
             "/transaction/initialize",
@@ -340,7 +373,7 @@ class PaystackClient:
         if not isinstance(recipient, str) or not recipient.strip():
             raise ValueError("recipient must be a non-empty recipient code")
         validate_header_value(recipient.strip(), field_name="recipient")
-        ref = _validate_paystack_reference(reference)
+        ref = _validate_paystack_transfer_reference(reference)
         response = self._http.request(
             "POST",
             "/transfer",
@@ -357,6 +390,142 @@ class PaystackClient:
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
+
+    def create_transfer_recipient(
+        self,
+        recipient_type: str,
+        name: str,
+        account_number: str,
+        bank_code: str,
+        currency: str,
+        *,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Paystack transfer recipient (``POST /transferrecipient``)."""
+        for fname, fval in (
+            ("recipient_type", recipient_type),
+            ("name", name),
+            ("account_number", account_number),
+            ("bank_code", bank_code),
+        ):
+            if not isinstance(fval, str) or not fval.strip():
+                raise ValueError(f"{fname} must be a non-empty string")
+            validate_header_value(fval.strip(), field_name=fname)
+        validated_currency = validate_currency(currency)
+        payload: dict[str, Any] = {
+            "type": recipient_type.strip(),
+            "name": name.strip(),
+            "account_number": account_number.strip(),
+            "bank_code": bank_code.strip(),
+            "currency": validated_currency,
+        }
+        if description is not None:
+            payload["description"] = description
+        response = self._http.request(
+            "POST",
+            "/transferrecipient",
+            headers=self._headers(),
+            json=payload,
+        )
+        return parse_json_dict(response)
+
+    def list_banks(
+        self,
+        *,
+        country: str | None = None,
+        currency: str | None = None,
+        bank_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List Paystack supported banks and mobile money operators (``GET /bank``)."""
+        params: dict[str, str] = {}
+        if country is not None:
+            params["country"] = validate_header_value(
+                country.strip(), field_name="country"
+            )
+        if currency is not None:
+            params["currency"] = validate_currency(currency)
+        if bank_type is not None:
+            params["type"] = validate_header_value(
+                bank_type.strip(), field_name="bank_type"
+            )
+        path = f"/bank?{urlencode(params)}" if params else "/bank"
+        response = self._http.request("GET", path, headers=self._headers())
+        return parse_json_dict(response)
+
+    def charge_mobile_money(
+        self,
+        email: str,
+        amount: str,
+        currency: str,
+        phone: str,
+        provider: str,
+        *,
+        reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Initiate a direct Paystack mobile money charge (``POST /charge``)."""
+        validated_email = validate_email_address(email)
+        validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
+        if not isinstance(phone, str) or not phone.strip():
+            raise ValueError("phone must be a non-empty string")
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be a non-empty string")
+        ref = _validate_paystack_reference(reference)
+        response = self._http.request(
+            "POST",
+            "/charge",
+            headers=self._headers(),
+            json={
+                "email": validated_email,
+                "amount": minor_amount,
+                "currency": validated_currency,
+                "reference": ref,
+                "mobile_money": {
+                    "phone": validate_header_value(phone.strip(), field_name="phone"),
+                    "provider": validate_header_value(
+                        provider.strip().lower(), field_name="provider"
+                    ),
+                },
+            },
+            idempotent=False,
+            reference_id=ref,
+        )
+        return parse_json_dict(response, reference_id=ref)
+
+    def create_refund(
+        self,
+        transaction: str,
+        *,
+        amount: str | None = None,
+        currency: str | None = None,
+        customer_note: str | None = None,
+        merchant_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Paystack refund (``POST /refund``)."""
+        if not isinstance(transaction, str) or not transaction.strip():
+            raise ValueError("transaction must be a non-empty string")
+        tx_ref = validate_header_value(transaction.strip(), field_name="transaction")
+        payload: dict[str, Any] = {"transaction": tx_ref}
+        validated_currency = (
+            validate_currency(currency) if currency is not None else None
+        )
+        if validated_currency is not None:
+            payload["currency"] = validated_currency
+        if amount is not None:
+            payload["amount"] = _to_minor_units(amount, currency=validated_currency)
+        if customer_note is not None:
+            payload["customer_note"] = customer_note
+        if merchant_note is not None:
+            payload["merchant_note"] = merchant_note
+        response = self._http.request(
+            "POST",
+            "/refund",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=tx_ref,
+        )
+        return parse_json_dict(response, reference_id=tx_ref)
 
     def verify_transfer(self, reference: str) -> dict[str, Any]:
         """Verify a Paystack transfer by reference."""
@@ -436,6 +605,7 @@ class AsyncPaystackClient:
         *,
         reference: str | None = None,
         callback_url: str | None = None,
+        channels: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         validated_email = validate_email_address(email)
         validated_currency = validate_currency(currency)
@@ -454,6 +624,8 @@ class AsyncPaystackClient:
         }
         if resolved_cb is not None:
             payload["callback_url"] = resolved_cb
+        if channels is not None:
+            payload["channels"] = _validate_paystack_channels(channels)
         response = await self._http.request(
             "POST",
             "/transaction/initialize",
@@ -488,7 +660,7 @@ class AsyncPaystackClient:
         if not isinstance(recipient, str) or not recipient.strip():
             raise ValueError("recipient must be a non-empty recipient code")
         validate_header_value(recipient.strip(), field_name="recipient")
-        ref = _validate_paystack_reference(reference)
+        ref = _validate_paystack_transfer_reference(reference)
         response = await self._http.request(
             "POST",
             "/transfer",
@@ -505,6 +677,142 @@ class AsyncPaystackClient:
             reference_id=ref,
         )
         return parse_json_dict(response, reference_id=ref)
+
+    async def create_transfer_recipient(
+        self,
+        recipient_type: str,
+        name: str,
+        account_number: str,
+        bank_code: str,
+        currency: str,
+        *,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Paystack transfer recipient asynchronously."""
+        for fname, fval in (
+            ("recipient_type", recipient_type),
+            ("name", name),
+            ("account_number", account_number),
+            ("bank_code", bank_code),
+        ):
+            if not isinstance(fval, str) or not fval.strip():
+                raise ValueError(f"{fname} must be a non-empty string")
+            validate_header_value(fval.strip(), field_name=fname)
+        validated_currency = validate_currency(currency)
+        payload: dict[str, Any] = {
+            "type": recipient_type.strip(),
+            "name": name.strip(),
+            "account_number": account_number.strip(),
+            "bank_code": bank_code.strip(),
+            "currency": validated_currency,
+        }
+        if description is not None:
+            payload["description"] = description
+        response = await self._http.request(
+            "POST",
+            "/transferrecipient",
+            headers=self._headers(),
+            json=payload,
+        )
+        return parse_json_dict(response)
+
+    async def list_banks(
+        self,
+        *,
+        country: str | None = None,
+        currency: str | None = None,
+        bank_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List Paystack supported banks and mobile money operators asynchronously."""
+        params: dict[str, str] = {}
+        if country is not None:
+            params["country"] = validate_header_value(
+                country.strip(), field_name="country"
+            )
+        if currency is not None:
+            params["currency"] = validate_currency(currency)
+        if bank_type is not None:
+            params["type"] = validate_header_value(
+                bank_type.strip(), field_name="bank_type"
+            )
+        path = f"/bank?{urlencode(params)}" if params else "/bank"
+        response = await self._http.request("GET", path, headers=self._headers())
+        return parse_json_dict(response)
+
+    async def charge_mobile_money(
+        self,
+        email: str,
+        amount: str,
+        currency: str,
+        phone: str,
+        provider: str,
+        *,
+        reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Initiate a direct Paystack mobile money charge asynchronously."""
+        validated_email = validate_email_address(email)
+        validated_currency = validate_currency(currency)
+        minor_amount = _to_minor_units(amount, currency=validated_currency)
+        if not isinstance(phone, str) or not phone.strip():
+            raise ValueError("phone must be a non-empty string")
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be a non-empty string")
+        ref = _validate_paystack_reference(reference)
+        response = await self._http.request(
+            "POST",
+            "/charge",
+            headers=self._headers(),
+            json={
+                "email": validated_email,
+                "amount": minor_amount,
+                "currency": validated_currency,
+                "reference": ref,
+                "mobile_money": {
+                    "phone": validate_header_value(phone.strip(), field_name="phone"),
+                    "provider": validate_header_value(
+                        provider.strip().lower(), field_name="provider"
+                    ),
+                },
+            },
+            idempotent=False,
+            reference_id=ref,
+        )
+        return parse_json_dict(response, reference_id=ref)
+
+    async def create_refund(
+        self,
+        transaction: str,
+        *,
+        amount: str | None = None,
+        currency: str | None = None,
+        customer_note: str | None = None,
+        merchant_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Paystack refund asynchronously."""
+        if not isinstance(transaction, str) or not transaction.strip():
+            raise ValueError("transaction must be a non-empty string")
+        tx_ref = validate_header_value(transaction.strip(), field_name="transaction")
+        payload: dict[str, Any] = {"transaction": tx_ref}
+        validated_currency = (
+            validate_currency(currency) if currency is not None else None
+        )
+        if validated_currency is not None:
+            payload["currency"] = validated_currency
+        if amount is not None:
+            payload["amount"] = _to_minor_units(amount, currency=validated_currency)
+        if customer_note is not None:
+            payload["customer_note"] = customer_note
+        if merchant_note is not None:
+            payload["merchant_note"] = merchant_note
+        response = await self._http.request(
+            "POST",
+            "/refund",
+            headers=self._headers(),
+            json=payload,
+            idempotent=False,
+            reference_id=tx_ref,
+        )
+        return parse_json_dict(response, reference_id=tx_ref)
 
     async def verify_transfer(self, reference: str) -> dict[str, Any]:
         encoded = encode_path_segment(reference, field_name="reference")
@@ -594,7 +902,7 @@ class PaystackProvider:
 
     def disburse(self, request: DisbursementRequest) -> PaymentResult:
         recipient = _resolve_paystack_recipient(request)
-        ref = _validate_paystack_reference(request.reference_id)
+        ref = _validate_paystack_transfer_reference(request.reference_id)
         res = self._client.initiate_transfer(
             amount=request.amount,
             currency=request.currency,
@@ -691,7 +999,7 @@ class AsyncPaystackProvider:
 
     async def disburse(self, request: DisbursementRequest) -> PaymentResult:
         recipient = _resolve_paystack_recipient(request)
-        ref = _validate_paystack_reference(request.reference_id)
+        ref = _validate_paystack_transfer_reference(request.reference_id)
         res = await self._client.initiate_transfer(
             amount=request.amount,
             currency=request.currency,
