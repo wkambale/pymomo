@@ -18,7 +18,29 @@ if TYPE_CHECKING:
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _ENCODED_TRAVERSAL_RE = re.compile(r"%(?:2e|2f|5c|25(?:2e|2f|5c))", re.IGNORECASE)
-_CGNAT_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+_DISALLOWED_IPV4_NETWORKS = (
+    ipaddress.IPv4Network("100.64.0.0/10"),  # RFC 6598 CGNAT
+    ipaddress.IPv4Network("192.0.0.0/24"),  # IETF protocol assignments
+    ipaddress.IPv4Network("192.0.2.0/24"),  # RFC 5737 TEST-NET-1
+    ipaddress.IPv4Network("192.88.99.0/24"),  # RFC 3068 6to4 relay anycast
+    ipaddress.IPv4Network("198.18.0.0/15"),  # RFC 2544 benchmarking
+    ipaddress.IPv4Network("198.51.100.0/24"),  # RFC 5737 TEST-NET-2
+    ipaddress.IPv4Network("203.0.113.0/24"),  # RFC 5737 TEST-NET-3
+)
+_DISALLOWED_IPV6_NETWORKS = (
+    ipaddress.IPv6Network("::/96"),  # Deprecated IPv4-compatible (::1 checked first)
+    ipaddress.IPv6Network("::ffff:0:0:0/96"),  # RFC 2765 SIIT IPv4-translated
+    ipaddress.IPv6Network("64:ff9b::/96"),  # RFC 6052 NAT64 well-known
+    ipaddress.IPv6Network("64:ff9b:1::/48"),  # RFC 8215 NAT64 local-use
+    ipaddress.IPv6Network("100::/64"),  # RFC 6666 discard-only
+    ipaddress.IPv6Network("2001::/32"),  # RFC 4380 Teredo
+    ipaddress.IPv6Network("2001:db8::/32"),  # RFC 3849 documentation
+    ipaddress.IPv6Network("2002::/16"),  # RFC 3056 / 7526 6to4
+    ipaddress.IPv6Network("fc00::/7"),  # Unique local
+    ipaddress.IPv6Network("fe80::/10"),  # Link-local
+    ipaddress.IPv6Network("fec0::/10"),  # Deprecated site-local
+    ipaddress.IPv6Network("ff00::/8"),  # Multicast
+)
 _CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 _COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
 _AMOUNT_RE = re.compile(r"^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]+)?$")
@@ -89,26 +111,45 @@ def _is_numeric_obfuscated_ip(host: str) -> bool:
     return True
 
 
+def _is_disallowed_ipv4(addr: ipaddress.IPv4Address, *, allow_localhost: bool) -> bool:
+    if addr.is_loopback:
+        return not allow_localhost
+    if any(addr in net for net in _DISALLOWED_IPV4_NETWORKS):
+        return True
+    return bool(
+        addr.is_private
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
 def _is_disallowed_ip_host(host: str, *, allow_localhost: bool) -> bool:
     """Return True if host resolves to a disallowed IP literal (private/metadata/obfuscated)."""
     normalized = host.strip().lower().rstrip(".")
     if not normalized:
         return True
-    if normalized == "localhost":
+    if normalized == "localhost" or normalized.endswith(".localhost"):
         return not allow_localhost
+    bare = (
+        normalized[1:-1]
+        if normalized.startswith("[") and normalized.endswith("]")
+        else normalized
+    )
     try:
-        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(
-            normalized
-        )
+        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(bare)
     except ValueError:
-        return _is_numeric_obfuscated_ip(normalized)
+        return _is_numeric_obfuscated_ip(bare)
 
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        addr = addr.ipv4_mapped
+    if isinstance(addr, ipaddress.IPv4Address):
+        return _is_disallowed_ipv4(addr, allow_localhost=allow_localhost)
 
+    if addr.ipv4_mapped is not None:
+        return _is_disallowed_ipv4(addr.ipv4_mapped, allow_localhost=False)
     if addr.is_loopback:
         return not allow_localhost
-    if isinstance(addr, ipaddress.IPv4Address) and addr in _CGNAT_NETWORK:
+    if any(addr in net for net in _DISALLOWED_IPV6_NETWORKS):
         return True
     return bool(
         addr.is_private

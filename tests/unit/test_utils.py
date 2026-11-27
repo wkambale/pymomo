@@ -421,3 +421,44 @@ async def test_wait_for_settlement_preserves_reference_id_issue_115() -> None:
             reference_id="mtn-aref-timeout",
         )
     assert exc_ato.value.reference_id == "mtn-aref-timeout"
+
+
+def test_issue_121_ssrf_localhost_subdomains_and_ipv6_transition_ranges() -> None:
+    """Verify Issue #121: .localhost subdomains and IPv6 transition/embedded prefixes are blocked."""
+    from py_momo_sdk.exceptions import PyMomoSDKError
+    from py_momo_sdk.utils import validate_base_url, validate_callback_url
+
+    # RFC 6761 .localhost subdomains blocked when allow_localhost=False
+    for local_url in (
+        "https://localhost",
+        "https://localhost.",
+        "https://foo.localhost",
+        "https://sub.foo.localhost.",
+    ):
+        with pytest.raises(PyMomoSDKError, match="not allowed"):
+            validate_base_url(local_url, allow_localhost=False)
+        with pytest.raises(ValueError, match="not allowed"):
+            validate_callback_url(f"{local_url}/cb", allow_localhost=False)
+
+    # IPv6 transition / embedded-IPv4 / RFC 5737 / 6to4 relay ranges always blocked
+    disallowed_urls = (
+        "https://[::ffff:127.0.0.1]",
+        "https://[::ffff:169.254.169.254]",
+        "https://[::ffff:0:169.254.169.254]",
+        "https://[::127.0.0.1]",
+        "https://[::169.254.169.254]",
+        "https://[64:ff9b::169.254.169.254]",
+        "https://[64:ff9b:1::10.0.0.1]",
+        "https://[2002:a9fe:a9fe::1]",
+        "https://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]",
+        "https://[100::1]",
+        "https://[2001:db8::1]",
+        "https://198.51.100.1",
+        "https://203.0.113.1",
+        "https://192.88.99.1",
+    )
+    for bad_url in disallowed_urls:
+        with pytest.raises(PyMomoSDKError, match="not allowed"):
+            validate_base_url(bad_url, allow_localhost=True)
+        with pytest.raises(ValueError, match="not allowed"):
+            validate_callback_url(f"{bad_url}/cb", allow_localhost=True)
