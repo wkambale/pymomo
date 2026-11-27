@@ -4,33 +4,41 @@ import re
 from typing import Any
 
 _UNSAFE_MSG_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+_KEY_SEP_RE = re.compile(r"[_-]+")
 _MAX_ERROR_MESSAGE_LEN = 512
 _SENSITIVE_BODY_KEYS = frozenset(
     {
-        "access_token",
-        "refresh_token",
+        "accesstoken",
+        "refreshtoken",
         "token",
-        "id_token",
-        "api_key",
+        "idtoken",
         "apikey",
-        "client_secret",
-        "consumer_secret",
-        "subscription_key",
-        "ocp-apim-subscription-key",
+        "clientsecret",
+        "consumersecret",
+        "subscriptionkey",
+        "ocpapimsubscriptionkey",
         "secret",
-        "secret_key",
-        "webhook_secret",
-        "webhook_hash",
+        "secretkey",
+        "webhooksecret",
+        "webhookhash",
+        "signingsecret",
+        "verifhash",
         "passkey",
         "password",
         "pin",
         "authorization",
-        "security_credential",
         "securitycredential",
-        "auth_req_id",
-        "merchant_key",
+        "authreqid",
+        "merchantkey",
+        "paytoken",
+        "notiftoken",
+        "privatekey",
     }
 )
+
+
+def _normalize_body_key(key: str) -> str:
+    return _KEY_SEP_RE.sub("", key).lower()
 
 
 def _sanitize_error_message(message: str, *, default: str = "Bad request") -> str:
@@ -48,7 +56,7 @@ def _redact_value(value: Any, *, depth: int = 0) -> Any:
         out: dict[str, Any] = {}
         for k, v in value.items():
             key_str = str(k)
-            if key_str.lower() in _SENSITIVE_BODY_KEYS:
+            if _normalize_body_key(key_str) in _SENSITIVE_BODY_KEYS:
                 out[key_str] = "<redacted>"
             else:
                 out[key_str] = _redact_value(v, depth=depth + 1)
