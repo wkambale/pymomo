@@ -61,7 +61,7 @@ _WAVE_CAPABILITIES = ProviderCapabilities(
     supports_disbursement=True,
     supports_balance=True,
     supports_webhook_hmac=True,
-    currencies=("XOF", "UGX"),
+    currencies=("XOF", "UGX", "GMD"),
 )
 
 

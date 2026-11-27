@@ -3393,3 +3393,140 @@ async def test_issue_137_zero_decimal_currency_validation() -> None:
             )
         with pytest.raises(ValueError, match="zero-decimal"):
             await afc.create_transfer("100.50", "GNF", "224661234567")
+
+
+def test_issue_138_provider_currency_capabilities_and_routing(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #138: MTN, Orange, and Wave capabilities align with carrier detection and router matching."""
+    from py_momo_sdk import (
+        MtnMomoProvider,
+        ProductConfig,
+        PyMomoSDK,
+        PyMomoSDKConfig,
+        WaveClient,
+        WaveConfig,
+        WaveProvider,
+    )
+
+    mtn_cfg = PyMomoSDKConfig(
+        collection=ProductConfig(
+            subscription_key="mtn-sub",
+            api_user="mtn-user",
+            api_key="mtn-key",
+        )
+    )
+    om_cfg = OrangeMoneyConfig(
+        client_id="om-id-138",
+        client_secret="om-sec-138",
+        merchant_key="om-mk-138",
+        return_url="https://merchant.example.com/ret",
+        cancel_url="https://merchant.example.com/can",
+        notif_url="https://merchant.example.com/notif",
+    )
+    wave_cfg = WaveConfig(
+        api_key="wave_gm_test_138",
+        success_url="https://merchant.example.com/ok",
+        error_url="https://merchant.example.com/err",
+    )
+
+    with (
+        PyMomoSDK(mtn_cfg) as mtn_client,
+        OrangeMoneyClient(om_cfg) as om_client,
+        WaveClient(wave_cfg) as wave_client,
+    ):
+        mtn_prov = MtnMomoProvider(mtn_client)
+        om_prov = OrangeMoneyProvider(om_client)
+        wave_prov = WaveProvider(wave_client)
+
+        assert {"RWF", "NGN"}.issubset(set(mtn_prov.capabilities.currencies))
+        assert {"CDF", "GNF", "LRD", "MGA", "SLE", "BWP", "USD"}.issubset(
+            set(om_prov.capabilities.currencies)
+        )
+        assert "GMD" in wave_prov.capabilities.currencies
+
+        router = PaymentRouter(
+            [mtn_prov, om_prov, wave_prov],
+            custom_carrier_prefixes={"220": ("GM", "wave")},
+        )
+
+        # MTN Rwanda (RWF) & MTN Nigeria (NGN)
+        httpx_mock.add_response(
+            method="POST",
+            url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+            json={
+                "access_token": "mtn-tok-138",
+                "token_type": "access_token",
+                "expires_in": 3600,
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+            status_code=202,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+            status_code=202,
+        )
+
+        rw_res = router.collect(
+            PaymentRequest(amount="5000", currency="RWF", payer_msisdn="250781234567")
+        )
+        assert rw_res.provider == "mtn_momo"
+        ng_res = router.collect(
+            PaymentRequest(
+                amount="2500.50", currency="NGN", payer_msisdn="2348031234567"
+            )
+        )
+        assert ng_res.provider == "mtn_momo"
+
+        # Orange DRC (CDF, USD), Guinea (GNF), Liberia (LRD)
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.orange.com/oauth/v3/token",
+            json={"access_token": "om-tok-138", "expires_in": 3600},
+            status_code=200,
+        )
+        for idx in range(4):
+            httpx_mock.add_response(
+                method="POST",
+                url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+                json={
+                    "status": 201,
+                    "pay_token": f"om-pt-138-{idx}",
+                    "payment_url": f"https://webpay.orange.com/{idx}",
+                },
+                status_code=201,
+            )
+
+        for msisdn, ccy in (
+            ("243841234567", "CDF"),
+            ("243851234567", "USD"),
+            ("224621234567", "GNF"),
+            ("231771234567", "LRD"),
+        ):
+            om_res = router.collect(
+                PaymentRequest(amount="1000", currency=ccy, payer_msisdn=msisdn)
+            )
+            assert om_res.provider == "orange_money"
+
+        # Wave Gambia (GMD)
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/checkout/sessions",
+            json={
+                "id": "cos-gm-138",
+                "amount": "500",
+                "currency": "GMD",
+                "checkout_status": "open",
+                "payment_status": "processing",
+            },
+            status_code=200,
+        )
+        gm_res = router.collect(
+            PaymentRequest(amount="500", currency="GMD", payer_msisdn="2207012345")
+        )
+        assert gm_res.provider == "wave"
