@@ -24,6 +24,7 @@ _TOKEN_PATHS = frozenset(
         "/collection/token/",
         "/disbursement/token/",
         "/remittance/token/",
+        "/collection/oauth2/token/",
         "/collection/v1_0/oauth2/token/",
         "/auth/oauth2/token",
         "/oauth/v3/token",

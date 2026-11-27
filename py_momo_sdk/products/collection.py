@@ -7,9 +7,12 @@ from py_momo_sdk.models import (
     BcAuthorizeResponse,
     OAuth2TokenResponse,
     Party,
+    PreApprovalRequest,
+    PreApprovalResult,
     RequestToPayRequest,
     RequestToWithdrawRequest,
     TransactionResult,
+    _validate_note_text,
 )
 from py_momo_sdk.products.base import BaseProduct
 from py_momo_sdk.utils import (
@@ -349,8 +352,152 @@ class Collection(BaseProduct):
         }
         response = self._http.request(
             "POST",
-            "/collection/v1_0/oauth2/token/",
+            "/collection/oauth2/token/",
             headers=headers,
             data=form_data,
         )
         return parse_model(response, OAuth2TokenResponse)
+
+    def get_user_info_with_consent(self, oauth2_access_token: str) -> BasicUserInfo:
+        """Retrieve consented subscriber info via ``GET /collection/oauth2/v1_0/userinfo``.
+
+        Args:
+            oauth2_access_token: User-consent Bearer token returned by ``create_oauth2_token()``.
+
+        Returns:
+            A ``BasicUserInfo`` model populated from the MTN OAuth2 userinfo endpoint.
+        """
+        if not isinstance(oauth2_access_token, str) or not oauth2_access_token.strip():
+            raise ValueError("oauth2_access_token must be a non-empty string")
+        token_val = validate_header_value(
+            oauth2_access_token.strip(),
+            field_name="oauth2_access_token",
+            allow_whitespace=False,
+        )
+        headers = {
+            "Authorization": f"Bearer {token_val}",
+            "Ocp-Apim-Subscription-Key": self._product_config.subscription_key,
+            "X-Target-Environment": self._config.environment,
+        }
+        response = self._http.request(
+            "GET",
+            "/collection/oauth2/v1_0/userinfo",
+            headers=headers,
+        )
+        return parse_model(response, BasicUserInfo)
+
+    def send_delivery_notification(
+        self,
+        reference_id: str,
+        notification_message: str,
+        *,
+        language: str | None = None,
+    ) -> None:
+        """Send an additional SMS/push delivery notification for a Request to Pay.
+
+        Calls ``POST /collection/v1_0/requesttopay/{referenceId}/deliverynotification``.
+        """
+        validate_reference_id(reference_id)
+        cleaned_msg = _validate_note_text(
+            notification_message, field_name="notification_message"
+        )
+        if not cleaned_msg.strip():
+            raise ValueError("notification_message must not be blank")
+        headers = self._build_headers(include_content_type=True)
+        headers["notificationMessage"] = validate_header_value(
+            cleaned_msg, field_name="notification_message"
+        )
+        if language is not None:
+            if (
+                not isinstance(language, str)
+                or len(language.strip()) != 2
+                or not language.strip().isascii()
+                or not language.strip().isalpha()
+            ):
+                raise ValueError("language must be a 2-letter ISO language code")
+            headers["Language"] = language.strip().lower()
+        self._http.request(
+            "POST",
+            f"/collection/v1_0/requesttopay/{reference_id}/deliverynotification",
+            headers=headers,
+            json={"notificationMessage": cleaned_msg},
+            product_name=self._product_name,
+            token_cache=self._token_cache,
+            token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            reference_id=reference_id,
+        )
+
+    def create_preapproval(
+        self,
+        payer_msisdn: str,
+        payer_currency: str,
+        *,
+        validity_time: int,
+        payer_message: str = "",
+        reference_id: str | None = None,
+        callback_url: str | None = None,
+        party_id_type: str = "MSISDN",
+    ) -> str:
+        """Request a subscriber PreApproval (``POST /collection/v2_0/preapproval``)."""
+        if reference_id is not None:
+            validate_reference_id(reference_id)
+        ref = reference_id or generate_reference_id()
+        party_id = (
+            normalise_msisdn(payer_msisdn)
+            if party_id_type.upper() == "MSISDN"
+            else payer_msisdn
+        )
+        payload = PreApprovalRequest(
+            payer=Party(partyIdType=party_id_type.upper(), partyId=party_id),
+            payerCurrency=payer_currency,
+            payerMessage=payer_message,
+            validityTime=validity_time,
+        )
+        self._http.request(
+            "POST",
+            "/collection/v2_0/preapproval",
+            headers=self._build_headers(
+                reference_id=ref,
+                include_callback=True,
+                callback_url=callback_url,
+                include_content_type=True,
+            ),
+            json=payload.model_dump(by_alias=True, mode="json"),
+            product_name=self._product_name,
+            token_cache=self._token_cache,
+            token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            idempotent=(reference_id is not None),
+            reference_id=ref,
+        )
+        return ref
+
+    def get_preapproval_status(self, reference_id: str) -> PreApprovalResult:
+        """Query the status of a PreApproval (``GET /collection/v2_0/preapproval/{referenceId}``)."""
+        validate_reference_id(reference_id)
+        response = self._http.request(
+            "GET",
+            f"/collection/v2_0/preapproval/{reference_id}",
+            headers=self._build_headers(),
+            product_name=self._product_name,
+            token_cache=self._token_cache,
+            token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            reference_id=reference_id,
+        )
+        return parse_model(response, PreApprovalResult, reference_id=reference_id)
+
+    def cancel_preapproval(self, reference_id: str) -> None:
+        """Cancel an active PreApproval (``DELETE /collection/v2_0/preapproval/{referenceId}``)."""
+        validate_reference_id(reference_id)
+        self._http.request(
+            "DELETE",
+            f"/collection/v2_0/preapproval/{reference_id}",
+            headers=self._build_headers(),
+            product_name=self._product_name,
+            token_cache=self._token_cache,
+            token_refresher=self._get_token,
+            token_namespace=self._token_namespace,
+            reference_id=reference_id,
+        )
