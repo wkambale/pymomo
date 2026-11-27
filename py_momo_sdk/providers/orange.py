@@ -163,12 +163,13 @@ class OrangeMoneyConfig:
             self.reference = validate_header_value(
                 self.reference.strip(), field_name="reference"
             )
+        allow_localhost = self.environment == "sandbox"
         if self.return_url is not None:
-            validate_callback_url(self.return_url)
+            validate_callback_url(self.return_url, allow_localhost=allow_localhost)
         if self.cancel_url is not None:
-            validate_callback_url(self.cancel_url)
+            validate_callback_url(self.cancel_url, allow_localhost=allow_localhost)
         if self.notif_url is not None:
-            validate_callback_url(self.notif_url)
+            validate_callback_url(self.notif_url, allow_localhost=allow_localhost)
         if self.api_path_prefix is None:
             if self.environment == "production":
                 raise ValueError(
@@ -194,10 +195,14 @@ class OrangeMoneyConfig:
             )
         validate_request_path(cleaned_prefix)
         self.api_path_prefix = cleaned_prefix
-        validate_base_url(self.base_url)
+        validate_base_url(self.base_url, allow_localhost=allow_localhost)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
         self.retry_backoff = validate_retry_backoff(self.retry_backoff)
+
+    @property
+    def allow_localhost(self) -> bool:
+        return self.environment == "sandbox"
 
     def __repr__(self) -> str:
         return (
@@ -281,6 +286,7 @@ class OrangeMoneyClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Orange Money",
+            allow_localhost=config.allow_localhost,
         )
 
     def _record_payment_context(
@@ -359,7 +365,7 @@ class OrangeMoneyClient:
             )
         for u in (return_url, cancel_url, notif_url):
             if u is not None:
-                validate_callback_url(u)
+                validate_callback_url(u, allow_localhost=self._config.allow_localhost)
         resolved_notif = notif_url or self._config.notif_url
         resolved_return = return_url or self._config.return_url
         resolved_cancel = cancel_url or self._config.cancel_url
@@ -474,6 +480,7 @@ class AsyncOrangeMoneyClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Orange Money",
+            allow_localhost=config.allow_localhost,
         )
 
     def _get_token_lock(self) -> asyncio.Lock:
@@ -560,7 +567,7 @@ class AsyncOrangeMoneyClient:
             )
         for u in (return_url, cancel_url, notif_url):
             if u is not None:
-                validate_callback_url(u)
+                validate_callback_url(u, allow_localhost=self._config.allow_localhost)
         resolved_notif = notif_url or self._config.notif_url
         resolved_return = return_url or self._config.return_url
         resolved_cancel = cancel_url or self._config.cancel_url

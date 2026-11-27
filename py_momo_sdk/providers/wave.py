@@ -37,6 +37,12 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 WAVE_BASE_URL = "https://api.wave.com"
+_VALID_WAVE_ENVIRONMENTS = frozenset({"sandbox", "production"})
+
+
+def _is_wave_live_key(api_key: str) -> bool:
+    return "_prod_" in api_key.lower()
+
 
 _WAVE_CAPABILITIES = ProviderCapabilities(
     provider_id="wave",
@@ -61,11 +67,29 @@ class WaveConfig:
     max_retries: int = 0
     retry_backoff: float = 0.5
     telemetry: TelemetryHook | None = None
+    environment: str | None = None
+
+    @property
+    def allow_localhost(self) -> bool:
+        if self.environment == "production":
+            return False
+        if self.environment == "sandbox":
+            return True
+        return not _is_wave_live_key(self.api_key)
 
     def __post_init__(self) -> None:
         if not isinstance(self.api_key, str) or not self.api_key.strip():
             raise ValueError("api_key must be a non-empty string")
         validate_header_value(self.api_key, field_name="api_key")
+        if (
+            self.environment is not None
+            and self.environment not in _VALID_WAVE_ENVIRONMENTS
+        ):
+            raise ValueError("environment must be 'sandbox' or 'production'")
+        if self.environment == "sandbox" and _is_wave_live_key(self.api_key):
+            raise ValueError(
+                "Live Wave API key must not be used in sandbox environment"
+            )
         if self.webhook_secret is not None:
             if (
                 not isinstance(self.webhook_secret, str)
@@ -73,11 +97,12 @@ class WaveConfig:
             ):
                 raise ValueError("webhook_secret must not be blank")
             validate_header_value(self.webhook_secret, field_name="webhook_secret")
+        allow_localhost = self.allow_localhost
         if self.success_url is not None:
-            validate_callback_url(self.success_url)
+            validate_callback_url(self.success_url, allow_localhost=allow_localhost)
         if self.error_url is not None:
-            validate_callback_url(self.error_url)
-        validate_base_url(self.base_url)
+            validate_callback_url(self.error_url, allow_localhost=allow_localhost)
+        validate_base_url(self.base_url, allow_localhost=allow_localhost)
         self.timeout = validate_timeout(self.timeout)
         self.max_retries = validate_max_retries(self.max_retries)
         self.retry_backoff = validate_retry_backoff(self.retry_backoff)
@@ -194,6 +219,7 @@ class WaveClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Wave",
+            allow_localhost=config.allow_localhost,
         )
 
     def _headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
@@ -219,9 +245,13 @@ class WaveClient:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
         if success_url is not None:
-            validate_callback_url(success_url)
+            validate_callback_url(
+                success_url, allow_localhost=self._config.allow_localhost
+            )
         if error_url is not None:
-            validate_callback_url(error_url)
+            validate_callback_url(
+                error_url, allow_localhost=self._config.allow_localhost
+            )
         resolved_success = success_url or self._config.success_url
         resolved_error = error_url or self._config.error_url
         if not resolved_success or not resolved_error:
@@ -362,6 +392,7 @@ class AsyncWaveClient:
             client=client,
             telemetry=telemetry if telemetry is not None else config.telemetry,
             provider_name="Wave",
+            allow_localhost=config.allow_localhost,
         )
 
     def _headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
@@ -386,9 +417,13 @@ class AsyncWaveClient:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
         if success_url is not None:
-            validate_callback_url(success_url)
+            validate_callback_url(
+                success_url, allow_localhost=self._config.allow_localhost
+            )
         if error_url is not None:
-            validate_callback_url(error_url)
+            validate_callback_url(
+                error_url, allow_localhost=self._config.allow_localhost
+            )
         resolved_success = success_url or self._config.success_url
         resolved_error = error_url or self._config.error_url
         if not resolved_success or not resolved_error:

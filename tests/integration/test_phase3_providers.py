@@ -1946,3 +1946,121 @@ async def test_paystack_flutterwave_orange_issue_87_fixes(
     assert isinstance(om_body["amount"], int)
     assert om_body["lang"] == "fr"
     assert om_body["reference"] == "MyShop"
+
+
+@pytest.mark.asyncio
+async def test_issue_122_production_disallows_localhost_urls() -> None:
+    """Verify Issue #122: production configs/live keys reject localhost HTTP URLs across providers."""
+    from py_momo_sdk import PyMomoSDKError, WaveClient, WaveConfig
+
+    # Orange Money production rejects localhost base_url and callback URLs
+    with pytest.raises(PyMomoSDKError, match="HTTPS"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="csec",
+            merchant_key="mk",
+            environment="production",
+            api_path_prefix="/orange-money-webpay/sn/v1",
+            base_url="http://localhost:8000",
+        )
+    with pytest.raises(ValueError, match="HTTPS"):
+        OrangeMoneyConfig(
+            client_id="cid",
+            client_secret="csec",
+            merchant_key="mk",
+            environment="production",
+            api_path_prefix="/orange-money-webpay/sn/v1",
+            notif_url="http://localhost:8000/notif",
+        )
+    om_prod = OrangeMoneyConfig(
+        client_id="cid",
+        client_secret="csec",
+        merchant_key="mk",
+        environment="production",
+        api_path_prefix="/orange-money-webpay/sn/v1",
+        return_url="https://merchant.example.com/ret",
+        cancel_url="https://merchant.example.com/can",
+        notif_url="https://merchant.example.com/notif",
+    )
+    with (
+        OrangeMoneyClient(om_prod) as om_sync,
+        pytest.raises(ValueError, match="HTTPS"),
+    ):
+        om_sync.create_web_payment(
+            amount="500", currency="XOF", notif_url="http://127.0.0.1/notif"
+        )
+    async with AsyncOrangeMoneyClient(om_prod) as om_async:
+        with pytest.raises(ValueError, match="HTTPS"):
+            await om_async.create_web_payment(
+                amount="500", currency="XOF", return_url="http://localhost/ret"
+            )
+
+    # Wave live key or production environment rejects localhost URLs
+    with pytest.raises(PyMomoSDKError, match="HTTPS"):
+        WaveConfig(api_key="wave_sn_prod_abc", base_url="http://localhost:8000")
+    with pytest.raises(ValueError, match="HTTPS"):
+        WaveConfig(
+            api_key="wk",
+            environment="production",
+            success_url="http://localhost:8000/ok",
+        )
+    with pytest.raises(ValueError, match="sandbox"):
+        WaveConfig(api_key="wave_sn_prod_abc", environment="sandbox")
+    with (
+        WaveClient(WaveConfig(api_key="wave_sn_prod_abc")) as wc,
+        pytest.raises(ValueError, match="HTTPS"),
+    ):
+        wc.create_checkout_session(
+            "1000",
+            "XOF",
+            success_url="http://localhost/ok",
+            error_url="https://merchant.example.com/err",
+        )
+
+    # Paystack live key or production environment rejects localhost URLs
+    with pytest.raises(PyMomoSDKError, match="HTTPS"):
+        PaystackConfig(secret_key="sk_live_abc", base_url="http://127.0.0.1:8000")
+    with pytest.raises(ValueError, match="HTTPS"):
+        PaystackConfig(
+            secret_key="sk_test_abc",
+            environment="production",
+            callback_url="http://localhost:8000/cb",
+        )
+    with pytest.raises(ValueError, match="sandbox"):
+        PaystackConfig(secret_key="sk_live_abc", environment="sandbox")
+    with (
+        PaystackClient(PaystackConfig(secret_key="sk_live_abc")) as pc,
+        pytest.raises(ValueError, match="HTTPS"),
+    ):
+        pc.initialize_transaction(
+            "a@example.com", "100", "NGN", callback_url="http://localhost/cb"
+        )
+
+    # Flutterwave live key or production environment rejects localhost URLs
+    with pytest.raises(PyMomoSDKError, match="HTTPS"):
+        FlutterwaveConfig(
+            secret_key="FLWSECK-live-abc", base_url="http://localhost:8000"
+        )
+    with pytest.raises(ValueError, match="HTTPS"):
+        FlutterwaveConfig(
+            secret_key="FLWSECK_TEST-abc",
+            environment="production",
+            redirect_url="http://127.0.0.1/redirect",
+        )
+    with pytest.raises(ValueError, match="sandbox"):
+        FlutterwaveConfig(secret_key="FLWSECK-live-abc", environment="sandbox")
+    with FlutterwaveClient(
+        FlutterwaveConfig(
+            secret_key="FLWSECK-live-abc",
+            default_customer_email="a@example.com",
+            default_account_bank="MPS",
+        )
+    ) as fc:
+        with pytest.raises(ValueError, match="HTTPS"):
+            fc.create_payment(
+                "1000", "UGX", "256771234567", redirect_url="http://localhost/r"
+            )
+        with pytest.raises(ValueError, match="HTTPS"):
+            fc.create_transfer(
+                "1000", "UGX", "256771234567", callback_url="http://localhost/cb"
+            )
