@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import quote
 
 import httpx
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_model
+from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.http import (
+    DEFAULT_MAX_RESPONSE_BYTES,
+    HttpClient,
+    parse_json_dict,
+    parse_model,
+)
 from py_momo_sdk.providers.models import (
     BalanceResult,
     DisbursementRequest,
@@ -60,6 +71,7 @@ class WaveConfig:
 
     api_key: str
     webhook_secret: str | None = None
+    signing_secret: str | None = None
     success_url: str | None = None
     error_url: str | None = None
     base_url: str = WAVE_BASE_URL
@@ -97,6 +109,13 @@ class WaveConfig:
             ):
                 raise ValueError("webhook_secret must not be blank")
             validate_header_value(self.webhook_secret, field_name="webhook_secret")
+        if self.signing_secret is not None:
+            if (
+                not isinstance(self.signing_secret, str)
+                or not self.signing_secret.strip()
+            ):
+                raise ValueError("signing_secret must not be blank")
+            validate_header_value(self.signing_secret, field_name="signing_secret")
         allow_localhost = self.allow_localhost
         if self.success_url is not None:
             validate_callback_url(self.success_url, allow_localhost=allow_localhost)
@@ -110,7 +129,8 @@ class WaveConfig:
     def __repr__(self) -> str:
         return (
             f"WaveConfig(api_key=<redacted>, webhook_secret=<redacted>, "
-            f"base_url={self.base_url!r}, timeout={self.timeout!r})"
+            f"signing_secret=<redacted>, base_url={self.base_url!r}, "
+            f"timeout={self.timeout!r})"
         )
 
     def __str__(self) -> str:
@@ -189,6 +209,71 @@ def _map_wave_status(raw_status: str) -> NormalizedStatus:
     return NormalizedStatus.PENDING
 
 
+_WAVE_DEFAULT_MAX_FUTURE_SKEW_SECONDS = 30.0
+_WaveModelT = TypeVar("_WaveModelT", bound=BaseModel)
+
+
+def _sign_wave_request(
+    body: bytes, secret: str, *, timestamp: int | None = None
+) -> str:
+    """Compute a Wave ``Wave-Signature`` header (``t=<ts>,v1=<hex>``) over raw body bytes."""
+    ts = int(time.time()) if timestamp is None else int(timestamp)
+    signed_payload = str(ts).encode("ascii") + body
+    digest = hmac.new(
+        secret.encode("utf-8"), signed_payload, hashlib.sha256
+    ).hexdigest()
+    return f"t={ts},v1={digest}"
+
+
+def _encode_wave_query_ref(client_reference: str) -> str:
+    if not isinstance(client_reference, str) or not client_reference.strip():
+        raise ValueError("client_reference must be a non-empty string")
+    cleaned = validate_header_value(
+        client_reference.strip(), field_name="client_reference"
+    )
+    return quote(cleaned, safe="")
+
+
+def _parse_optional_json_dict(
+    response: httpx.Response, *, reference_id: str | None = None
+) -> dict[str, Any]:
+    if not response.content or not response.content.strip():
+        return {}
+    return parse_json_dict(response, reference_id=reference_id)
+
+
+def _parse_wave_search_results(
+    res: dict[str, Any],
+    model_cls: type[_WaveModelT],
+    *,
+    reference_id: str | None = None,
+) -> list[_WaveModelT]:
+    items = res.get("result")
+    if not isinstance(items, list):
+        raise PyMomoSDKError(
+            "Malformed Wave search response: expected list in 'result'",
+            reference_id=reference_id,
+            provider="Wave",
+        )
+    parsed: list[_WaveModelT] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise PyMomoSDKError(
+                "Malformed Wave search response item",
+                reference_id=reference_id,
+                provider="Wave",
+            )
+        try:
+            parsed.append(model_cls.model_validate(item))
+        except ValidationError as exc:
+            raise PyMomoSDKError(
+                f"Malformed Wave {model_cls.__name__} item in search response",
+                reference_id=reference_id,
+                provider="Wave",
+            ) from exc
+    return parsed
+
+
 def _map_wave_session_status(session: WaveCheckoutSession) -> NormalizedStatus:
     mapped = _map_wave_status(session.payment_status)
     if mapped in (NormalizedStatus.SUCCEEDED, NormalizedStatus.REVERSED):
@@ -240,6 +325,7 @@ class WaveClient:
         client_reference: str | None = None,
         success_url: str | None = None,
         error_url: str | None = None,
+        restrict_payer_mobile: str | None = None,
     ) -> WaveCheckoutSession:
         """Create a Wave checkout session."""
         validated_amount = validate_amount(amount)
@@ -266,6 +352,10 @@ class WaveClient:
             "error_url": resolved_error,
             "client_reference": ref,
         }
+        if restrict_payer_mobile is not None:
+            payload["restrict_payer_mobile"] = (
+                f"+{normalise_msisdn(restrict_payer_mobile)}"
+            )
         response = self._http.request(
             "POST",
             "/v1/checkout/sessions",
@@ -286,6 +376,46 @@ class WaveClient:
             reference_id=session_id,
         )
         return parse_model(response, WaveCheckoutSession, reference_id=session_id)
+
+    def refund_checkout_session(self, session_id: str) -> dict[str, Any]:
+        """Refund a completed Wave checkout session (``POST /v1/checkout/sessions/{id}/refund``)."""
+        encoded = encode_path_segment(session_id, field_name="session_id")
+        response = self._http.request(
+            "POST",
+            f"/v1/checkout/sessions/{encoded}/refund",
+            headers=self._headers(),
+            idempotent=False,
+            reference_id=session_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=session_id)
+
+    def expire_checkout_session(self, session_id: str) -> dict[str, Any]:
+        """Expire an open Wave checkout session (``POST /v1/checkout/sessions/{id}/expire``)."""
+        encoded = encode_path_segment(session_id, field_name="session_id")
+        response = self._http.request(
+            "POST",
+            f"/v1/checkout/sessions/{encoded}/expire",
+            headers=self._headers(),
+            idempotent=True,
+            reference_id=session_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=session_id)
+
+    def search_checkout_sessions(
+        self, client_reference: str
+    ) -> list[WaveCheckoutSession]:
+        """Search Wave checkout sessions by ``client_reference``."""
+        encoded = _encode_wave_query_ref(client_reference)
+        response = self._http.request(
+            "GET",
+            f"/v1/checkout/sessions/search?client_reference={encoded}",
+            headers=self._headers(),
+            reference_id=client_reference,
+        )
+        res = parse_json_dict(response, reference_id=client_reference)
+        return _parse_wave_search_results(
+            res, WaveCheckoutSession, reference_id=client_reference
+        )
 
     def create_payout(
         self,
@@ -319,14 +449,29 @@ class WaveClient:
                 if not isinstance(val, str) or not val.strip():
                     raise ValueError(f"{key} must not be blank")
                 payload[key] = val.strip()
-        response = self._http.request(
-            "POST",
-            "/v1/payout",
-            headers=self._headers(idempotency_key=ref),
-            json=payload,
-            idempotent=True,
-            reference_id=ref,
-        )
+        headers = self._headers(idempotency_key=ref)
+        if self._config.signing_secret is not None:
+            raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            headers["Wave-Signature"] = _sign_wave_request(
+                raw_body, self._config.signing_secret
+            )
+            response = self._http.request(
+                "POST",
+                "/v1/payout",
+                headers=headers,
+                content=raw_body,
+                idempotent=True,
+                reference_id=ref,
+            )
+        else:
+            response = self._http.request(
+                "POST",
+                "/v1/payout",
+                headers=headers,
+                json=payload,
+                idempotent=True,
+                reference_id=ref,
+            )
         return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     def get_payout(self, payout_id: str) -> WavePayoutResponse:
@@ -340,6 +485,38 @@ class WaveClient:
         )
         return parse_model(response, WavePayoutResponse, reference_id=payout_id)
 
+    def reverse_payout(self, payout_id: str) -> dict[str, Any]:
+        """Reverse a Wave payout (``POST /v1/payout/{id}/reverse``)."""
+        encoded = encode_path_segment(payout_id, field_name="payout_id")
+        headers = self._headers()
+        if self._config.signing_secret is not None:
+            headers["Wave-Signature"] = _sign_wave_request(
+                b"", self._config.signing_secret
+            )
+        response = self._http.request(
+            "POST",
+            f"/v1/payout/{encoded}/reverse",
+            headers=headers,
+            content=b"",
+            idempotent=False,
+            reference_id=payout_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=payout_id)
+
+    def search_payouts(self, client_reference: str) -> list[WavePayoutResponse]:
+        """Search Wave payouts by ``client_reference``."""
+        encoded = _encode_wave_query_ref(client_reference)
+        response = self._http.request(
+            "GET",
+            f"/v1/payouts/search?client_reference={encoded}",
+            headers=self._headers(),
+            reference_id=client_reference,
+        )
+        res = parse_json_dict(response, reference_id=client_reference)
+        return _parse_wave_search_results(
+            res, WavePayoutResponse, reference_id=client_reference
+        )
+
     def get_balance(self) -> WaveBalanceResponse:
         """Retrieve the Wave merchant balance."""
         response = self._http.request(
@@ -350,7 +527,12 @@ class WaveClient:
         return parse_model(response, WaveBalanceResponse)
 
     def verify_webhook(
-        self, payload: bytes, signature_header: str, *, tolerance_seconds: int = 300
+        self,
+        payload: bytes,
+        signature_header: str,
+        *,
+        tolerance_seconds: int = 300,
+        max_future_skew_seconds: float = _WAVE_DEFAULT_MAX_FUTURE_SKEW_SECONDS,
     ) -> None:
         """Verify a ``Wave-Signature`` header against raw request body bytes."""
         WebhookHandler.verify_timestamped_hmac_signature(
@@ -358,6 +540,7 @@ class WaveClient:
             signature_header,
             self._config.webhook_secret or "",
             tolerance_seconds=tolerance_seconds,
+            max_future_skew_seconds=max_future_skew_seconds,
             timestamp_separator="",
         )
 
@@ -413,6 +596,7 @@ class AsyncWaveClient:
         client_reference: str | None = None,
         success_url: str | None = None,
         error_url: str | None = None,
+        restrict_payer_mobile: str | None = None,
     ) -> WaveCheckoutSession:
         validated_amount = validate_amount(amount)
         validated_currency = validate_currency(currency)
@@ -431,17 +615,22 @@ class AsyncWaveClient:
                 "success_url and error_url are required for Wave checkout sessions"
             )
         ref = client_reference or generate_reference_id()
+        payload: dict[str, Any] = {
+            "amount": validated_amount,
+            "currency": validated_currency,
+            "success_url": resolved_success,
+            "error_url": resolved_error,
+            "client_reference": ref,
+        }
+        if restrict_payer_mobile is not None:
+            payload["restrict_payer_mobile"] = (
+                f"+{normalise_msisdn(restrict_payer_mobile)}"
+            )
         response = await self._http.request(
             "POST",
             "/v1/checkout/sessions",
             headers=self._headers(idempotency_key=ref),
-            json={
-                "amount": validated_amount,
-                "currency": validated_currency,
-                "success_url": resolved_success,
-                "error_url": resolved_error,
-                "client_reference": ref,
-            },
+            json=payload,
             idempotent=True,
             reference_id=ref,
         )
@@ -456,6 +645,46 @@ class AsyncWaveClient:
             reference_id=session_id,
         )
         return parse_model(response, WaveCheckoutSession, reference_id=session_id)
+
+    async def refund_checkout_session(self, session_id: str) -> dict[str, Any]:
+        """Refund a completed Wave checkout session asynchronously."""
+        encoded = encode_path_segment(session_id, field_name="session_id")
+        response = await self._http.request(
+            "POST",
+            f"/v1/checkout/sessions/{encoded}/refund",
+            headers=self._headers(),
+            idempotent=False,
+            reference_id=session_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=session_id)
+
+    async def expire_checkout_session(self, session_id: str) -> dict[str, Any]:
+        """Expire an open Wave checkout session asynchronously."""
+        encoded = encode_path_segment(session_id, field_name="session_id")
+        response = await self._http.request(
+            "POST",
+            f"/v1/checkout/sessions/{encoded}/expire",
+            headers=self._headers(),
+            idempotent=True,
+            reference_id=session_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=session_id)
+
+    async def search_checkout_sessions(
+        self, client_reference: str
+    ) -> list[WaveCheckoutSession]:
+        """Search Wave checkout sessions by ``client_reference`` asynchronously."""
+        encoded = _encode_wave_query_ref(client_reference)
+        response = await self._http.request(
+            "GET",
+            f"/v1/checkout/sessions/search?client_reference={encoded}",
+            headers=self._headers(),
+            reference_id=client_reference,
+        )
+        res = parse_json_dict(response, reference_id=client_reference)
+        return _parse_wave_search_results(
+            res, WaveCheckoutSession, reference_id=client_reference
+        )
 
     async def create_payout(
         self,
@@ -488,14 +717,29 @@ class AsyncWaveClient:
                 if not isinstance(val, str) or not val.strip():
                     raise ValueError(f"{key} must not be blank")
                 payload[key] = val.strip()
-        response = await self._http.request(
-            "POST",
-            "/v1/payout",
-            headers=self._headers(idempotency_key=ref),
-            json=payload,
-            idempotent=True,
-            reference_id=ref,
-        )
+        headers = self._headers(idempotency_key=ref)
+        if self._config.signing_secret is not None:
+            raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            headers["Wave-Signature"] = _sign_wave_request(
+                raw_body, self._config.signing_secret
+            )
+            response = await self._http.request(
+                "POST",
+                "/v1/payout",
+                headers=headers,
+                content=raw_body,
+                idempotent=True,
+                reference_id=ref,
+            )
+        else:
+            response = await self._http.request(
+                "POST",
+                "/v1/payout",
+                headers=headers,
+                json=payload,
+                idempotent=True,
+                reference_id=ref,
+            )
         return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     async def get_payout(self, payout_id: str) -> WavePayoutResponse:
@@ -508,6 +752,38 @@ class AsyncWaveClient:
         )
         return parse_model(response, WavePayoutResponse, reference_id=payout_id)
 
+    async def reverse_payout(self, payout_id: str) -> dict[str, Any]:
+        """Reverse a Wave payout asynchronously."""
+        encoded = encode_path_segment(payout_id, field_name="payout_id")
+        headers = self._headers()
+        if self._config.signing_secret is not None:
+            headers["Wave-Signature"] = _sign_wave_request(
+                b"", self._config.signing_secret
+            )
+        response = await self._http.request(
+            "POST",
+            f"/v1/payout/{encoded}/reverse",
+            headers=headers,
+            content=b"",
+            idempotent=False,
+            reference_id=payout_id,
+        )
+        return _parse_optional_json_dict(response, reference_id=payout_id)
+
+    async def search_payouts(self, client_reference: str) -> list[WavePayoutResponse]:
+        """Search Wave payouts by ``client_reference`` asynchronously."""
+        encoded = _encode_wave_query_ref(client_reference)
+        response = await self._http.request(
+            "GET",
+            f"/v1/payouts/search?client_reference={encoded}",
+            headers=self._headers(),
+            reference_id=client_reference,
+        )
+        res = parse_json_dict(response, reference_id=client_reference)
+        return _parse_wave_search_results(
+            res, WavePayoutResponse, reference_id=client_reference
+        )
+
     async def get_balance(self) -> WaveBalanceResponse:
         response = await self._http.request(
             "GET",
@@ -517,7 +793,12 @@ class AsyncWaveClient:
         return parse_model(response, WaveBalanceResponse)
 
     def verify_webhook(
-        self, payload: bytes, signature_header: str, *, tolerance_seconds: int = 300
+        self,
+        payload: bytes,
+        signature_header: str,
+        *,
+        tolerance_seconds: int = 300,
+        max_future_skew_seconds: float = _WAVE_DEFAULT_MAX_FUTURE_SKEW_SECONDS,
     ) -> None:
         """Verify a ``Wave-Signature`` header against raw request body bytes."""
         WebhookHandler.verify_timestamped_hmac_signature(
@@ -525,6 +806,7 @@ class AsyncWaveClient:
             signature_header,
             self._config.webhook_secret or "",
             tolerance_seconds=tolerance_seconds,
+            max_future_skew_seconds=max_future_skew_seconds,
             timestamp_separator="",
         )
 

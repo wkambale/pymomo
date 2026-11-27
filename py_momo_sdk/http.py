@@ -216,12 +216,13 @@ class HttpClient:
         headers: dict[str, str],
         json: Any,
         data: Any,
+        content: bytes | None = None,
     ) -> httpx.Response:
         target = (
             path if str(self._client.base_url) else f"{self._validated_base_url}{path}"
         )
         req = self._client.build_request(
-            method, target, headers=headers, json=json, data=data
+            method, target, headers=headers, json=json, data=data, content=content
         )
         response = self._client.send(req, stream=True, follow_redirects=False)
         try:
@@ -254,6 +255,7 @@ class HttpClient:
         headers: dict[str, str],
         json: Any,
         data: Any,
+        content: bytes | None = None,
         timeout_msg: str,
         conn_msg: str,
         idempotent: bool | None = None,
@@ -277,7 +279,12 @@ class HttpClient:
             started = time.monotonic()
             try:
                 response = self._execute_bounded_request(
-                    method, path, headers=headers, json=json, data=data
+                    method,
+                    path,
+                    headers=headers,
+                    json=json,
+                    data=data,
+                    content=content,
                 )
             except _ResponseTooLargeError as exc:
                 self._emit_telemetry(
@@ -369,6 +376,7 @@ class HttpClient:
         headers: dict[str, str],
         json: Any = None,
         data: Any = None,
+        content: bytes | None = None,
         product_name: str | None = None,
         token_cache: TokenCache | None = None,
         token_refresher: Callable[[], str] | None = None,
@@ -391,6 +399,7 @@ class HttpClient:
             headers=headers,
             json=json,
             data=data,
+            content=content,
             timeout_msg=f"Request timed out: {method} {safe_path}",
             conn_msg=f"Connection error: {method} {safe_path}",
             idempotent=idempotent,
@@ -440,6 +449,7 @@ class HttpClient:
                 headers=retry_headers,
                 json=json,
                 data=data,
+                content=content,
                 timeout_msg=f"Request timed out on retry: {method} {safe_path}",
                 conn_msg=f"Connection error on retry: {method} {safe_path}",
                 idempotent=idempotent,
