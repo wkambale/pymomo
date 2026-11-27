@@ -84,3 +84,23 @@ class AsyncAirtelCollection:
         return parse_model(
             response, AirtelTransactionResponse, reference_id=reference_id
         )
+
+    async def refund(self, airtel_money_id: str) -> AirtelTransactionResponse:
+        """Refund a completed collection payment asynchronously (``POST /standard/v1/payments/refund``)."""
+        validate_airtel_reference_id(airtel_money_id)
+        response = await self._client.request(
+            "POST",
+            "/standard/v1/payments/refund",
+            json={"transaction": {"airtel_money_id": airtel_money_id}},
+            reference_id=airtel_money_id,
+        )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_response_status(parsed, reference_id=airtel_money_id)
+        return parse_model(
+            response, AirtelTransactionResponse, reference_id=airtel_money_id
+        )

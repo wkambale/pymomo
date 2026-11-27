@@ -12,6 +12,11 @@ from py_momo_sdk._async.airtel.products.collection import AsyncAirtelCollection
 from py_momo_sdk._async.airtel.products.disbursement import AsyncAirtelDisbursement
 from py_momo_sdk.airtel.client import _merge_airtel_headers, _raise_for_airtel_status
 from py_momo_sdk.airtel.config import AirtelConfig
+from py_momo_sdk.airtel.models import (
+    AirtelUserResponse,
+    check_airtel_response_status,
+    normalise_airtel_msisdn,
+)
 from py_momo_sdk.exceptions import AuthenticationError, PyMomoSDKError
 from py_momo_sdk.http import (
     _RETRYABLE_STATUS_CODES,
@@ -21,13 +26,16 @@ from py_momo_sdk.http import (
     _is_retryable_request,
     _ResponseTooLargeError,
     _sanitize_telemetry_path,
+    parse_model,
 )
 from py_momo_sdk.telemetry import RequestTelemetryEvent, TelemetryHook
 from py_momo_sdk.utils import (
+    encode_path_segment,
     validate_base_url,
     validate_matching_origin,
     validate_request_path,
 )
+from py_momo_sdk.webhooks import WebhookHandler
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -335,6 +343,35 @@ class AsyncAirtelClient:
 
         _raise_for_airtel_status(response, reference_id=effective_ref)
         return response
+
+    async def get_user_info(self, msisdn: str) -> AirtelUserResponse:
+        """Query subscriber KYC info asynchronously via ``GET /standard/v1/users/{msisdn}``."""
+        local_msisdn = normalise_airtel_msisdn(msisdn, self._config.country)
+        encoded = encode_path_segment(local_msisdn, field_name="msisdn")
+        response = await self.request("GET", f"/standard/v1/users/{encoded}")
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_response_status(parsed)
+        return parse_model(response, AirtelUserResponse)
+
+    def verify_webhook(
+        self, payload: bytes, signature: str, *, secret: str | None = None
+    ) -> None:
+        """Verify an Airtel callback Base64 HMAC-SHA256 ``x-signature`` header."""
+        resolved_secret = (
+            secret if secret is not None else (self._config.webhook_secret or "")
+        )
+        WebhookHandler.verify_hmac_signature(
+            payload,
+            signature,
+            resolved_secret,
+            algorithm="sha256",
+            encoding="base64",
+        )
 
     async def close(self) -> None:
         """Close the underlying async HTTP session if owned by this client."""

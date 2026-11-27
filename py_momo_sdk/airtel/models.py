@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from py_momo_sdk.exceptions import (
     BadRequestError,
@@ -329,10 +329,12 @@ class AirtelTransactionResponse(BaseModel):
 class AirtelWalletDetails(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    msisdn: str
+    msisdn: str = ""
     balance: str
     currency: str
-    status: str
+    status: str = ""
+    account_status: str | None = None
+    account_type: str | None = None
 
 
 class AirtelWalletData(BaseModel):
@@ -340,9 +342,62 @@ class AirtelWalletData(BaseModel):
 
     wallet: AirtelWalletDetails
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_flat_balance(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "wallet" not in data and "balance" in data:
+            return {
+                "wallet": {
+                    "msisdn": str(data.get("msisdn") or ""),
+                    "balance": str(data["balance"]),
+                    "currency": str(data.get("currency") or ""),
+                    "status": str(
+                        data.get("account_status") or data.get("status") or ""
+                    ),
+                    "account_status": data.get("account_status"),
+                    "account_type": data.get("account_type"),
+                }
+            }
+        return data
+
 
 class AirtelBalanceResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     data: AirtelWalletData
+    status: AirtelStatus | None = None
+
+    @property
+    def balance(self) -> str:
+        return self.data.wallet.balance
+
+    @property
+    def currency(self) -> str:
+        return self.data.wallet.currency
+
+    @property
+    def account_status(self) -> str | None:
+        return self.data.wallet.account_status or self.data.wallet.status or None
+
+    @property
+    def account_type(self) -> str | None:
+        return self.data.wallet.account_type
+
+
+class AirtelUserInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    first_name: str | None = None
+    last_name: str | None = None
+    msisdn: str | None = None
+    grade: str | None = None
+    is_barred: bool | None = None
+    is_pin_set: bool | None = None
+    registration: dict[str, Any] | None = None
+
+
+class AirtelUserResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    data: AirtelUserInfo
     status: AirtelStatus | None = None

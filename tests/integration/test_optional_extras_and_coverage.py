@@ -351,7 +351,7 @@ async def test_airtel_provider_sync_and_async_full_surface(
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {
@@ -394,7 +394,7 @@ async def test_airtel_provider_sync_and_async_full_surface(
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {

@@ -34,23 +34,27 @@ class WebhookHandler:
         secret: str,
         *,
         algorithm: str = "sha256",
+        encoding: str = "hex",
     ) -> None:
         """Verify an HMAC signature over a raw webhook request body.
 
         Uses constant-time digest comparison to prevent timing side-channels.
-        Supports either a raw hex digest or an ``"<algorithm>=<hex>"`` header
-        value.
+        Supports hex digests (raw or ``"<algorithm>=<hex>"``) and Base64
+        digests (``encoding="base64"``, used by gateways such as Airtel Money).
 
         Args:
             payload: Raw request body bytes.
             signature: Signature header value received with the webhook.
             secret: Shared secret key configured on the webhook gateway.
             algorithm: Hash algorithm name (``"sha256"`` or ``"sha512"``).
+            encoding: Digest encoding (``"hex"`` or ``"base64"``).
 
         Raises:
-            WebhookVerificationError: If any input is missing, the algorithm is
-                unsupported, or the signature does not match.
+            WebhookVerificationError: If any input is missing, the algorithm or
+                encoding is unsupported, or the signature does not match.
         """
+        import base64
+
         if not isinstance(algorithm, str):
             raise WebhookVerificationError(
                 f"Unsupported webhook signature algorithm: {algorithm}"
@@ -61,6 +65,11 @@ class WebhookHandler:
             raise WebhookVerificationError(
                 f"Unsupported webhook signature algorithm: {algorithm}"
             )
+        if not isinstance(encoding, str) or encoding.lower() not in {"hex", "base64"}:
+            raise WebhookVerificationError(
+                f"Unsupported webhook signature encoding: {encoding}"
+            )
+        enc = encoding.lower()
         if not isinstance(payload, (bytes, bytearray)):
             raise WebhookVerificationError("Webhook payload must be bytes")
         if not isinstance(secret, str) or not secret:
@@ -71,21 +80,22 @@ class WebhookHandler:
             raise WebhookVerificationError("Webhook signature must not be empty")
 
         provided = signature.strip()
-        prefix = f"{algo}="
-        if provided.lower().startswith(prefix):
-            provided = provided[len(prefix) :]
-
-        expected_bytes = (
-            hmac.new(
-                secret.encode("utf-8"),
-                bytes(payload),
-                digest_fn,
-            )
-            .hexdigest()
-            .encode("ascii")
+        mac = hmac.new(
+            secret.encode("utf-8"),
+            bytes(payload),
+            digest_fn,
         )
+        if enc == "base64":
+            expected_bytes = base64.b64encode(mac.digest())
+            provided_bytes = provided.encode("utf-8")
+        else:
+            prefix = f"{algo}="
+            if provided.lower().startswith(prefix):
+                provided = provided[len(prefix) :]
+            expected_bytes = mac.hexdigest().encode("ascii")
+            provided_bytes = provided.lower().encode("utf-8")
 
-        if not hmac.compare_digest(expected_bytes, provided.lower().encode("utf-8")):
+        if not hmac.compare_digest(expected_bytes, provided_bytes):
             raise WebhookVerificationError("Webhook signature verification failed")
 
     @staticmethod

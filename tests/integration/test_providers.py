@@ -453,7 +453,7 @@ def test_mtn_and_airtel_providers_full_sync_methods(httpx_mock: HTTPXMock) -> No
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {
@@ -537,7 +537,7 @@ async def test_async_mtn_airtel_wave_disburse_and_status(
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
         json={
             "data": {
                 "wallet": {

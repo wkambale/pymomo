@@ -236,7 +236,7 @@ def test_airtel_disbursement_flow(httpx_mock: HTTPXMock) -> None:
         # Mock balance check
         httpx_mock.add_response(
             method="GET",
-            url="https://openapiuat.airtel.africa/merchant/v2/wallets/balance/",
+            url="https://openapiuat.airtel.africa/standard/v1/users/balance",
             json={
                 "data": {
                     "wallet": {
@@ -808,7 +808,7 @@ def test_airtel_protocol_auth_and_predicate_fixes_issue_84() -> None:
                     },
                 },
             )
-        if req.url.path == "/merchant/v2/wallets/balance/":
+        if req.url.path == "/standard/v1/users/balance":
             return httpx.Response(
                 200,
                 json={
@@ -921,3 +921,162 @@ def test_airtel_protocol_auth_and_predicate_fixes_issue_84() -> None:
         resp_fail.is_pending(),
         resp_fail.is_failed(),
     ) == (False, False, True)
+
+
+@pytest.mark.asyncio
+async def test_issue_131_airtel_flat_balance_refund_kyc_and_webhook_hmac(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #131: flat /standard/v1/users/balance, disbursement fields, refund, KYC, and Base64 HMAC."""
+    import base64
+    import hashlib
+    import hmac
+
+    from py_momo_sdk import (
+        AirtelClient,
+        AirtelConfig,
+        AirtelMoneyProvider,
+        AsyncAirtelClient,
+        WebhookVerificationError,
+    )
+
+    cfg = AirtelConfig(
+        client_id="cid-131",
+        client_secret="csec-131",
+        country="UG",
+        currency="UGX",
+        pin="1234",
+        webhook_secret="airtel-wh-secret",
+    )
+
+    # Sync: token + flat balance + disbursement + refund + KYC user enquiry
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "tok-131-sync", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/users/balance",
+        json={
+            "data": {
+                "balance": "245000.00",
+                "currency": "UGX",
+                "account_status": "ACTIVE",
+                "account_type": "MERCHANT",
+            },
+            "status": {"code": "200", "message": "Success", "success": True},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/standard/v1/disbursements/",
+        json={
+            "data": {"transaction": {"id": "air-disb-131", "status": "TS"}},
+            "status": {"code": "200", "message": "Success", "success": True},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/standard/v1/payments/refund",
+        json={
+            "data": {
+                "transaction": {
+                    "airtel_money_id": "MP131001",
+                    "status": "TS",
+                }
+            },
+            "status": {"code": "200", "message": "SUCCESS", "success": True},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/users/701234567",
+        json={
+            "data": {
+                "first_name": "Grace",
+                "last_name": "Kato",
+                "msisdn": "701234567",
+                "grade": "SUBS",
+                "is_barred": False,
+                "is_pin_set": True,
+            },
+            "status": {"code": "200", "message": "Success", "success": True},
+        },
+        status_code=200,
+    )
+
+    with AirtelClient(cfg) as sync_client:
+        bal = sync_client.disbursement.get_balance()
+        assert bal.balance == "245000.00"
+        assert bal.currency == "UGX"
+        assert bal.account_status == "ACTIVE"
+        assert bal.account_type == "MERCHANT"
+        assert bal.data.wallet.balance == "245000.00"
+
+        sync_client.disbursement.transfer(
+            "5000", "+256701234567", reference_id="air-disb-131"
+        )
+        disb_req = next(
+            r
+            for r in httpx_mock.get_requests()
+            if r.url.path == "/standard/v1/disbursements/"
+        )
+        disb_body = json.loads(disb_req.read().decode("utf-8"))
+        assert disb_body["transaction"]["country"] == "UG"
+        assert disb_body["transaction"]["currency"] == "UGX"
+
+        refund_res = sync_client.collection.refund("MP131001")
+        assert refund_res.is_successful() is True
+
+        kyc = sync_client.get_user_info("+256701234567")
+        assert kyc.data.first_name == "Grace"
+        assert kyc.data.is_pin_set is True
+
+        # Base64 HMAC-SHA256 webhook verification
+        raw_body = b'{"transaction":{"id":"tx-131","status_code":"TS"}}'
+        good_sig = base64.b64encode(
+            hmac.new(b"airtel-wh-secret", raw_body, hashlib.sha256).digest()
+        ).decode("ascii")
+        sync_client.verify_webhook(raw_body, good_sig)
+        with pytest.raises(WebhookVerificationError):
+            sync_client.verify_webhook(raw_body, "invalid-b64-sig")
+
+        prov = AirtelMoneyProvider(sync_client)
+        assert prov.capabilities.supports_webhook_hmac is True
+
+    # Async parity: token + refund + KYC + verify_webhook
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "tok-131-async", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/standard/v1/payments/refund",
+        json={
+            "data": {"transaction": {"airtel_money_id": "MP131002", "status": "TS"}},
+            "status": {"code": "200", "message": "SUCCESS", "success": True},
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/users/701234567",
+        json={
+            "data": {"first_name": "Async", "last_name": "User", "msisdn": "701234567"},
+            "status": {"code": "200", "message": "Success", "success": True},
+        },
+        status_code=200,
+    )
+    async with AsyncAirtelClient(cfg) as async_client:
+        aref = await async_client.collection.refund("MP131002")
+        assert aref.is_successful() is True
+        akyc = await async_client.get_user_info("0701234567")
+        assert akyc.data.first_name == "Async"
+        async_client.verify_webhook(raw_body, good_sig)

@@ -59,6 +59,8 @@ class AsyncAirtelDisbursement:
                 amount=amount,
                 id=ref,
                 type=transaction_type,
+                country=self._client._config.country,
+                currency=self._client._config.currency,
             ),
         )
 
@@ -94,7 +96,7 @@ class AsyncAirtelDisbursement:
         """Query the merchant wallet balance asynchronously."""
         response = await self._client.request(
             "GET",
-            "/merchant/v2/wallets/balance/",
+            "/standard/v1/users/balance",
         )
         if response.content:
             try:
