@@ -3,19 +3,17 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.config import PRODUCTION_BASE_URL, SANDBOX, PyMomoSDKConfig
+from py_momo_sdk.config import SANDBOX, PyMomoSDKConfig
 from py_momo_sdk.exceptions import MissingCredentialsError, PyMomoSDKError
 from py_momo_sdk.http import parse_model
 from py_momo_sdk.models import ApiKeyResult, ApiUserInfo
-from py_momo_sdk.sandbox import ProvisionResult
+from py_momo_sdk.sandbox import _PRODUCTION_HOSTS, ProvisionResult
 from py_momo_sdk.utils import (
     generate_reference_id,
     validate_callback_host,
     validate_header_value,
     validate_reference_id,
 )
-
-_PRODUCTION_HOST = (urlsplit(PRODUCTION_BASE_URL).hostname or "").lower()
 
 
 class AsyncSandboxProvisioner:
@@ -82,7 +80,8 @@ class AsyncSandboxProvisioner:
         ):
             if (
                 target_url
-                and (urlsplit(target_url).hostname or "").lower() == _PRODUCTION_HOST
+                and (urlsplit(target_url).hostname or "").lower().rstrip(".")
+                in _PRODUCTION_HOSTS
             ):
                 raise PyMomoSDKError(
                     "AsyncSandboxProvisioner can only be used with the sandbox environment"

@@ -330,3 +330,28 @@ async def test_sandbox_production_guard_bypasses_and_mixed_init_issue_80() -> No
     async with AsyncHttpClient("https://sandbox.momodeveloper.mtn.com", 30.0) as ahc_ok:
         asp = AsyncSandboxProvisioner(valid_cfg, http=ahc_ok)
         assert asp._http is ahc_ok
+
+
+@pytest.mark.asyncio
+async def test_issue_127_sandbox_blocks_trailing_dot_and_one_api_prod_hosts() -> None:
+    """Verify Issue #127: trailing-dot FQDNs and momoapi.momo.africa are rejected by provisioners."""
+    from py_momo_sdk import AsyncSandboxProvisioner, SandboxProvisioner
+    from py_momo_sdk._async.http import AsyncHttpClient
+    from py_momo_sdk.exceptions import PyMomoSDKError
+    from py_momo_sdk.http import HttpClient
+
+    prod_urls = (
+        "https://proxy.momoapi.mtn.com.",
+        "https://PROXY.MOMOAPI.MTN.COM.",
+        "https://momoapi.momo.africa",
+        "https://momoapi.momo.africa.",
+    )
+    for prod_url in prod_urls:
+        with (
+            HttpClient(prod_url, 30.0) as hc,
+            pytest.raises(PyMomoSDKError, match="sandbox environment"),
+        ):
+            SandboxProvisioner("sub-key", hc)
+        async with AsyncHttpClient(prod_url, 30.0) as ahc:
+            with pytest.raises(PyMomoSDKError, match="sandbox environment"):
+                AsyncSandboxProvisioner("sub-key", ahc)

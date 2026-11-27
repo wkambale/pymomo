@@ -13,7 +13,12 @@ from py_momo_sdk.utils import (
     validate_reference_id,
 )
 
-_PRODUCTION_HOST = (urlsplit(PRODUCTION_BASE_URL).hostname or "").lower()
+_PRODUCTION_HOSTS = frozenset(
+    {
+        (urlsplit(PRODUCTION_BASE_URL).hostname or "").lower().rstrip("."),
+        "momoapi.momo.africa",
+    }
+)
 
 
 class ProvisionResult(dict[str, str]):
@@ -90,7 +95,8 @@ class SandboxProvisioner:
         ):
             if (
                 target_url
-                and (urlsplit(target_url).hostname or "").lower() == _PRODUCTION_HOST
+                and (urlsplit(target_url).hostname or "").lower().rstrip(".")
+                in _PRODUCTION_HOSTS
             ):
                 raise PyMomoSDKError(
                     "SandboxProvisioner can only be used with the sandbox environment"
