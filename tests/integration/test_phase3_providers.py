@@ -3014,3 +3014,305 @@ async def test_issue_135_flutterwave_numeric_transfers_and_momo_endpoints(
 
         aref = await aclient.refund_transaction("88136", amount="100")
         assert aref["data"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_issue_136_wave_outbound_signing_skew_and_endpoints(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #136: Wave outbound payout signing, 30s webhook future-skew limit, and refund/expire/reverse/search endpoints."""
+    import json
+    import time
+
+    from py_momo_sdk import (
+        AsyncWaveClient,
+        PyMomoSDKError,
+        WaveClient,
+        WaveConfig,
+        WebhookHandler,
+        WebhookVerificationError,
+    )
+
+    with pytest.raises(ValueError, match="signing_secret"):
+        WaveConfig(api_key="wave_sn_test_136", signing_secret="   ")
+
+    cfg = WaveConfig(
+        api_key="wave_sn_test_136",
+        webhook_secret="wave-wh-secret-136",
+        signing_secret="wave-sign-secret-136",
+        success_url="https://merchant.example.com/ok",
+        error_url="https://merchant.example.com/err",
+    )
+    assert "wave-sign-secret-136" not in repr(cfg)
+    assert "wave-sign-secret-136" not in str(cfg)
+
+    with WaveClient(cfg) as wc:
+        # Default future skew limit is 30 seconds per Wave specification
+        body_bytes = b'{"type":"checkout.session.completed"}'
+        ok_future_ts = int(time.time()) + 20
+        ok_sig = hmac.new(
+            b"wave-wh-secret-136",
+            str(ok_future_ts).encode("ascii") + body_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+        wc.verify_webhook(body_bytes, f"t={ok_future_ts},v1={ok_sig}")
+
+        too_future_ts = int(time.time()) + 45
+        too_future_sig = hmac.new(
+            b"wave-wh-secret-136",
+            str(too_future_ts).encode("ascii") + body_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+        with pytest.raises(WebhookVerificationError, match="future"):
+            wc.verify_webhook(body_bytes, f"t={too_future_ts},v1={too_future_sig}")
+
+        # Explicit override still supported
+        wc.verify_webhook(
+            body_bytes,
+            f"t={too_future_ts},v1={too_future_sig}",
+            max_future_skew_seconds=60.0,
+        )
+
+        # Outbound Wave-Signature on POST /v1/payout and POST /v1/payout/{id}/reverse
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/checkout/sessions",
+            json={
+                "id": "cos-136-sync",
+                "amount": "5000",
+                "currency": "XOF",
+                "checkout_status": "open",
+                "payment_status": "processing",
+                "client_reference": "wref-136",
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/checkout/sessions/cos-136-sync/refund",
+            content=b"",
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/checkout/sessions/cos-136-sync/expire",
+            json={"id": "cos-136-sync", "checkout_status": "expired"},
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.wave.com/v1/checkout/sessions/search?client_reference=wref-136",
+            json={
+                "result": [
+                    {
+                        "id": "cos-136-sync",
+                        "amount": "5000",
+                        "currency": "XOF",
+                        "client_reference": "wref-136",
+                    }
+                ]
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/payout",
+            json={
+                "id": "pt-136-sync",
+                "receive_amount": "2000",
+                "currency": "XOF",
+                "status": "succeeded",
+                "client_reference": "wpay-136",
+            },
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.wave.com/v1/payout/pt-136-sync/reverse",
+            content=b"",
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.wave.com/v1/payouts/search?client_reference=wpay-136",
+            json={
+                "result": [
+                    {
+                        "id": "pt-136-sync",
+                        "receive_amount": "2000",
+                        "currency": "XOF",
+                        "status": "reversed",
+                        "client_reference": "wpay-136",
+                    }
+                ]
+            },
+            status_code=200,
+        )
+
+        sess = wc.create_checkout_session(
+            "5000",
+            "XOF",
+            client_reference="wref-136",
+            restrict_payer_mobile="221771234567",
+        )
+        assert sess.id == "cos-136-sync"
+        assert wc.refund_checkout_session("cos-136-sync") == {}
+        assert (
+            wc.expire_checkout_session("cos-136-sync")["checkout_status"] == "expired"
+        )
+        found_sessions = wc.search_checkout_sessions("wref-136")
+        assert len(found_sessions) == 1 and found_sessions[0].id == "cos-136-sync"
+
+        payout = wc.create_payout(
+            "2000", "XOF", "221771234567", client_reference="wpay-136"
+        )
+        assert payout.id == "pt-136-sync"
+        assert wc.reverse_payout("pt-136-sync") == {}
+        found_payouts = wc.search_payouts("wpay-136")
+        assert len(found_payouts) == 1 and found_payouts[0].status == "reversed"
+
+        # Cryptographically verify outbound Wave-Signature matches wire bytes!
+        reqs = httpx_mock.get_requests()
+        cs_req = next(r for r in reqs if r.url.path == "/v1/checkout/sessions")
+        assert json.loads(cs_req.read().decode("utf-8"))["restrict_payer_mobile"] == (
+            "+221771234567"
+        )
+
+        payout_req = next(r for r in reqs if r.url.path == "/v1/payout")
+        payout_sig = payout_req.headers["Wave-Signature"]
+        WebhookHandler.verify_timestamped_hmac_signature(
+            payout_req.read(),
+            payout_sig,
+            "wave-sign-secret-136",
+            timestamp_separator="",
+        )
+
+        rev_req = next(
+            r for r in reqs if r.url.path == "/v1/payout/pt-136-sync/reverse"
+        )
+        WebhookHandler.verify_timestamped_hmac_signature(
+            rev_req.read(),
+            rev_req.headers["Wave-Signature"],
+            "wave-sign-secret-136",
+            timestamp_separator="",
+        )
+
+        # Malformed search responses & empty query validation
+        with pytest.raises(ValueError, match="client_reference"):
+            wc.search_payouts("   ")
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.wave.com/v1/payouts/search?client_reference=bad-list",
+            json={"result": "not-a-list"},
+            status_code=200,
+        )
+        with pytest.raises(PyMomoSDKError, match="expected list"):
+            wc.search_payouts("bad-list")
+
+    # Async parity
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+        json={
+            "id": "cos-136-async",
+            "amount": "5000",
+            "currency": "XOF",
+            "client_reference": "wref-136-a",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions/cos-136-async/refund",
+        json={"status": "refunded"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions/cos-136-async/expire",
+        content=b"",
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/checkout/sessions/search?client_reference=wref-136-a",
+        json={
+            "result": [
+                {
+                    "id": "cos-136-async",
+                    "amount": "5000",
+                    "currency": "XOF",
+                    "client_reference": "wref-136-a",
+                }
+            ]
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        json={
+            "id": "pt-136-async",
+            "receive_amount": "2000",
+            "currency": "XOF",
+            "status": "succeeded",
+            "client_reference": "wpay-136-a",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout/pt-136-async/reverse",
+        json={"status": "reversed"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/payouts/search?client_reference=wpay-136-a",
+        json={
+            "result": [
+                {
+                    "id": "pt-136-async",
+                    "receive_amount": "2000",
+                    "currency": "XOF",
+                    "status": "reversed",
+                    "client_reference": "wpay-136-a",
+                }
+            ]
+        },
+        status_code=200,
+    )
+
+    async with AsyncWaveClient(cfg) as awc:
+        with pytest.raises(WebhookVerificationError, match="future"):
+            awc.verify_webhook(body_bytes, f"t={too_future_ts},v1={too_future_sig}")
+
+        asess = await awc.create_checkout_session(
+            "5000",
+            "XOF",
+            client_reference="wref-136-a",
+            restrict_payer_mobile="221771234567",
+        )
+        assert asess.id == "cos-136-async"
+        assert (await awc.refund_checkout_session("cos-136-async"))["status"] == (
+            "refunded"
+        )
+        assert await awc.expire_checkout_session("cos-136-async") == {}
+        assert len(await awc.search_checkout_sessions("wref-136-a")) == 1
+
+        apayout = await awc.create_payout(
+            "2000", "XOF", "221771234567", client_reference="wpay-136-a"
+        )
+        assert apayout.id == "pt-136-async"
+        assert (await awc.reverse_payout("pt-136-async"))["status"] == "reversed"
+        assert len(await awc.search_payouts("wpay-136-a")) == 1
+
+        async_payout_req = [
+            r for r in httpx_mock.get_requests() if r.url.path == "/v1/payout"
+        ][-1]
+        WebhookHandler.verify_timestamped_hmac_signature(
+            async_payout_req.read(),
+            async_payout_req.headers["Wave-Signature"],
+            "wave-sign-secret-136",
+            timestamp_separator="",
+        )
