@@ -710,3 +710,74 @@ def test_cli_error_output_includes_reference_id_and_reason_issue_115(
     assert "INVALID_CALLBACK_URL_HOST" in err_output
     assert "Host mismatch" in err_output
     assert f"(reference_id: {ref})" in err_output
+
+
+def test_issue_125_cli_output_file_rejects_symlinks_and_tightens_permissions(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """Verify Issue #125: --output-file rejects symlinks/dirs and enforces 0600 on existing files."""
+    import stat
+
+    sub_file = tmp_path / "sub.key"
+    sub_file.write_text("sub-125\n", encoding="utf-8")
+    uid = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+
+    def _queue_provision() -> None:
+        httpx_mock.add_response(
+            method="POST",
+            url="https://sandbox.momodeveloper.mtn.com/v1_0/apiuser",
+            status_code=201,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"https://sandbox.momodeveloper.mtn.com/v1_0/apiuser/{uid}/apikey",
+            json={"apiKey": "secret-125-key"},
+            status_code=201,
+        )
+
+    # 1. Symlink target must be rejected without modifying the target file
+    target_file = tmp_path / "target.txt"
+    target_file.write_text("original-content", encoding="utf-8")
+    symlink_path = tmp_path / "creds-link.json"
+    symlink_path.symlink_to(target_file)
+
+    _queue_provision()
+    with patch("py_momo_sdk.sandbox.generate_reference_id", return_value=uid):
+        sym_res = runner.invoke(
+            app,
+            [
+                "sandbox",
+                "provision",
+                "--subscription-key-file",
+                str(sub_file),
+                "--output-file",
+                str(symlink_path),
+            ],
+        )
+    assert sym_res.exit_code != 0
+    assert target_file.read_text(encoding="utf-8") == "original-content"
+
+    # 2. Pre-existing permissive file (0644) must be tightened to 0600
+    existing_file = tmp_path / "existing-creds.json"
+    existing_file.write_text("{}", encoding="utf-8")
+    existing_file.chmod(0o644)
+    assert stat.S_IMODE(existing_file.stat().st_mode) == 0o644
+
+    _queue_provision()
+    with patch("py_momo_sdk.sandbox.generate_reference_id", return_value=uid):
+        perm_res = runner.invoke(
+            app,
+            [
+                "sandbox",
+                "provision",
+                "--subscription-key-file",
+                str(sub_file),
+                "--output-file",
+                str(existing_file),
+            ],
+        )
+    assert perm_res.exit_code == 0
+    assert stat.S_IMODE(existing_file.stat().st_mode) == 0o600
+    assert json.loads(existing_file.read_text(encoding="utf-8"))["api_key"] == (
+        "secret-125-key"
+    )

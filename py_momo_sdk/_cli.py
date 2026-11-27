@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import functools
 import json
 import os
+import stat
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -38,6 +40,38 @@ app.add_typer(webhook_app, name="webhook")
 
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _write_secret_file(out_path: str, content: str) -> None:
+    """Write sensitive output to a regular mode-0600 file without following symlinks."""
+    try:
+        lstat_res = os.lstat(out_path)
+    except FileNotFoundError:
+        lstat_res = None
+    if lstat_res is not None:
+        if stat.S_ISLNK(lstat_res.st_mode):
+            raise ValueError("Output file must not be a symbolic link")
+        if not stat.S_ISREG(lstat_res.st_mode):
+            raise ValueError("Output file must be a regular file")
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(out_path, flags, 0o600)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError("Output file must not be a symbolic link") from None
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Output file must be a regular file")
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+    except Exception:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(content)
 
 
 def _get_version() -> str:
@@ -247,9 +281,7 @@ def sandbox_provision(
         result = provisioner.provision(callback_host=callback_host)
         out_path = _clean_opt(output_file)
         if out_path is not None:
-            fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(dict(result), indent=2) + "\n")
+            _write_secret_file(out_path, json.dumps(dict(result), indent=2) + "\n")
             _echo_json(
                 {
                     "api_user": result["api_user"],
