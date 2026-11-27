@@ -232,3 +232,32 @@ def test_airtel_token_cache_thread_safety() -> None:
     for t in threads:
         t.join()
     assert not errors
+
+
+def test_issue_123_airtel_auth_direct_constructor_validation() -> None:
+    """Verify Issue #123: AirtelAuth and AsyncAirtelAuth validate URL, credentials, and response limit."""
+    from py_momo_sdk._async.airtel.auth import AsyncAirtelAuth
+
+    for cls in (AirtelAuth, AsyncAirtelAuth):
+        with pytest.raises(ValueError, match="client_id"):
+            cls("   ", "sec", "https://openapiuat.airtel.africa")
+        with pytest.raises(ValueError, match="control characters"):
+            cls("cid\r\n", "sec", "https://openapiuat.airtel.africa")
+        with pytest.raises(ValueError, match="client_secret"):
+            cls("cid", "", "https://openapiuat.airtel.africa")
+        with pytest.raises(ValueError, match="control characters"):
+            cls("cid", "sec\n", "https://openapiuat.airtel.africa")
+        with pytest.raises(PyMomoSDKError, match="HTTPS"):
+            cls("cid", "sec", "http://openapiuat.airtel.africa")
+        with pytest.raises(PyMomoSDKError, match="not allowed"):
+            cls("cid", "sec", "https://169.254.169.254")
+        with pytest.raises(PyMomoSDKError, match="HTTPS"):
+            cls("cid", "sec", "http://localhost:8000", allow_localhost=False)
+        for bad_limit in (0, -10, True):
+            with pytest.raises(ValueError, match="max_response_bytes"):
+                cls(
+                    "cid",
+                    "sec",
+                    "https://openapiuat.airtel.africa",
+                    max_response_bytes=bad_limit,
+                )
