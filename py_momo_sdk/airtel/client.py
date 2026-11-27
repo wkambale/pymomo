@@ -217,7 +217,10 @@ class AirtelClient:
             or max_response_bytes <= 0
         ):
             raise ValueError("max_response_bytes must be a positive integer")
-        base_url = validate_base_url(self._config.base_url or "")
+        allow_localhost = config.environment == "sandbox"
+        base_url = validate_base_url(
+            self._config.base_url or "", allow_localhost=allow_localhost
+        )
         self._validated_base_url = base_url.rstrip("/")
         self._max_response_bytes = max_response_bytes
         self._telemetry = telemetry if telemetry is not None else config.telemetry
@@ -229,12 +232,13 @@ class AirtelClient:
             client_secret=config.client_secret,
             base_url=base_url,
             max_response_bytes=max_response_bytes,
+            allow_localhost=allow_localhost,
         )
 
         if client is not None:
             injected_base = str(client.base_url)
             if injected_base:
-                validate_base_url(injected_base)
+                validate_base_url(injected_base, allow_localhost=allow_localhost)
                 validate_matching_origin(base_url, injected_base)
             self._http = client
         else:

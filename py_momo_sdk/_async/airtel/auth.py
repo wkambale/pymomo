@@ -7,7 +7,11 @@ import weakref
 
 import httpx
 
-from py_momo_sdk.airtel.auth import AirtelTokenCache, _parse_airtel_token_payload
+from py_momo_sdk.airtel.auth import (
+    AirtelTokenCache,
+    _parse_airtel_token_payload,
+    _validate_airtel_auth_params,
+)
 from py_momo_sdk.exceptions import PyMomoSDKError
 from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES
 
@@ -24,11 +28,20 @@ class AsyncAirtelAuth:
         base_url: str,
         *,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        allow_localhost: bool = True,
     ) -> None:
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._base_url = base_url.rstrip("/")
-        self._max_response_bytes = max_response_bytes
+        (
+            self._client_id,
+            self._client_secret,
+            self._base_url,
+            self._max_response_bytes,
+        ) = _validate_airtel_auth_params(
+            client_id,
+            client_secret,
+            base_url,
+            max_response_bytes=max_response_bytes,
+            allow_localhost=allow_localhost,
+        )
         self._cache = AirtelTokenCache()
         self._loop_locks: weakref.WeakKeyDictionary[
             asyncio.AbstractEventLoop, asyncio.Lock

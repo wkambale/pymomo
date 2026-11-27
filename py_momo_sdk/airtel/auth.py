@@ -12,7 +12,7 @@ from py_momo_sdk.http import (
     _extract_error_details,
     _format_error_detail,
 )
-from py_momo_sdk.utils import validate_header_value
+from py_momo_sdk.utils import validate_base_url, validate_header_value
 
 logger = logging.getLogger("py_momo_sdk.airtel.auth")
 _MAX_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
@@ -143,6 +143,31 @@ class AirtelTokenCache:
         return self.__repr__()
 
 
+def _validate_airtel_auth_params(
+    client_id: str,
+    client_secret: str,
+    base_url: str,
+    *,
+    max_response_bytes: int,
+    allow_localhost: bool,
+) -> tuple[str, str, str, int]:
+    """Validate AirtelAuth / AsyncAirtelAuth constructor inputs."""
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("client_id must be a non-empty string")
+    validate_header_value(client_id, field_name="client_id")
+    if not isinstance(client_secret, str) or not client_secret.strip():
+        raise ValueError("client_secret must be a non-empty string")
+    validate_header_value(client_secret, field_name="client_secret")
+    if (
+        isinstance(max_response_bytes, bool)
+        or not isinstance(max_response_bytes, int)
+        or max_response_bytes <= 0
+    ):
+        raise ValueError("max_response_bytes must be a positive integer")
+    validated_url = validate_base_url(base_url, allow_localhost=allow_localhost)
+    return client_id, client_secret, validated_url.rstrip("/"), max_response_bytes
+
+
 class AirtelAuth:
     """Airtel authentication handler."""
 
@@ -153,11 +178,20 @@ class AirtelAuth:
         base_url: str,
         *,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        allow_localhost: bool = True,
     ) -> None:
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._base_url = base_url.rstrip("/")
-        self._max_response_bytes = max_response_bytes
+        (
+            self._client_id,
+            self._client_secret,
+            self._base_url,
+            self._max_response_bytes,
+        ) = _validate_airtel_auth_params(
+            client_id,
+            client_secret,
+            base_url,
+            max_response_bytes=max_response_bytes,
+            allow_localhost=allow_localhost,
+        )
         self._cache = AirtelTokenCache()
         self._refresh_lock = threading.Lock()
 
