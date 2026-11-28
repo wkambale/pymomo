@@ -1002,3 +1002,158 @@ async def test_issue_165_webhook_frameworks_base64_and_airtel_auto_encoding() ->
 
 async def _async_bytes(val: bytes) -> bytes:
     return val
+
+
+def test_issue_167_mock_server_full_v132_endpoint_and_delete_parity() -> None:
+    """Verify Issue #167: real SDK clients exercise all v1.3.2 routes, DELETE, and Orange notif_token against mock server."""
+    from py_momo_sdk import (
+        AirtelClient,
+        AirtelConfig,
+        FlutterwaveClient,
+        FlutterwaveConfig,
+        MpesaClient,
+        MpesaConfig,
+        OrangeMoneyClient,
+        OrangeMoneyConfig,
+        PaystackClient,
+        PaystackConfig,
+        ProductConfig,
+        PyMomoSDK,
+        PyMomoSDKConfig,
+        WaveClient,
+        WaveConfig,
+    )
+
+    srv, _state, _thread = start_mock_server_thread(port=0)
+    port = srv.server_address[1]
+    base = f"http://127.0.0.1:{port}"
+    ref = "550e8400-e29b-41d4-a716-446655440000"
+    try:
+        # 1. MTN MoMo: userinfo, v2 basicuserinfo, deliverynotification, preapproval + DELETE cancel
+        mtn_cfg = PyMomoSDKConfig(
+            base_url=base,
+            collection=ProductConfig(
+                subscription_key="sub", api_user=ref, api_key="key"
+            ),
+        )
+        with PyMomoSDK(mtn_cfg) as mtn:
+            assert mtn.collection.get_user_info_with_consent("tok").name == "Mock User"
+            assert (
+                mtn.collection.get_basic_user_info_by_reference(ref).given_name
+                == "Mock"
+            )
+            mtn.collection.send_delivery_notification(
+                ref, "Paiement reçu", language="fr"
+            )
+            mtn.collection.create_preapproval(
+                "256771234567", "UGX", validity_time=3600, reference_id=ref
+            )
+            assert mtn.collection.get_preapproval_status(ref).is_approved() is True
+            mtn.collection.cancel_preapproval(ref)
+
+        # 2. Airtel Money: refund & get_user_info
+        with AirtelClient(
+            AirtelConfig(
+                client_id="id",
+                client_secret="sec",
+                country="UG",
+                currency="UGX",
+                base_url=base,
+            )
+        ) as airtel:
+            assert airtel.collection.refund("MP001").is_successful() is True
+            assert airtel.get_user_info("256751234567").data.first_name == "Mock"
+
+        # 3. Wave: checkout, search, refund, expire, payout, search, reverse
+        with WaveClient(
+            WaveConfig(
+                api_key="wave_sn_test_1",
+                base_url=base,
+                success_url="https://merchant.example.test/ok",
+                error_url="https://merchant.example.test/err",
+            )
+        ) as wave:
+            sess = wave.create_checkout_session(
+                "1000", "XOF", client_reference="wref-167"
+            )
+            assert len(wave.search_checkout_sessions("wref-167")) == 1
+            wave.expire_checkout_session(sess.id)
+            wave.refund_checkout_session(sess.id)
+
+            pt = wave.create_payout(
+                "500", "XOF", "221771234567", client_reference="wpayout-167"
+            )
+            assert len(wave.search_payouts("wpayout-167")) == 1
+            wave.reverse_payout(pt.id)
+
+        # 4. M-Pesa: transactionstatus, accountbalance, reversal
+        with MpesaClient(
+            MpesaConfig(
+                consumer_key="ck",
+                consumer_secret="cs",
+                short_code="174379",
+                passkey="pk",
+                security_credential="cred",
+                callback_url="https://merchant.example.test/mpesa",
+                base_url=base,
+            )
+        ) as mpesa:
+            assert mpesa.query_transaction_status("OIB123").response_code == "0"
+            assert mpesa.query_account_balance().response_code == "0"
+            assert mpesa.reverse_transaction("OIB123", "100").response_code == "0"
+
+        # 5. Paystack: transferrecipient, list_banks, charge_mobile_money, create_refund
+        with PaystackClient(
+            PaystackConfig(secret_key="sk_test_167", base_url=base)
+        ) as ps:
+            rcp = ps.create_transfer_recipient(
+                "mobile_money", "Alice", "0551234567", "MTN", "GHS"
+            )
+            assert rcp["data"]["recipient_code"].startswith("RCP_mock_")
+            assert len(ps.list_banks(country="ghana")["data"]) == 1
+            chg = ps.charge_mobile_money(
+                "a@b.com", "10.00", "GHS", "0551234567", "mtn", reference="ps-chg-167"
+            )
+            assert chg["status"] is True
+            assert ps.create_refund("ps-chg-167")["status"] is True
+
+        # 6. Flutterwave: charge_mobile_money, verify_transaction_by_id, refund, get_transfer_by_reference
+        with FlutterwaveClient(
+            FlutterwaveConfig(
+                secret_key="FLWSECK_TEST_167",
+                base_url=base,
+                default_customer_email="a@b.com",
+                default_account_bank="MPS",
+            )
+        ) as flw:
+            chg_res = flw.charge_mobile_money(
+                "mobile_money_uganda", "1000", "UGX", "256771234567", tx_ref="flw-c-167"
+            )
+            tx_id = chg_res["data"]["id"]
+            assert flw.verify_transaction_by_id(tx_id)["status"] == "success"
+            assert flw.refund_transaction(tx_id)["status"] == "success"
+            flw.create_transfer("500", "UGX", "256771234567", reference="flw-tr-167")
+            by_ref = flw.get_transfer_by_reference("flw-tr-167")
+            assert len(by_ref["data"]) == 1
+
+        # 7. Orange Money: webpayment returns notif_token & verify_webhook_notification succeeds
+        with OrangeMoneyClient(
+            OrangeMoneyConfig(
+                client_id="cid",
+                client_secret="sec",
+                merchant_key="mk",
+                base_url=base,
+                return_url="https://merchant.example.test/ret",
+                cancel_url="https://merchant.example.test/can",
+                notif_url="https://merchant.example.test/notif",
+            )
+        ) as om:
+            wp = om.create_web_payment("500", "OUV", order_id="ord-mock-167")
+            assert "notif_token" in wp
+            om.verify_webhook_notification(
+                {"status": "SUCCESS", "notif_token": wp["notif_token"]},
+                pay_token=wp["pay_token"],
+            )
+    finally:
+        srv.shutdown()
+        srv.server_close()
