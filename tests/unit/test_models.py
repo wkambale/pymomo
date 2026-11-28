@@ -18,9 +18,14 @@ def test_party_parsing_and_serialization() -> None:
     dump = p1.model_dump(by_alias=True)
     assert dump == {"partyIdType": "MSISDN", "partyId": "1234"}
 
-    p2 = Party.model_validate({"partyIdType": "EMAIL", "partyId": "test"})
+    p2 = Party.model_validate({"partyIdType": "email", "partyId": "test"})
     assert p2.party_id_type == "EMAIL"
     assert p2.party_id == "test"
+
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="party_id_type"):
+        Party(party_id_type="INVALID_TYPE", party_id="1234")
 
 
 def test_request_to_pay_serialization() -> None:

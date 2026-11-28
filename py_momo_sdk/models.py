@@ -69,6 +69,9 @@ class AccountHolderIdType(str, Enum):
 # --- Request models ---
 
 
+_VALID_PARTY_ID_TYPES = frozenset({"MSISDN", "EMAIL", "PARTY_CODE"})
+
+
 class Party(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -80,7 +83,14 @@ class Party(BaseModel):
     def _check_party_id_type(cls, value: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError("party_id_type must be a non-empty string")
-        return validate_header_value(value.strip(), field_name="party_id_type")
+        cleaned = validate_header_value(
+            value.strip(), field_name="party_id_type"
+        ).upper()
+        if cleaned not in _VALID_PARTY_ID_TYPES:
+            raise ValueError(
+                "party_id_type must be one of 'MSISDN', 'EMAIL', or 'PARTY_CODE'"
+            )
+        return cleaned
 
     @field_validator("party_id")
     @classmethod
