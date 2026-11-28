@@ -781,3 +781,55 @@ def test_issue_125_cli_output_file_rejects_symlinks_and_tightens_permissions(
     assert json.loads(existing_file.read_text(encoding="utf-8"))["api_key"] == (
         "secret-125-key"
     )
+
+
+def test_issue_165_cli_webhook_verify_base64_encoding(tmp_path: Path) -> None:
+    """Verify Issue #165: py-momo-sdk webhook verify --encoding base64 accepts Airtel Base64 HMAC."""
+    import base64
+    import hashlib
+    import hmac
+
+    payload_path = tmp_path / "airtel-hook.json"
+    raw = b'{"transaction":{"id":"tx-cli-165","status_code":"TS"}}'
+    payload_path.write_bytes(raw)
+    secret_path = tmp_path / "wh.sec"
+    secret_path.write_text("airtel-cli-secret\n", encoding="utf-8")
+
+    b64_sig = base64.b64encode(
+        hmac.new(b"airtel-cli-secret", raw, hashlib.sha256).digest()
+    ).decode("ascii")
+
+    ok_res = runner.invoke(
+        app,
+        [
+            "webhook",
+            "verify",
+            "--signature",
+            b64_sig,
+            "--payload-file",
+            str(payload_path),
+            "--secret-file",
+            str(secret_path),
+            "--encoding",
+            "base64",
+        ],
+    )
+    assert ok_res.exit_code == 0
+    assert json.loads(ok_res.stdout) == {"verified": True}
+
+    bad_res = runner.invoke(
+        app,
+        [
+            "webhook",
+            "verify",
+            "--signature",
+            "wrong-sig",
+            "--payload-file",
+            str(payload_path),
+            "--secret-file",
+            str(secret_path),
+            "--encoding",
+            "base64",
+        ],
+    )
+    assert bad_res.exit_code != 0
