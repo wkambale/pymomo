@@ -164,6 +164,13 @@ py-momo-sdk webhook verify \
   --timestamped \
   --timestamp-separator ""
 
+# Verify a Base64-encoded HMAC-SHA256 webhook signature (e.g. Airtel Money x-signature)
+py-momo-sdk webhook verify \
+  --payload-file ./airtel_callback.json \
+  --signature "<base64-digest>" \
+  --secret-file ./airtel_webhook_secret.txt \
+  --encoding base64
+
 # Detect MSISDN carrier and country
 py-momo-sdk carrier "256771234567"
 

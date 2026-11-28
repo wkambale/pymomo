@@ -29,6 +29,8 @@ except WebhookVerificationError:
 
 ### HMAC and static-token verification
 
+`WebhookHandler.verify_hmac_signature()`, `verify_raw_webhook_request()`, `create_asgi_webhook_verifier()`, and `verify_django_webhook_request()` support both hexadecimal (`encoding="hex"`, default) and Base64 (`encoding="base64"`) HMAC digests. Passing `provider="airtel"` (or `"airtel_money"`) to `verify_raw_webhook_request()`, `create_asgi_webhook_verifier()`, or `verify_django_webhook_request()` automatically defaults `encoding` to `"base64"` for Airtel Money's `x-signature` header:
+
 ```python
 from py_momo_sdk import (
     WebhookHandler,
@@ -42,12 +44,13 @@ raw_body = b'{"status":"SUCCESSFUL","amount":"1500","currency":"UGX"}'
 signature_header = "sha256=<hex-digest-from-header>"
 shared_secret = "your-webhook-secret"
 
-# Direct HMAC check (SHA-256 or SHA-512)
+# Direct HMAC check (SHA-256 or SHA-512; encoding="hex" or "base64")
 WebhookHandler.verify_hmac_signature(
     raw_body,
     signature_header,
     shared_secret,
     algorithm="sha256",
+    encoding="hex",
 )
 
 # Framework-agnostic raw request verification with size bounds and telemetry
@@ -60,6 +63,16 @@ verify_raw_webhook_request(
     allowed_networks=["196.201.214.0/24"],
     max_body_bytes=1_048_576,
     provider="paystack",
+)
+
+# Base64 HMAC verification for Airtel Money callbacks (auto-selected when provider="airtel")
+verify_raw_webhook_request(
+    raw_body=raw_body,
+    headers={"x-signature": "<base64-hmac-digest>"},
+    signature_header_name="x-signature",
+    secret="your-airtel-webhook-secret",
+    provider="airtel",
+    encoding="base64",
 )
 
 # Constant-time static token check (e.g. Flutterwave verif-hash)

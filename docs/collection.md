@@ -4,10 +4,15 @@ The Collection product allows you to receive payments and withdrawal requests fr
 
 ## Initializing the collection client
 
-Always manage `PyMomoSDK` with a `with` statement (or call `client.close()`) so HTTP connection pools are released cleanly:
+Always manage `PyMomoSDK` with a `with` statement (or call `client.close()`) so HTTP connection pools are released cleanly. For live MTN MoMo One API v2 deployments, pass `base_url=ONE_API_PRODUCTION_BASE_URL` (`https://momoapi.momo.africa`); omitting `base_url` selects `SANDBOX_BASE_URL` in `sandbox` and `PRODUCTION_BASE_URL` (`https://proxy.momoapi.mtn.com`) for named country environments:
 
 ```python
-from py_momo_sdk import ProductConfig, PyMomoSDK, PyMomoSDKConfig
+from py_momo_sdk import (
+    ONE_API_PRODUCTION_BASE_URL,
+    ProductConfig,
+    PyMomoSDK,
+    PyMomoSDKConfig,
+)
 
 config = PyMomoSDKConfig(
     environment="sandbox",
@@ -18,6 +23,8 @@ config = PyMomoSDKConfig(
         callback_url="https://your-app.example.com/webhooks/mtn",
     ),
 )
+# For MTN One API v2 live gateways: base_url=ONE_API_PRODUCTION_BASE_URL
+_ = ONE_API_PRODUCTION_BASE_URL
 
 with PyMomoSDK(config) as client:
     balance = client.collection.get_balance()
@@ -179,6 +186,50 @@ with PyMomoSDK(config) as client:
     )
     print(f"Name: {user_info.name}")
     print(f"Gender: {user_info.gender}")
+```
+
+## Get user info with OAuth2 consent
+
+Retrieve consented subscriber KYC profile details using the user `access_token` returned by `create_oauth2_token()` (`GET /collection/oauth2/v1_0/userinfo`):
+
+```python
+with PyMomoSDK(config) as client:
+    consented_profile = client.collection.get_user_info_with_consent(
+        oauth_token.access_token
+    )
+    print(f"Sub: {consented_profile.sub}, Name: {consented_profile.name}")
+```
+
+## Send delivery notification
+
+Send an additional SMS or push delivery notification for an existing Request to Pay (`POST /collection/v1_0/requesttopay/{referenceId}/deliverynotification`). UTF-8 messages (including French and accented local languages) are serialized in the JSON body:
+
+```python
+with PyMomoSDK(config) as client:
+    client.collection.send_delivery_notification(
+        reference_id="550e8400-e29b-41d4-a716-446655440000",
+        notification_message="Paiement reçu, merci pour votre commande",
+        language="fr",
+    )
+```
+
+## PreApproval lifecycle
+
+Create, inspect, and cancel recurring or pre-authorized subscriber mandates (`POST`, `GET`, and `DELETE /collection/v2_0/preapproval`):
+
+```python
+with PyMomoSDK(config) as client:
+    preapproval_id = client.collection.create_preapproval(
+        payer_msisdn="256771234567",
+        payer_currency="UGX",
+        validity_time=3600,
+        payer_message="Authorize monthly subscription",
+        party_id_type="MSISDN",
+    )
+    preapproval = client.collection.get_preapproval_status(preapproval_id)
+    print(f"PreApproval status: {preapproval.status}")
+
+    client.collection.cancel_preapproval(preapproval_id)
 ```
 
 Next step: [Explore Disbursement](disbursement.md).
