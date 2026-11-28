@@ -37,6 +37,7 @@ from py_momo_sdk.providers.orange import (
     OrangeMoneyClient,
     OrangeMoneyConfig,
     OrangeMoneyProvider,
+    OrangePaymentContextStore,
 )
 from py_momo_sdk.providers.paystack import (
     AsyncPaystackClient,
@@ -93,6 +94,7 @@ __all__ = [
     "OrangeMoneyClient",
     "OrangeMoneyConfig",
     "OrangeMoneyProvider",
+    "OrangePaymentContextStore",
     "PaymentProvider",
     "PaymentRequest",
     "PaymentResult",

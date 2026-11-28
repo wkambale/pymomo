@@ -56,7 +56,7 @@ _MAX_ORANGE_ORDER_ID_LEN = 30
 _MAX_ORANGE_REFERENCE_LEN = 30
 _MAX_ORANGE_URL_LEN = 120
 _VALID_ORANGE_ENVIRONMENTS = frozenset({"sandbox", "production"})
-_ORANGE_INTEGER_CURRENCIES = frozenset({"XOF", "XAF", "OUV"})
+_ORANGE_INTEGER_CURRENCIES = frozenset({"XOF", "XAF", "OUV", "GNF", "MGA"})
 
 
 def _generate_orange_order_id() -> str:
@@ -116,15 +116,31 @@ _ORANGE_CAPABILITIES = ProviderCapabilities(
 )
 
 
-@runtime_checkable
-class OrangePaymentContextStore(Protocol):
-    """Pluggable store mapping Orange Money ``pay_token`` to ``(order_id, amount, currency)``."""
+class _LegacyOrangeContextStore(Protocol):
+    """Minimal two-method context store protocol kept for backward compatibility."""
 
     def set(self, pay_token: str, order_id: str, amount: str, currency: str) -> None:
         """Persist payment context for a created Orange Money web payment."""
 
     def get(self, pay_token: str) -> tuple[str, str, str] | None:
         """Look up ``(order_id, amount, currency)`` for a ``pay_token``."""
+
+
+@runtime_checkable
+class OrangePaymentContextStore(Protocol):
+    """Pluggable store mapping Orange Money ``pay_token`` to payment context and ``notif_token``."""
+
+    def set(self, pay_token: str, order_id: str, amount: str, currency: str) -> None:
+        """Persist payment context for a created Orange Money web payment."""
+
+    def get(self, pay_token: str) -> tuple[str, str, str] | None:
+        """Look up ``(order_id, amount, currency)`` for a ``pay_token``."""
+
+    def set_notif_token(self, pay_token: str, notif_token: str) -> None:
+        """Persist ``notif_token`` for webhook verification across worker processes."""
+
+    def get_notif_token(self, pay_token: str) -> str | None:
+        """Look up the expected ``notif_token`` for a ``pay_token``."""
 
 
 class _InMemoryOrangeContextStore:
@@ -188,6 +204,8 @@ def _format_orange_amount(amount: str, currency: str | None = None) -> int | str
                 f"Orange Money currency {currency.strip().upper()} requires a whole-integer amount"
             )
         return int(dec)
+    if currency is not None:
+        validate_amount(amount, currency=currency)
     if dec == dec.to_integral_value():
         return int(dec)
     return validated
@@ -333,12 +351,14 @@ class OrangeMoneyClient:
         client: httpx.Client | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         telemetry: TelemetryHook | None = None,
-        context_store: OrangePaymentContextStore | None = None,
+        context_store: (
+            OrangePaymentContextStore | _LegacyOrangeContextStore | None
+        ) = None,
     ) -> None:
         self._config = config
         self._cache = TokenCache()
         self._token_lock = threading.Lock()
-        self._context_store: OrangePaymentContextStore = (
+        self._context_store: OrangePaymentContextStore | _LegacyOrangeContextStore = (
             context_store
             if context_store is not None
             else _InMemoryOrangeContextStore()
@@ -372,6 +392,9 @@ class OrangeMoneyClient:
             if callable(setter):
                 setter(pay_token, notif_token)
             else:
+                self._context_store.set(
+                    f"__notif__:{pay_token}", order_id, notif_token, "__notif__"
+                )
                 with self._notif_lock:
                     if (
                         pay_token not in self._fallback_notif_tokens
@@ -389,6 +412,14 @@ class OrangeMoneyClient:
         if callable(getter):
             val = getter(pay_token)
             return val if isinstance(val, str) else None
+        stored = self._context_store.get(f"__notif__:{pay_token}")
+        if (
+            isinstance(stored, tuple)
+            and len(stored) == 3
+            and stored[2] == "__notif__"
+            and isinstance(stored[1], str)
+        ):
+            return stored[1]
         with self._notif_lock:
             return self._fallback_notif_tokens.get(pay_token)
 
@@ -589,7 +620,9 @@ class AsyncOrangeMoneyClient:
         client: httpx.AsyncClient | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         telemetry: TelemetryHook | None = None,
-        context_store: OrangePaymentContextStore | None = None,
+        context_store: (
+            OrangePaymentContextStore | _LegacyOrangeContextStore | None
+        ) = None,
     ) -> None:
         self._config = config
         self._cache = TokenCache()
@@ -597,7 +630,7 @@ class AsyncOrangeMoneyClient:
             asyncio.AbstractEventLoop, asyncio.Lock
         ] = weakref.WeakKeyDictionary()
         self._loop_locks_guard = threading.Lock()
-        self._context_store: OrangePaymentContextStore = (
+        self._context_store: OrangePaymentContextStore | _LegacyOrangeContextStore = (
             context_store
             if context_store is not None
             else _InMemoryOrangeContextStore()
@@ -640,6 +673,9 @@ class AsyncOrangeMoneyClient:
             if callable(setter):
                 setter(pay_token, notif_token)
             else:
+                self._context_store.set(
+                    f"__notif__:{pay_token}", order_id, notif_token, "__notif__"
+                )
                 with self._notif_lock:
                     if (
                         pay_token not in self._fallback_notif_tokens
@@ -657,6 +693,14 @@ class AsyncOrangeMoneyClient:
         if callable(getter):
             val = getter(pay_token)
             return val if isinstance(val, str) else None
+        stored = self._context_store.get(f"__notif__:{pay_token}")
+        if (
+            isinstance(stored, tuple)
+            and len(stored) == 3
+            and stored[2] == "__notif__"
+            and isinstance(stored[1], str)
+        ):
+            return stored[1]
         with self._notif_lock:
             return self._fallback_notif_tokens.get(pay_token)
 
