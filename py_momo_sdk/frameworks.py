@@ -127,6 +127,18 @@ def _extract_single_header(headers: Any, header_name: str) -> str | None:
     return matched
 
 
+def _resolve_hmac_encoding(encoding: str | None, provider: str) -> str:
+    if encoding is not None:
+        return encoding
+    if isinstance(provider, str) and provider.strip().lower() in {
+        "airtel",
+        "airtel_money",
+        "airtel money",
+    }:
+        return "base64"
+    return "hex"
+
+
 def verify_raw_webhook_request(
     *,
     raw_body: bytes,
@@ -139,6 +151,7 @@ def verify_raw_webhook_request(
     timestamp_separator: str = ".",
     replay_check: Callable[[str, bytes, int], bool] | None = None,
     algorithm: str = "sha256",
+    encoding: str | None = None,
     remote_ip: str | None = None,
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
@@ -184,7 +197,15 @@ def verify_raw_webhook_request(
             )
 
         sig_value = _extract_single_header(headers, signature_header_name) or ""
+        resolved_encoding = _resolve_hmac_encoding(encoding, provider)
         if timestamped:
+            if (
+                not isinstance(resolved_encoding, str)
+                or resolved_encoding.lower() != "hex"
+            ):
+                raise WebhookVerificationError(
+                    f"Timestamped webhook signatures only support hex encoding, got: {resolved_encoding}"
+                )
             WebhookHandler.verify_timestamped_hmac_signature(
                 raw_body,
                 sig_value,
@@ -201,6 +222,7 @@ def verify_raw_webhook_request(
                 sig_value,
                 secret,
                 algorithm=algorithm,
+                encoding=resolved_encoding,
             )
     except WebhookVerificationError as exc:
         _emit_webhook_telemetry(telemetry, provider, verified=False, reason=str(exc))
@@ -275,6 +297,7 @@ def create_asgi_webhook_verifier(
     timestamp_separator: str = ".",
     replay_check: Callable[[str, bytes, int], bool] | None = None,
     algorithm: str = "sha256",
+    encoding: str | None = None,
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
     http_error_status: int | None = None,
@@ -373,6 +396,7 @@ def create_asgi_webhook_verifier(
                 timestamp_separator=timestamp_separator,
                 replay_check=replay_check,
                 algorithm=algorithm,
+                encoding=_resolve_hmac_encoding(encoding, provider),
                 remote_ip=None,
                 allowed_networks=None,
                 max_body_bytes=limit,
@@ -408,6 +432,7 @@ def verify_django_webhook_request(
     timestamp_separator: str = ".",
     replay_check: Callable[[str, bytes, int], bool] | None = None,
     algorithm: str = "sha256",
+    encoding: str | None = None,
     allowed_networks: Sequence[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_WEBHOOK_BYTES,
     telemetry: TelemetryHook | None = None,
@@ -453,6 +478,7 @@ def verify_django_webhook_request(
             timestamp_separator=timestamp_separator,
             replay_check=replay_check,
             algorithm=algorithm,
+            encoding=_resolve_hmac_encoding(encoding, provider),
             remote_ip=None,
             allowed_networks=None,
             max_body_bytes=limit,

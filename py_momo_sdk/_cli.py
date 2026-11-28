@@ -1105,6 +1105,9 @@ def webhook_verify(
         None, "--secret-file", help="Path to file containing webhook secret."
     ),
     algorithm: str = typer.Option("sha256", "--algorithm", help="sha256 or sha512."),
+    encoding: str = typer.Option(
+        "hex", "--encoding", help="Signature digest encoding: hex or base64."
+    ),
     timestamped: bool = typer.Option(
         False, "--timestamped", help="Verify t=<ts>,v1=<hex> timestamped header."
     ),
@@ -1127,6 +1130,12 @@ def webhook_verify(
         else Path(payload_file).read_bytes()
     )
     if timestamped:
+        if encoding.strip().lower() != "hex":
+            from py_momo_sdk.exceptions import WebhookVerificationError
+
+            raise WebhookVerificationError(
+                f"Timestamped webhook signatures only support hex encoding, got: {encoding}"
+            )
         WebhookHandler.verify_timestamped_hmac_signature(
             raw,
             signature,
@@ -1137,7 +1146,11 @@ def webhook_verify(
         )
     else:
         WebhookHandler.verify_hmac_signature(
-            raw, signature, resolved_secret, algorithm=algorithm
+            raw,
+            signature,
+            resolved_secret,
+            algorithm=algorithm,
+            encoding=encoding,
         )
     _echo_json({"verified": True})
 

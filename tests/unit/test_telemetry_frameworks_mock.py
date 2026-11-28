@@ -939,3 +939,66 @@ def test_issue_128_mock_server_slow_drip_body_deadline() -> None:
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+@pytest.mark.asyncio
+async def test_issue_165_webhook_frameworks_base64_and_airtel_auto_encoding() -> None:
+    """Verify Issue #165: Base64 HMAC support across raw, ASGI, and Django webhook verifiers."""
+    import base64
+
+    from py_momo_sdk import verify_raw_webhook_request
+
+    secret = "airtel-wh-sec-165"
+    body = b'{"transaction":{"id":"tx-165","status_code":"TS"}}'
+    b64_sig = base64.b64encode(
+        hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+    ).decode("ascii")
+
+    # 1. Explicit encoding="base64" and provider="airtel" auto-default
+    verify_raw_webhook_request(
+        raw_body=body,
+        headers={"x-signature": b64_sig},
+        signature_header_name="x-signature",
+        secret=secret,
+        encoding="base64",
+    )
+    verify_raw_webhook_request(
+        raw_body=body,
+        headers={"x-signature": b64_sig},
+        signature_header_name="x-signature",
+        secret=secret,
+        provider="airtel",
+    )
+
+    # 2. ASGI (FastAPI/Starlette) verifier with Base64
+    asgi_verifier = create_asgi_webhook_verifier(
+        secret=secret,
+        signature_header_name="x-signature",
+        provider="airtel_money",
+    )
+    asgi_req = SimpleNamespace(
+        headers={"x-signature": b64_sig},
+        client=SimpleNamespace(host="127.0.0.1"),
+        body=lambda: _async_bytes(body),
+    )
+    assert await asgi_verifier(asgi_req) == body
+
+    # 3. Django verifier with explicit encoding="base64"
+    django_req = SimpleNamespace(
+        body=body,
+        headers={"x-signature": b64_sig},
+        META={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    assert (
+        verify_django_webhook_request(
+            django_req,
+            secret=secret,
+            signature_header_name="x-signature",
+            encoding="base64",
+        )
+        == body
+    )
+
+
+async def _async_bytes(val: bytes) -> bytes:
+    return val
