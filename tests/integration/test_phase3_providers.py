@@ -3640,3 +3640,121 @@ async def test_issue_162_mpesa_kenyan_msisdn_and_remarks_bounds(
             await amc.query_transaction_status("TX1", remarks="a")
         with pytest.raises(ValueError, match="occasion must not exceed 100"):
             await amc.b2c_transfer("150", "0722334455", occasion="x" * 101)
+
+
+@pytest.mark.asyncio
+async def test_issue_164_orange_gnf_mga_integers_and_multiworker_context_store(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #164: GNF/MGA integer amounts, exported OrangePaymentContextStore, and multi-worker notif_token."""
+    from py_momo_sdk import OrangePaymentContextStore, WebhookVerificationError
+
+    class _FullRedisLikeStore:
+        def __init__(self) -> None:
+            self.ctx: dict[str, tuple[str, str, str]] = {}
+            self.notifs: dict[str, str] = {}
+
+        def set(
+            self, pay_token: str, order_id: str, amount: str, currency: str
+        ) -> None:
+            self.ctx[pay_token] = (order_id, amount, currency)
+
+        def get(self, pay_token: str) -> tuple[str, str, str] | None:
+            return self.ctx.get(pay_token)
+
+        def set_notif_token(self, pay_token: str, notif_token: str) -> None:
+            self.notifs[pay_token] = notif_token
+
+        def get_notif_token(self, pay_token: str) -> str | None:
+            return self.notifs.get(pay_token)
+
+    class _LegacyTwoMethodStore:
+        def __init__(self) -> None:
+            self.ctx: dict[str, tuple[str, str, str]] = {}
+
+        def set(
+            self, pay_token: str, order_id: str, amount: str, currency: str
+        ) -> None:
+            self.ctx[pay_token] = (order_id, amount, currency)
+
+        def get(self, pay_token: str) -> tuple[str, str, str] | None:
+            return self.ctx.get(pay_token)
+
+    full_store = _FullRedisLikeStore()
+    assert isinstance(full_store, OrangePaymentContextStore)
+
+    cfg = OrangeMoneyConfig(
+        client_id="om-id-164",
+        client_secret="om-sec-164",
+        merchant_key="om-mk-164",
+        return_url="https://merchant.example.test/ret",
+        cancel_url="https://merchant.example.test/can",
+        notif_url="https://merchant.example.test/notif",
+    )
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-tok-164", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        json={
+            "pay_token": "pt-full-164",
+            "notif_token": "nt-full-secret-164",
+            "payment_url": "https://webpay.orange.com/full",
+        },
+        status_code=201,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-tok-leg-164", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        json={
+            "pay_token": "pt-leg-164",
+            "notif_token": "nt-leg-secret-164",
+            "payment_url": "https://webpay.orange.com/leg",
+        },
+        status_code=201,
+    )
+
+    # 1. GNF and MGA reject fractional amounts; Worker 1 creates WebPay session, Worker 2 verifies webhook!
+    with OrangeMoneyClient(cfg, context_store=full_store) as worker_1:
+        for ccy in ("GNF", "MGA"):
+            with pytest.raises(ValueError, match="whole-integer"):
+                worker_1.create_web_payment("100.50", ccy)
+        worker_1.create_web_payment("5000", "GNF", order_id="ord-gnf-164")
+
+    with OrangeMoneyClient(cfg, context_store=full_store) as worker_2:
+        worker_2.verify_webhook_notification(
+            {"status": "SUCCESS", "notif_token": "nt-full-secret-164"},
+            pay_token="pt-full-164",
+        )
+        with pytest.raises(WebhookVerificationError):
+            worker_2.verify_webhook_notification(
+                {"status": "SUCCESS", "notif_token": "tampered"},
+                pay_token="pt-full-164",
+            )
+
+    # 2. Legacy 2-method store also persists notif_token across async workers
+    legacy_store = _LegacyTwoMethodStore()
+    async with AsyncOrangeMoneyClient(cfg, context_store=legacy_store) as aworker_1:
+        with pytest.raises(ValueError, match="whole-integer"):
+            await aworker_1.create_web_payment("250.25", "MGA")
+        await aworker_1.create_web_payment("1000", "MGA", order_id="ord-mga-164")
+
+    async with AsyncOrangeMoneyClient(cfg, context_store=legacy_store) as aworker_2:
+        aworker_2.verify_webhook_notification(
+            {
+                "status": "SUCCESS",
+                "pay_token": "pt-leg-164",
+                "notif_token": "nt-leg-secret-164",
+            }
+        )
