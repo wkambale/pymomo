@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "py-momo-sdk"
-version = "1.3.2"
+version = "1.3.3"
 description = "Py MoMo SDK: Typed Python client for African mobile money and payment APIs (MTN MoMo, Airtel Money, Wave, Safaricom M-Pesa, Paystack, Flutterwave, Orange Money)"
 readme = "README.md"
 license = "MIT"

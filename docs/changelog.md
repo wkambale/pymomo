@@ -2,6 +2,26 @@
 
 All notable changes to the Py MoMo SDK (`py-momo-sdk`) project will be documented in this file.
 
+## 1.3.3 - 2026-11-28
+
+### Security
+- Attached `Wave-Signature` headers across all 10 Wave `GET` and `POST` endpoints when `WaveConfig.signing_secret` is configured, and refreshed `Wave-Signature` timestamps per attempt across transient retries via `header_signer` in `HttpClient` and `AsyncHttpClient` (#161).
+- Added Base64 HMAC digest verification (`encoding="base64"`, auto-selected when `provider="airtel"`) across `verify_raw_webhook_request()`, `create_asgi_webhook_verifier()`, `verify_django_webhook_request()`, and `py-momo-sdk webhook verify --encoding` (#165).
+- Redacted `authorization_code` and `encryption_key` in exception `response_body` dictionaries, and redacted `client_id` in `AirtelConfig.__repr__`, `AirtelAuth.__repr__`, and `AsyncAirtelAuth.__repr__` (#169).
+
+### Fixed
+- Adapted cross-provider `reference_id` values in `PaymentRouter` and `AsyncPaymentRouter` (`<=30` chars for Orange `order_id`, deterministic RFC 4122 UUID v4 for MTN MoMo, `16` to `50` lowercase `[a-z0-9_-]` chars for Paystack transfers, `<=64` chars for Airtel Money) while preserving caller merchant references in `external_id`, and compacted 36-char UUIDs in `OrangeMoneyProvider` (#159).
+- Auto-populated `client_reference` in `WaveProvider` with fallback reconciliation via `search_checkout_sessions()` and `search_payouts()`, and wired `FlutterwaveProvider.get_status(..., kind="disbursement")` to `get_transfer_by_reference()` for non-numeric merchant references (#160).
+- Normalized Kenyan local MSISDNs (`07...`, `01...`, `7...`, `1...`, `2540...`) to `254XXXXXXXXX` and validated `Remarks` (`2` to `100` chars) and `Occasion` (`0` to `100` chars) in `MpesaClient` and `AsyncMpesaClient` (#162).
+- Checked Airtel HTTP `200` error envelopes on `get_payment_status()` and `get_transfer_status()` when `data.transaction` is absent, enforced zero-decimal currency validation across Airtel collections and disbursements, and added `GHS`, `CDF`, `USD`, `MGA`, and `SCR` to `_AIRTEL_CAPABILITIES.currencies` (#163).
+- Enforced integer amounts for `GNF` and `MGA` in Orange Money, exported `OrangePaymentContextStore`, and added `set_notif_token()` and `get_notif_token()` for multi-worker webhook verification (#164).
+- Enabled UTF-8 JSON delivery notifications in MTN `send_delivery_notification()` (attaching the optional HTTP header only when printable ASCII), validated `Party.party_id_type` against `MSISDN`, `EMAIL`, and `PARTY_CODE`, and added `USD` to `_MTN_CAPABILITIES.currencies` (#166).
+- Added `do_DELETE`, Orange `notif_token` tracking, and deterministic mock routes for all v1.3.2 endpoints across MTN, Airtel, Wave, M-Pesa, Paystack, and Flutterwave in `mock_server.py` (#167).
+- Enforced `_ZERO_DECIMAL_CURRENCIES` in Paystack `_to_minor_units()` while preserving `* 100` integer scaling, and added `tests/unit/test_architecture_invariants.py` to enforce cross-provider horizontal rules on every CI run (#169).
+
+### Documentation
+- Updated `docs/providers.md`, `docs/collection.md`, `docs/airtel.md`, `docs/webhooks.md`, and `docs/cli.md` with runnable examples for Paystack transfer recipients and valid `16` to `50` char transfer references, Wave request signing and search, M-Pesa MSISDN normalization and callback parsers, Flutterwave reference reconciliation, `OrangePaymentContextStore`, MTN PreApprovals and UTF-8 delivery notifications, and Base64 webhook verification (#168).
+
 ## 1.3.2 - 2026-11-27
 
 ### Security
