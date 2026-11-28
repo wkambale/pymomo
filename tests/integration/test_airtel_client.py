@@ -1080,3 +1080,155 @@ async def test_issue_131_airtel_flat_balance_refund_kyc_and_webhook_hmac(
         akyc = await async_client.get_user_info("0701234567")
         assert akyc.data.first_name == "Async"
         async_client.verify_webhook(raw_body, good_sig)
+
+
+@pytest.mark.asyncio
+async def test_issue_163_airtel_status_error_envelopes_zero_decimal_and_currencies(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #163: Airtel HTTP 200 status error envelopes, zero-decimal amounts, and GHS/CDF routing."""
+    from pydantic import ValidationError
+
+    from py_momo_sdk import (
+        AirtelMoneyProvider,
+        AsyncAirtelClient,
+        PaymentRequest,
+        PaymentRouter,
+        ResourceNotFoundError,
+    )
+    from py_momo_sdk.airtel.models import AirtelDisbursementTransaction
+
+    ug_cfg = AirtelConfig(
+        client_id="id-163",
+        client_secret="sec-163",
+        country="UG",
+        currency="UGX",
+        pin="1234",
+    )
+
+    # 1. Zero-decimal rejection on collection, disbursement, and model level
+    with pytest.raises(ValidationError, match="zero-decimal currency UGX"):
+        AirtelDisbursementTransaction(amount="100.50", id="tx-163", currency="UGX")
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "tok-163", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/payments/missing-163",
+        json={
+            "status": {
+                "code": "404",
+                "result_code": "DP00800001006",
+                "message": "Transaction not found",
+                "success": False,
+            }
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/payments/tf-163",
+        json={
+            "status": {
+                "code": "200",
+                "result_code": "DP00800001007",
+                "message": "Failed",
+                "success": False,
+            },
+            "data": {
+                "transaction": {
+                    "id": "tf-163",
+                    "status": "TF",
+                    "message": "Insufficient balance",
+                }
+            },
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/disbursements/missing-disb-163",
+        json={
+            "status": {
+                "code": "404",
+                "result_code": "DP00900001006",
+                "message": "Disbursement not found",
+                "success": False,
+            }
+        },
+        status_code=200,
+    )
+
+    with AirtelClient(ug_cfg) as ac:
+        with pytest.raises(ValidationError, match="zero-decimal currency UGX"):
+            ac.collection.request_to_pay("100.50", "256751234567")
+        with pytest.raises(ValueError, match="zero-decimal currency UGX"):
+            ac.disbursement.transfer("100.50", "256751234567")
+
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            ac.collection.get_payment_status("missing-163")
+        assert exc_info.value.error_code == "DP00800001006"
+        assert exc_info.value.reference_id == "missing-163"
+
+        # TF transaction with data.transaction present still returns AirtelTransactionResponse
+        tf_res = ac.collection.get_payment_status("tf-163")
+        assert tf_res.is_failed() is True
+
+        with pytest.raises(ResourceNotFoundError) as disb_exc:
+            ac.disbursement.get_transfer_status("missing-disb-163")
+        assert disb_exc.value.error_code == "DP00900001006"
+
+    # 2. Async parity on status HTTP 200 error envelope & zero-decimal
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "atok-163", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://openapiuat.airtel.africa/standard/v1/payments/amissing-163",
+        json={
+            "status": {
+                "code": "404",
+                "result_code": "DP00800001006",
+                "message": "Not found",
+                "success": False,
+            }
+        },
+        status_code=200,
+    )
+    async with AsyncAirtelClient(ug_cfg) as aac:
+        with pytest.raises(ValueError, match="zero-decimal currency UGX"):
+            await aac.disbursement.transfer("250.75", "256751234567")
+        with pytest.raises(ResourceNotFoundError) as aexc:
+            await aac.collection.get_payment_status("amissing-163")
+        assert aexc.value.error_code == "DP00800001006"
+
+    # 3. Airtel Ghana (GHS) & DRC (CDF) route cleanly via PaymentRouter
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        json={"access_token": "gh-tok-163", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/merchant/v1/payments/",
+        json={"status": {"code": "200", "message": "Accepted", "success": True}},
+        status_code=200,
+    )
+    with AirtelClient(
+        AirtelConfig(
+            client_id="gh-id", client_secret="gh-sec", country="GH", currency="GHS"
+        )
+    ) as gh_client:
+        gh_router = PaymentRouter([AirtelMoneyProvider(gh_client)])
+        gh_res = gh_router.collect(
+            PaymentRequest(amount="25.50", currency="GHS", payer_msisdn="233271234567")
+        )
+        assert gh_res.provider == "airtel_money"

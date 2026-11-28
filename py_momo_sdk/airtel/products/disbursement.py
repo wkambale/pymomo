@@ -9,6 +9,7 @@ from py_momo_sdk.airtel.models import (
     AirtelDisbursementTransaction,
     AirtelTransactionResponse,
     check_airtel_response_status,
+    check_airtel_status_query_response,
     normalise_airtel_msisdn,
 )
 from py_momo_sdk.http import parse_model
@@ -16,6 +17,7 @@ from py_momo_sdk.utils import (
     encode_path_segment,
     generate_reference_id,
     validate_airtel_reference_id,
+    validate_amount,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +56,7 @@ class Disbursement:
         if not self._client._config.pin:
             raise ValueError("pin is required for Airtel disbursements")
 
+        validate_amount(amount, currency=self._client._config.currency)
         ref = reference_id or generate_reference_id()
         validate_airtel_reference_id(ref)
         merchant_ref = external_id or ref
@@ -107,6 +110,13 @@ class Disbursement:
             f"/standard/v1/disbursements/{encoded}",
             reference_id=reference_id,
         )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_status_query_response(parsed, reference_id=reference_id)
         return parse_model(
             response, AirtelTransactionResponse, reference_id=reference_id
         )

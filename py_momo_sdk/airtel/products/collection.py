@@ -8,6 +8,7 @@ from py_momo_sdk.airtel.models import (
     AirtelTransactionRequest,
     AirtelTransactionResponse,
     check_airtel_response_status,
+    check_airtel_status_query_response,
     normalise_airtel_msisdn,
 )
 from py_momo_sdk.http import parse_model
@@ -98,6 +99,13 @@ class Collection:
             f"/standard/v1/payments/{encoded}",
             reference_id=reference_id,
         )
+        if response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                check_airtel_status_query_response(parsed, reference_id=reference_id)
         return parse_model(
             response, AirtelTransactionResponse, reference_id=reference_id
         )

@@ -24,7 +24,22 @@ _AIRTEL_CAPABILITIES = ProviderCapabilities(
     supports_disbursement=True,
     supports_balance=True,
     supports_webhook_hmac=True,
-    currencies=("UGX", "KES", "TZS", "RWF", "ZMW", "MWK", "NGN", "XAF", "XOF"),
+    currencies=(
+        "UGX",
+        "KES",
+        "TZS",
+        "RWF",
+        "ZMW",
+        "MWK",
+        "NGN",
+        "XAF",
+        "XOF",
+        "GHS",
+        "CDF",
+        "USD",
+        "MGA",
+        "SCR",
+    ),
 )
 
 
