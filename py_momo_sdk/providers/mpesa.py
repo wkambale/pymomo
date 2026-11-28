@@ -65,7 +65,48 @@ _VALID_MPESA_COMMAND_IDS = frozenset(
 )
 _MAX_MPESA_ACCOUNT_REFERENCE_LEN = 12
 _MAX_MPESA_TRANSACTION_DESC_LEN = 13
+_MIN_MPESA_REMARKS_LEN = 2
+_MAX_MPESA_REMARKS_LEN = 100
+_MAX_MPESA_OCCASION_LEN = 100
 _DARAJA_STK_PROCESSING_CODE = "500.001.1001"
+
+
+def _normalise_mpesa_msisdn(phone_number: str) -> str:
+    """Normalise a Kenyan phone number to Daraja's 12-digit ``254XXXXXXXXX`` format."""
+    digits = normalise_msisdn(phone_number)
+    if len(digits) == 12 and digits.startswith("254"):
+        return digits
+    if len(digits) == 13 and digits.startswith("2540"):
+        return f"254{digits[4:]}"
+    if len(digits) == 10 and digits.startswith("0"):
+        return f"254{digits[1:]}"
+    if len(digits) == 9 and digits[0] in ("7", "1"):
+        return f"254{digits}"
+    raise ValueError(
+        "M-Pesa phone_number must be a valid Kenyan MSISDN (e.g. 2547XXXXXXXX or 07XXXXXXXX)"
+    )
+
+
+def _validate_mpesa_remarks(remarks: str) -> str:
+    if not isinstance(remarks, str):
+        raise ValueError("remarks must be a string")
+    cleaned = validate_header_value(remarks.strip(), field_name="remarks")
+    if not (_MIN_MPESA_REMARKS_LEN <= len(cleaned) <= _MAX_MPESA_REMARKS_LEN):
+        raise ValueError(
+            f"remarks must be between {_MIN_MPESA_REMARKS_LEN} and {_MAX_MPESA_REMARKS_LEN} characters"
+        )
+    return cleaned
+
+
+def _validate_mpesa_occasion(occasion: str) -> str:
+    if not isinstance(occasion, str):
+        raise ValueError("occasion must be a string")
+    cleaned = validate_header_value(occasion.strip(), field_name="occasion")
+    if len(cleaned) > _MAX_MPESA_OCCASION_LEN:
+        raise ValueError(
+            f"occasion must not exceed {_MAX_MPESA_OCCASION_LEN} characters"
+        )
+    return cleaned
 
 
 def _to_mpesa_int_amount(amount: str) -> int:
@@ -518,7 +559,7 @@ class MpesaClient:
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
-        msisdn = normalise_msisdn(phone_number)
+        msisdn = _normalise_mpesa_msisdn(phone_number)
         response = self._http.request(
             "POST",
             "/mpesa/stkpush/v1/processrequest",
@@ -624,7 +665,9 @@ class MpesaClient:
             )
         else:
             orig_id = generate_reference_id()
-        msisdn = normalise_msisdn(phone_number)
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
+        msisdn = _normalise_mpesa_msisdn(phone_number)
         response = self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
@@ -637,10 +680,10 @@ class MpesaClient:
                 "Amount": int_amount,
                 "PartyA": self._config.short_code,
                 "PartyB": msisdn,
-                "Remarks": remarks,
+                "Remarks": validated_remarks,
                 "QueueTimeOutURL": timeout_cb,
                 "ResultURL": cb,
-                "Occasion": occasion,
+                "Occasion": validated_occasion,
             },
             product_name="mpesa",
             token_cache=self._cache,
@@ -693,6 +736,8 @@ class MpesaClient:
         cleaned_tx = validate_header_value(
             transaction_id.strip(), field_name="transaction_id"
         )
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -707,8 +752,8 @@ class MpesaClient:
             "IdentifierType": identifier_type,
             "ResultURL": cb,
             "QueueTimeOutURL": timeout_cb,
-            "Remarks": remarks,
-            "Occasion": occasion,
+            "Remarks": validated_remarks,
+            "Occasion": validated_occasion,
         }
         if originator_conversation_id is not None:
             payload["OriginatorConversationID"] = validate_header_value(
@@ -737,6 +782,7 @@ class MpesaClient:
         queue_timeout_url: str | None = None,
     ) -> MpesaB2CResponse:
         """Initiate an async Daraja account balance query (``POST /mpesa/accountbalance/v1/query``)."""
+        validated_remarks = _validate_mpesa_remarks(remarks)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -752,7 +798,7 @@ class MpesaClient:
                 "CommandID": "AccountBalance",
                 "PartyA": self._config.short_code,
                 "IdentifierType": identifier_type,
-                "Remarks": remarks,
+                "Remarks": validated_remarks,
                 "QueueTimeOutURL": timeout_cb,
                 "ResultURL": cb,
             },
@@ -781,6 +827,8 @@ class MpesaClient:
             transaction_id.strip(), field_name="transaction_id"
         )
         int_amount = _to_mpesa_int_amount(amount)
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -800,8 +848,8 @@ class MpesaClient:
                 "RecieverIdentifierType": receiver_identifier_type,
                 "ResultURL": cb,
                 "QueueTimeOutURL": timeout_cb,
-                "Remarks": remarks,
-                "Occasion": occasion,
+                "Remarks": validated_remarks,
+                "Occasion": validated_occasion,
             },
             product_name="mpesa",
             token_cache=self._cache,
@@ -928,7 +976,7 @@ class AsyncMpesaClient:
         password, timestamp = _build_stk_password(
             self._config.short_code, self._config.passkey
         )
-        msisdn = normalise_msisdn(phone_number)
+        msisdn = _normalise_mpesa_msisdn(phone_number)
         response = await self._http.request(
             "POST",
             "/mpesa/stkpush/v1/processrequest",
@@ -1032,7 +1080,9 @@ class AsyncMpesaClient:
             )
         else:
             orig_id = generate_reference_id()
-        msisdn = normalise_msisdn(phone_number)
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
+        msisdn = _normalise_mpesa_msisdn(phone_number)
         response = await self._http.request(
             "POST",
             "/mpesa/b2c/v3/paymentrequest",
@@ -1045,10 +1095,10 @@ class AsyncMpesaClient:
                 "Amount": int_amount,
                 "PartyA": self._config.short_code,
                 "PartyB": msisdn,
-                "Remarks": remarks,
+                "Remarks": validated_remarks,
                 "QueueTimeOutURL": timeout_cb,
                 "ResultURL": cb,
-                "Occasion": occasion,
+                "Occasion": validated_occasion,
             },
             product_name="mpesa",
             token_cache=self._cache,
@@ -1101,6 +1151,8 @@ class AsyncMpesaClient:
         cleaned_tx = validate_header_value(
             transaction_id.strip(), field_name="transaction_id"
         )
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -1115,8 +1167,8 @@ class AsyncMpesaClient:
             "IdentifierType": identifier_type,
             "ResultURL": cb,
             "QueueTimeOutURL": timeout_cb,
-            "Remarks": remarks,
-            "Occasion": occasion,
+            "Remarks": validated_remarks,
+            "Occasion": validated_occasion,
         }
         if originator_conversation_id is not None:
             payload["OriginatorConversationID"] = validate_header_value(
@@ -1145,6 +1197,7 @@ class AsyncMpesaClient:
         queue_timeout_url: str | None = None,
     ) -> MpesaB2CResponse:
         """Initiate an async Daraja account balance query asynchronously."""
+        validated_remarks = _validate_mpesa_remarks(remarks)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -1160,7 +1213,7 @@ class AsyncMpesaClient:
                 "CommandID": "AccountBalance",
                 "PartyA": self._config.short_code,
                 "IdentifierType": identifier_type,
-                "Remarks": remarks,
+                "Remarks": validated_remarks,
                 "QueueTimeOutURL": timeout_cb,
                 "ResultURL": cb,
             },
@@ -1189,6 +1242,8 @@ class AsyncMpesaClient:
             transaction_id.strip(), field_name="transaction_id"
         )
         int_amount = _to_mpesa_int_amount(amount)
+        validated_remarks = _validate_mpesa_remarks(remarks)
+        validated_occasion = _validate_mpesa_occasion(occasion)
         initiator, sec_cred, cb, timeout_cb = self._resolve_async_daraja_params(
             callback_url=callback_url,
             queue_timeout_url=queue_timeout_url,
@@ -1208,8 +1263,8 @@ class AsyncMpesaClient:
                 "RecieverIdentifierType": receiver_identifier_type,
                 "ResultURL": cb,
                 "QueueTimeOutURL": timeout_cb,
-                "Remarks": remarks,
-                "Occasion": occasion,
+                "Remarks": validated_remarks,
+                "Occasion": validated_occasion,
             },
             product_name="mpesa",
             token_cache=self._cache,
