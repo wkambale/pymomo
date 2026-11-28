@@ -108,7 +108,8 @@ def test_airtel_config_repr_redaction() -> None:
         pin="1234",
     )
     repr_str = repr(config)
-    assert "visible-id" in repr_str
+    assert "visible-id" not in repr_str
+    assert "client_id=<redacted>" in repr_str
     assert "super-secret-key" not in repr_str
     assert "1234" not in repr_str
     assert "<redacted>" in repr_str

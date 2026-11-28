@@ -50,7 +50,7 @@ class AsyncAirtelAuth:
 
     def __repr__(self) -> str:
         return (
-            f"AsyncAirtelAuth(client_id={self._client_id!r}, "
+            f"AsyncAirtelAuth(client_id=<redacted>, "
             f"client_secret=<redacted>, base_url={self._base_url!r})"
         )
 

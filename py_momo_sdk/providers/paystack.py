@@ -24,6 +24,7 @@ from py_momo_sdk.providers.models import (
 )
 from py_momo_sdk.telemetry import TelemetryHook
 from py_momo_sdk.utils import (
+    _ZERO_DECIMAL_CURRENCIES,
     encode_path_segment,
     generate_reference_id,
     validate_amount,
@@ -58,7 +59,7 @@ _PAYSTACK_CAPABILITIES = ProviderCapabilities(
 )
 
 
-_PAYSTACK_ZERO_DECIMAL_CURRENCIES = frozenset({"XOF", "XAF"})
+_PAYSTACK_ZERO_DECIMAL_CURRENCIES = _ZERO_DECIMAL_CURRENCIES
 
 
 @dataclass
