@@ -3530,3 +3530,113 @@ def test_issue_138_provider_currency_capabilities_and_routing(
             PaymentRequest(amount="500", currency="GMD", payer_msisdn="2207012345")
         )
         assert gm_res.provider == "wave"
+
+
+@pytest.mark.asyncio
+async def test_issue_162_mpesa_kenyan_msisdn_and_remarks_bounds(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #162: M-Pesa normalizes Kenyan MSISDNs to 254 and validates Remarks/Occasion bounds."""
+    import json
+
+    cfg = MpesaConfig(
+        consumer_key="ck-162",
+        consumer_secret="cs-162",
+        short_code="174379",
+        passkey="pk-162",
+        callback_url="https://merchant.example.test/mpesa/cb",
+        security_credential="sec-cred-162",
+    )
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "mpesa-162-tok", "expires_in": "3599"},
+        status_code=200,
+    )
+    for _ in range(4):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+            json={
+                "MerchantRequestID": "m162",
+                "CheckoutRequestID": "c162",
+                "ResponseCode": "0",
+            },
+            status_code=200,
+        )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/b2c/v3/paymentrequest",
+        json={
+            "ConversationID": "conv-162",
+            "OriginatorConversationID": "orig-162",
+            "ResponseCode": "0",
+        },
+        status_code=200,
+    )
+
+    with MpesaClient(cfg) as mc:
+        for raw_phone in (
+            "0712345678",
+            "0112345678",
+            "712345678",
+            "+254 0712 345 678",
+        ):
+            mc.stk_push("100", raw_phone)
+        mc.b2c_transfer("250", "0799887766", remarks="Salary payment", occasion="")
+
+        with pytest.raises(ValueError, match="Kenyan MSISDN"):
+            mc.stk_push("100", "256771234567")
+        with pytest.raises(ValueError, match="remarks must be between 2 and 100"):
+            mc.b2c_transfer("100", "0712345678", remarks="x")
+        with pytest.raises(ValueError, match="remarks must be between 2 and 100"):
+            mc.query_account_balance(remarks="r" * 101)
+        with pytest.raises(ValueError, match="occasion must not exceed 100"):
+            mc.reverse_transaction("OIB9F1", "100", occasion="o" * 101)
+
+    reqs = [r for r in httpx_mock.get_requests() if r.method == "POST"]
+    sent_phones = [json.loads(r.read().decode("utf-8")).get("PartyA") for r in reqs[:4]]
+    assert sent_phones == [
+        "254712345678",
+        "254112345678",
+        "254712345678",
+        "254712345678",
+    ]
+    b2c_body = json.loads(reqs[4].read().decode("utf-8"))
+    assert b2c_body["PartyB"] == "254799887766"
+
+    # Async parity
+    httpx_mock.add_response(
+        method="GET",
+        url="https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        json={"access_token": "mpesa-162-atok", "expires_in": "3599"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        json={
+            "MerchantRequestID": "am162",
+            "CheckoutRequestID": "ac162",
+            "ResponseCode": "0",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.safaricom.co.ke/mpesa/b2c/v3/paymentrequest",
+        json={
+            "ConversationID": "aconv-162",
+            "OriginatorConversationID": "aorig-162",
+            "ResponseCode": "0",
+        },
+        status_code=200,
+    )
+    async with AsyncMpesaClient(cfg) as amc:
+        await amc.stk_push("100", "0722334455")
+        await amc.b2c_transfer("150", "110223344", remarks="Bonus", occasion="Q4")
+        with pytest.raises(ValueError, match="remarks must be between 2 and 100"):
+            await amc.query_transaction_status("TX1", remarks="a")
+        with pytest.raises(ValueError, match="occasion must not exceed 100"):
+            await amc.b2c_transfer("150", "0722334455", occasion="x" * 101)
