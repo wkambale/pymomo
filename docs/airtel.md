@@ -78,6 +78,53 @@ with AirtelClient(config) as client:
         print(f"Transaction failed: {result.data.transaction.message}")
 ```
 
+### Refund a collection payment
+
+Refund a settled Airtel Money collection using the `airtel_money_id` returned in `data.transaction.airtel_money_id` (`POST /standard/v1/payments/refund`):
+
+```python
+with AirtelClient(config) as client:
+    refund_result = client.collection.refund("MP260101.1234.A00001")
+    print(f"Refund status: {refund_result.data.transaction.status}")
+```
+
+## Subscriber KYC lookup
+
+Query basic subscriber registration and KYC verification details via `GET /standard/v1/users/{msisdn}`:
+
+```python
+with AirtelClient(config) as client:
+    user_resp = client.get_user_info("256751234567")
+    print(user_resp.data.first_name, user_resp.data.last_name, user_resp.data.is_barred)
+```
+
+## Webhook verification and payload signing
+
+Configure `webhook_secret` on `AirtelConfig` to verify Airtel Money's Base64-encoded HMAC-SHA256 `x-signature` callback header via `client.verify_webhook()`, and use `sign_airtel_payload()` (requires `pip install "py-momo-sdk[airtel]"`) when targeting Airtel v2/v3 endpoints that require AES-256-CBC + RSA PKCS#1 v1.5 `x-signature` and `x-key` headers:
+
+```python
+from pathlib import Path
+from py_momo_sdk import AirtelClient, AirtelConfig, sign_airtel_payload
+
+webhook_cfg = AirtelConfig(
+    client_id="your-airtel-client-id",
+    client_secret="your-airtel-client-secret",
+    country="UG",
+    currency="UGX",
+    webhook_secret="your-airtel-hmac-secret",
+)
+
+with AirtelClient(webhook_cfg) as client:
+    raw_callback = b'{"transaction":{"id":"order-2026-0001","status_code":"TS"}}'
+    client.verify_webhook(raw_callback, signature="<base64-x-signature>")
+
+public_key_pem = Path("airtel_public_key.pem").read_text(encoding="utf-8")
+x_signature, x_key = sign_airtel_payload(
+    {"transaction": {"id": "order-2026-0001", "amount": "1000"}},
+    public_key_pem,
+)
+```
+
 ## Disbursement
 
 ### Transfer funds
@@ -118,7 +165,7 @@ with AirtelClient(config) as client:
 
 ## Security notes
 
-- `AirtelConfig`, `AirtelDisbursementRequest`, and internal token caches redact `client_secret`, `pin`, and bearer access tokens from string and debug representations.
+- `AirtelConfig`, `AirtelDisbursementRequest`, and internal token caches redact `client_id`, `client_secret`, `pin`, `webhook_secret`, and bearer access tokens from string and debug representations.
 - All requests enforce HTTPS base URLs, reject HTTP `3xx` redirects, and bound response sizes with streaming reads.
 - OAuth2 access tokens are cached in memory with thread-safe and async-safe double-checked locking and conditional `401` invalidation.
 
