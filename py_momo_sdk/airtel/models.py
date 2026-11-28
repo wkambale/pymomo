@@ -5,8 +5,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from py_momo_sdk.exceptions import (
+    AuthenticationError,
     BadRequestError,
     PyMomoSDKError,
+    ResourceNotFoundError,
     TransactionFailedError,
 )
 from py_momo_sdk.utils import (
@@ -123,6 +125,26 @@ def check_airtel_response_status(
                 reason=reason,
                 provider="Airtel Money",
             )
+        if status_code_str in ("401", "403"):
+            raise AuthenticationError(
+                reason,
+                reference_id=reference_id,
+                status_code=200,
+                error_code=error_code,
+                reason=reason,
+                response_body=data,
+                provider="Airtel Money",
+            )
+        if status_code_str == "404":
+            raise ResourceNotFoundError(
+                reason,
+                reference_id=reference_id,
+                status_code=200,
+                error_code=error_code,
+                reason=reason,
+                response_body=data,
+                provider="Airtel Money",
+            )
         raise PyMomoSDKError(
             reason,
             reference_id=reference_id,
@@ -140,6 +162,31 @@ def check_airtel_response_status(
             error_code=error_code,
             response_body=data,
             provider="Airtel Money",
+        )
+
+
+def check_airtel_status_query_response(
+    data: dict[str, Any], *, reference_id: str
+) -> None:
+    """Raise a structured Airtel error when a GET status response omits ``data.transaction``."""
+    data_obj = data.get("data")
+    if isinstance(data_obj, dict) and isinstance(data_obj.get("transaction"), dict):
+        return
+    status_obj = data.get("status")
+    if not isinstance(status_obj, dict):
+        return
+    raw_success = status_obj.get("success")
+    raw_code = status_obj.get("code")
+    code_str = (
+        raw_code.strip() if isinstance(raw_code, str) and raw_code.strip() else None
+    )
+    if raw_success is False or (code_str is not None and code_str != "200"):
+        check_airtel_response_status(
+            {
+                **data,
+                "status": {**status_obj, "success": False},
+            },
+            reference_id=reference_id,
         )
 
 
@@ -187,6 +234,11 @@ class AirtelTransactionRequest(BaseModel):
     def _check_currency(cls, value: str) -> str:
         return validate_currency(value)
 
+    @model_validator(mode="after")
+    def _check_zero_decimal_amount(self) -> AirtelTransactionRequest:
+        validate_amount(self.amount, currency=self.currency)
+        return self
+
 
 class AirtelCollectionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -225,6 +277,12 @@ class AirtelDisbursementTransaction(BaseModel):
     @classmethod
     def _check_amount(cls, value: str) -> str:
         return validate_amount(value)
+
+    @model_validator(mode="after")
+    def _check_zero_decimal_amount(self) -> AirtelDisbursementTransaction:
+        if self.currency is not None:
+            validate_amount(self.amount, currency=self.currency)
+        return self
 
 
 class AirtelDisbursementRequest(BaseModel):
