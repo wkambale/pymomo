@@ -317,6 +317,48 @@ class WaveClient:
             headers["Idempotency-Key"] = idempotency_key
         return headers
 
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        idempotent: bool | None = None,
+        reference_id: str | None = None,
+    ) -> httpx.Response:
+        headers = self._headers(idempotency_key=idempotency_key)
+        secret = self._config.signing_secret
+        if secret is not None:
+            raw_body = (
+                json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                if payload is not None
+                else b""
+            )
+
+            def _signer(hdrs: dict[str, str]) -> dict[str, str]:
+                hdrs["Wave-Signature"] = _sign_wave_request(raw_body, secret)
+                return hdrs
+
+            return self._http.request(
+                method,
+                path,
+                headers=headers,
+                content=raw_body if payload is not None or method == "POST" else None,
+                idempotent=idempotent,
+                reference_id=reference_id,
+                header_signer=_signer,
+            )
+        return self._http.request(
+            method,
+            path,
+            headers=headers,
+            json=payload,
+            content=b"" if payload is None and method == "POST" else None,
+            idempotent=idempotent,
+            reference_id=reference_id,
+        )
+
     def create_checkout_session(
         self,
         amount: str,
@@ -356,11 +398,11 @@ class WaveClient:
             payload["restrict_payer_mobile"] = (
                 f"+{normalise_msisdn(restrict_payer_mobile)}"
             )
-        response = self._http.request(
+        response = self._request(
             "POST",
             "/v1/checkout/sessions",
-            headers=self._headers(idempotency_key=ref),
-            json=payload,
+            payload=payload,
+            idempotency_key=ref,
             idempotent=True,
             reference_id=ref,
         )
@@ -369,10 +411,9 @@ class WaveClient:
     def get_checkout_session(self, session_id: str) -> WaveCheckoutSession:
         """Retrieve a Wave checkout session by ID."""
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = self._http.request(
+        response = self._request(
             "GET",
             f"/v1/checkout/sessions/{encoded}",
-            headers=self._headers(),
             reference_id=session_id,
         )
         return parse_model(response, WaveCheckoutSession, reference_id=session_id)
@@ -380,10 +421,9 @@ class WaveClient:
     def refund_checkout_session(self, session_id: str) -> dict[str, Any]:
         """Refund a completed Wave checkout session (``POST /v1/checkout/sessions/{id}/refund``)."""
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = self._http.request(
+        response = self._request(
             "POST",
             f"/v1/checkout/sessions/{encoded}/refund",
-            headers=self._headers(),
             idempotent=False,
             reference_id=session_id,
         )
@@ -392,10 +432,9 @@ class WaveClient:
     def expire_checkout_session(self, session_id: str) -> dict[str, Any]:
         """Expire an open Wave checkout session (``POST /v1/checkout/sessions/{id}/expire``)."""
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = self._http.request(
+        response = self._request(
             "POST",
             f"/v1/checkout/sessions/{encoded}/expire",
-            headers=self._headers(),
             idempotent=True,
             reference_id=session_id,
         )
@@ -406,10 +445,9 @@ class WaveClient:
     ) -> list[WaveCheckoutSession]:
         """Search Wave checkout sessions by ``client_reference``."""
         encoded = _encode_wave_query_ref(client_reference)
-        response = self._http.request(
+        response = self._request(
             "GET",
             f"/v1/checkout/sessions/search?client_reference={encoded}",
-            headers=self._headers(),
             reference_id=client_reference,
         )
         res = parse_json_dict(response, reference_id=client_reference)
@@ -449,38 +487,22 @@ class WaveClient:
                 if not isinstance(val, str) or not val.strip():
                     raise ValueError(f"{key} must not be blank")
                 payload[key] = val.strip()
-        headers = self._headers(idempotency_key=ref)
-        if self._config.signing_secret is not None:
-            raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            headers["Wave-Signature"] = _sign_wave_request(
-                raw_body, self._config.signing_secret
-            )
-            response = self._http.request(
-                "POST",
-                "/v1/payout",
-                headers=headers,
-                content=raw_body,
-                idempotent=True,
-                reference_id=ref,
-            )
-        else:
-            response = self._http.request(
-                "POST",
-                "/v1/payout",
-                headers=headers,
-                json=payload,
-                idempotent=True,
-                reference_id=ref,
-            )
+        response = self._request(
+            "POST",
+            "/v1/payout",
+            payload=payload,
+            idempotency_key=ref,
+            idempotent=True,
+            reference_id=ref,
+        )
         return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     def get_payout(self, payout_id: str) -> WavePayoutResponse:
         """Retrieve a Wave payout status by ID."""
         encoded = encode_path_segment(payout_id, field_name="payout_id")
-        response = self._http.request(
+        response = self._request(
             "GET",
             f"/v1/payout/{encoded}",
-            headers=self._headers(),
             reference_id=payout_id,
         )
         return parse_model(response, WavePayoutResponse, reference_id=payout_id)
@@ -488,16 +510,9 @@ class WaveClient:
     def reverse_payout(self, payout_id: str) -> dict[str, Any]:
         """Reverse a Wave payout (``POST /v1/payout/{id}/reverse``)."""
         encoded = encode_path_segment(payout_id, field_name="payout_id")
-        headers = self._headers()
-        if self._config.signing_secret is not None:
-            headers["Wave-Signature"] = _sign_wave_request(
-                b"", self._config.signing_secret
-            )
-        response = self._http.request(
+        response = self._request(
             "POST",
             f"/v1/payout/{encoded}/reverse",
-            headers=headers,
-            content=b"",
             idempotent=False,
             reference_id=payout_id,
         )
@@ -506,10 +521,9 @@ class WaveClient:
     def search_payouts(self, client_reference: str) -> list[WavePayoutResponse]:
         """Search Wave payouts by ``client_reference``."""
         encoded = _encode_wave_query_ref(client_reference)
-        response = self._http.request(
+        response = self._request(
             "GET",
             f"/v1/payouts/search?client_reference={encoded}",
-            headers=self._headers(),
             reference_id=client_reference,
         )
         res = parse_json_dict(response, reference_id=client_reference)
@@ -519,11 +533,7 @@ class WaveClient:
 
     def get_balance(self) -> WaveBalanceResponse:
         """Retrieve the Wave merchant balance."""
-        response = self._http.request(
-            "GET",
-            "/v1/balance",
-            headers=self._headers(),
-        )
+        response = self._request("GET", "/v1/balance")
         return parse_model(response, WaveBalanceResponse)
 
     def verify_webhook(
@@ -588,6 +598,48 @@ class AsyncWaveClient:
             headers["Idempotency-Key"] = idempotency_key
         return headers
 
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        idempotent: bool | None = None,
+        reference_id: str | None = None,
+    ) -> httpx.Response:
+        headers = self._headers(idempotency_key=idempotency_key)
+        secret = self._config.signing_secret
+        if secret is not None:
+            raw_body = (
+                json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                if payload is not None
+                else b""
+            )
+
+            def _signer(hdrs: dict[str, str]) -> dict[str, str]:
+                hdrs["Wave-Signature"] = _sign_wave_request(raw_body, secret)
+                return hdrs
+
+            return await self._http.request(
+                method,
+                path,
+                headers=headers,
+                content=raw_body if payload is not None or method == "POST" else None,
+                idempotent=idempotent,
+                reference_id=reference_id,
+                header_signer=_signer,
+            )
+        return await self._http.request(
+            method,
+            path,
+            headers=headers,
+            json=payload,
+            content=b"" if payload is None and method == "POST" else None,
+            idempotent=idempotent,
+            reference_id=reference_id,
+        )
+
     async def create_checkout_session(
         self,
         amount: str,
@@ -626,11 +678,11 @@ class AsyncWaveClient:
             payload["restrict_payer_mobile"] = (
                 f"+{normalise_msisdn(restrict_payer_mobile)}"
             )
-        response = await self._http.request(
+        response = await self._request(
             "POST",
             "/v1/checkout/sessions",
-            headers=self._headers(idempotency_key=ref),
-            json=payload,
+            payload=payload,
+            idempotency_key=ref,
             idempotent=True,
             reference_id=ref,
         )
@@ -638,10 +690,9 @@ class AsyncWaveClient:
 
     async def get_checkout_session(self, session_id: str) -> WaveCheckoutSession:
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = await self._http.request(
+        response = await self._request(
             "GET",
             f"/v1/checkout/sessions/{encoded}",
-            headers=self._headers(),
             reference_id=session_id,
         )
         return parse_model(response, WaveCheckoutSession, reference_id=session_id)
@@ -649,10 +700,9 @@ class AsyncWaveClient:
     async def refund_checkout_session(self, session_id: str) -> dict[str, Any]:
         """Refund a completed Wave checkout session asynchronously."""
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = await self._http.request(
+        response = await self._request(
             "POST",
             f"/v1/checkout/sessions/{encoded}/refund",
-            headers=self._headers(),
             idempotent=False,
             reference_id=session_id,
         )
@@ -661,10 +711,9 @@ class AsyncWaveClient:
     async def expire_checkout_session(self, session_id: str) -> dict[str, Any]:
         """Expire an open Wave checkout session asynchronously."""
         encoded = encode_path_segment(session_id, field_name="session_id")
-        response = await self._http.request(
+        response = await self._request(
             "POST",
             f"/v1/checkout/sessions/{encoded}/expire",
-            headers=self._headers(),
             idempotent=True,
             reference_id=session_id,
         )
@@ -675,10 +724,9 @@ class AsyncWaveClient:
     ) -> list[WaveCheckoutSession]:
         """Search Wave checkout sessions by ``client_reference`` asynchronously."""
         encoded = _encode_wave_query_ref(client_reference)
-        response = await self._http.request(
+        response = await self._request(
             "GET",
             f"/v1/checkout/sessions/search?client_reference={encoded}",
-            headers=self._headers(),
             reference_id=client_reference,
         )
         res = parse_json_dict(response, reference_id=client_reference)
@@ -717,37 +765,21 @@ class AsyncWaveClient:
                 if not isinstance(val, str) or not val.strip():
                     raise ValueError(f"{key} must not be blank")
                 payload[key] = val.strip()
-        headers = self._headers(idempotency_key=ref)
-        if self._config.signing_secret is not None:
-            raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            headers["Wave-Signature"] = _sign_wave_request(
-                raw_body, self._config.signing_secret
-            )
-            response = await self._http.request(
-                "POST",
-                "/v1/payout",
-                headers=headers,
-                content=raw_body,
-                idempotent=True,
-                reference_id=ref,
-            )
-        else:
-            response = await self._http.request(
-                "POST",
-                "/v1/payout",
-                headers=headers,
-                json=payload,
-                idempotent=True,
-                reference_id=ref,
-            )
+        response = await self._request(
+            "POST",
+            "/v1/payout",
+            payload=payload,
+            idempotency_key=ref,
+            idempotent=True,
+            reference_id=ref,
+        )
         return parse_model(response, WavePayoutResponse, reference_id=ref)
 
     async def get_payout(self, payout_id: str) -> WavePayoutResponse:
         encoded = encode_path_segment(payout_id, field_name="payout_id")
-        response = await self._http.request(
+        response = await self._request(
             "GET",
             f"/v1/payout/{encoded}",
-            headers=self._headers(),
             reference_id=payout_id,
         )
         return parse_model(response, WavePayoutResponse, reference_id=payout_id)
@@ -755,16 +787,9 @@ class AsyncWaveClient:
     async def reverse_payout(self, payout_id: str) -> dict[str, Any]:
         """Reverse a Wave payout asynchronously."""
         encoded = encode_path_segment(payout_id, field_name="payout_id")
-        headers = self._headers()
-        if self._config.signing_secret is not None:
-            headers["Wave-Signature"] = _sign_wave_request(
-                b"", self._config.signing_secret
-            )
-        response = await self._http.request(
+        response = await self._request(
             "POST",
             f"/v1/payout/{encoded}/reverse",
-            headers=headers,
-            content=b"",
             idempotent=False,
             reference_id=payout_id,
         )
@@ -773,10 +798,9 @@ class AsyncWaveClient:
     async def search_payouts(self, client_reference: str) -> list[WavePayoutResponse]:
         """Search Wave payouts by ``client_reference`` asynchronously."""
         encoded = _encode_wave_query_ref(client_reference)
-        response = await self._http.request(
+        response = await self._request(
             "GET",
             f"/v1/payouts/search?client_reference={encoded}",
-            headers=self._headers(),
             reference_id=client_reference,
         )
         res = parse_json_dict(response, reference_id=client_reference)
@@ -785,11 +809,7 @@ class AsyncWaveClient:
         )
 
     async def get_balance(self) -> WaveBalanceResponse:
-        response = await self._http.request(
-            "GET",
-            "/v1/balance",
-            headers=self._headers(),
-        )
+        response = await self._request("GET", "/v1/balance")
         return parse_model(response, WaveBalanceResponse)
 
     def verify_webhook(

@@ -261,6 +261,7 @@ class HttpClient:
         idempotent: bool | None = None,
         max_retries_override: int | None = None,
         reference_id: str | None = None,
+        header_signer: Callable[[dict[str, str]], dict[str, str]] | None = None,
     ) -> tuple[httpx.Response, int]:
         effective_retries = (
             self._max_retries if max_retries_override is None else max_retries_override
@@ -277,11 +278,14 @@ class HttpClient:
 
         for attempt in range(attempts):
             started = time.monotonic()
+            attempt_headers = (
+                header_signer(dict(headers)) if header_signer is not None else headers
+            )
             try:
                 response = self._execute_bounded_request(
                     method,
                     path,
-                    headers=headers,
+                    headers=attempt_headers,
                     json=json,
                     data=data,
                     content=content,
@@ -383,6 +387,7 @@ class HttpClient:
         token_namespace: str = "",
         idempotent: bool | None = None,
         reference_id: str | None = None,
+        header_signer: Callable[[dict[str, str]], dict[str, str]] | None = None,
     ) -> httpx.Response:
         """Execute HTTP request with 401 and optional transient retry mapping."""
         validate_request_path(path)
@@ -404,6 +409,7 @@ class HttpClient:
             conn_msg=f"Connection error: {method} {safe_path}",
             idempotent=idempotent,
             reference_id=effective_ref,
+            header_signer=header_signer,
         )
 
         if (
@@ -455,6 +461,7 @@ class HttpClient:
                 idempotent=idempotent,
                 max_retries_override=remaining_retries,
                 reference_id=effective_ref,
+                header_signer=header_signer,
             )
 
         _raise_for_status(

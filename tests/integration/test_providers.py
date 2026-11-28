@@ -1477,3 +1477,200 @@ async def test_issue_160_wave_and_flutterwave_reference_reconciliation(
         af_st = await afprov.get_status("flw-async-ref-160", kind="disbursement")
         assert af_st.is_pending()
         assert af_st.provider_transaction_id == "990161"
+
+
+@pytest.mark.asyncio
+async def test_issue_161_wave_signature_all_endpoints_and_retry_refresh(
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Issue #161: Wave-Signature is sent and verified on all Wave endpoints and refreshed across retries."""
+    import py_momo_sdk.providers.wave as wave_mod
+    from py_momo_sdk import WebhookHandler
+
+    signing_secret = "wave_sn_AKS_issue161"
+
+    def _assert_valid_wave_sig(req_headers: dict[str, str], raw_body: bytes) -> int:
+        sig_header = req_headers.get("wave-signature") or req_headers.get(
+            "Wave-Signature"
+        )
+        assert sig_header is not None
+        ts_part = sig_header.split(",")[0].split("=")[1]
+        ts = int(ts_part)
+        WebhookHandler.verify_timestamped_hmac_signature(
+            raw_body,
+            sig_header,
+            signing_secret,
+            timestamp_separator="",
+            now=float(ts),
+        )
+        return ts
+
+    # Sync: test all 10 Wave endpoints + retry timestamp refresh
+    orig_sign = wave_mod._sign_wave_request
+    timestamps = iter(
+        [
+            1700000100,
+            1700000145,
+            1700000200,
+            1700000201,
+            1700000202,
+            1700000203,
+            1700000204,
+            1700000205,
+            1700000206,
+            1700000207,
+            1700000208,
+        ]
+    )
+    monkeypatch.setattr(
+        wave_mod,
+        "_sign_wave_request",
+        lambda body, secret, timestamp=None: orig_sign(
+            body, secret, timestamp=next(timestamps)
+        ),
+    )
+
+    # First checkout call gets 503 then 200 to verify fresh signature timestamp on retry
+    httpx_mock.add_response(
+        method="POST", url="https://api.wave.com/v1/checkout/sessions", status_code=503
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+        json={"id": "cos-161", "amount": "1000", "currency": "XOF"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/checkout/sessions/cos-161",
+        json={"id": "cos-161", "amount": "1000", "currency": "XOF"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions/cos-161/refund",
+        json={"status": "refunded"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions/cos-161/expire",
+        json={"status": "expired"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/checkout/sessions/search?client_reference=cref-161",
+        json={"result": []},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout",
+        json={
+            "id": "pt-161",
+            "receive_amount": "500",
+            "currency": "XOF",
+            "status": "succeeded",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/payout/pt-161",
+        json={
+            "id": "pt-161",
+            "receive_amount": "500",
+            "currency": "XOF",
+            "status": "succeeded",
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/payout/pt-161/reverse",
+        json={"status": "reversed"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/payouts/search?client_reference=pref-161",
+        json={"result": []},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/balance",
+        json={"amount": "9000", "currency": "XOF"},
+        status_code=200,
+    )
+
+    cfg = WaveConfig(
+        api_key="wave_sn_test_161",
+        signing_secret=signing_secret,
+        success_url="https://merchant.example.test/ok",
+        error_url="https://merchant.example.test/err",
+        max_retries=1,
+        retry_backoff=0.001,
+    )
+    with WaveClient(cfg) as wc:
+        wc.create_checkout_session("1000", "XOF", client_reference="cref-161")
+        wc.get_checkout_session("cos-161")
+        wc.refund_checkout_session("cos-161")
+        wc.expire_checkout_session("cos-161")
+        wc.search_checkout_sessions("cref-161")
+        wc.create_payout("500", "XOF", "221771234567", client_reference="pref-161")
+        wc.get_payout("pt-161")
+        wc.reverse_payout("pt-161")
+        wc.search_payouts("pref-161")
+        wc.get_balance()
+
+    sync_reqs = httpx_mock.get_requests()
+    assert len(sync_reqs) == 11
+    seen_ts = [_assert_valid_wave_sig(dict(r.headers), r.read()) for r in sync_reqs]
+    # Retry attempt #2 got a refreshed Wave-Signature timestamp (1700000145 > 1700000100)
+    assert seen_ts[0] == 1700000100
+    assert seen_ts[1] == 1700000145
+
+    # Async parity across checkout, search, balance, and retry
+    async_timestamps = iter([1700000500, 1700000535, 1700000600, 1700000601])
+    monkeypatch.setattr(
+        wave_mod,
+        "_sign_wave_request",
+        lambda body, secret, timestamp=None: orig_sign(
+            body, secret, timestamp=next(async_timestamps)
+        ),
+    )
+
+    httpx_mock.add_response(
+        method="GET", url="https://api.wave.com/v1/balance", status_code=503
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/balance",
+        json={"amount": "12000", "currency": "XOF"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+        json={"id": "cos-a161", "amount": "2000", "currency": "XOF"},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/checkout/sessions/cos-a161",
+        json={"id": "cos-a161", "amount": "2000", "currency": "XOF"},
+        status_code=200,
+    )
+    async with AsyncWaveClient(cfg) as awc:
+        await awc.get_balance()
+        await awc.create_checkout_session("2000", "XOF", client_reference="acref-161")
+        await awc.get_checkout_session("cos-a161")
+
+    async_reqs = httpx_mock.get_requests()[11:]
+    assert len(async_reqs) == 4
+    async_ts = [_assert_valid_wave_sig(dict(r.headers), r.read()) for r in async_reqs]
+    assert async_ts[0] == 1700000500
+    assert async_ts[1] == 1700000535
