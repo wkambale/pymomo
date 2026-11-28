@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
+import re
 import threading
+import uuid
 from collections.abc import Collection, Mapping, Sequence
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from py_momo_sdk.exceptions import (
     AuthenticationError,
@@ -21,7 +24,12 @@ from py_momo_sdk.providers.models import (
     PaymentResult,
     validate_operation_kind,
 )
-from py_momo_sdk.utils import detect_carrier_from_msisdn, generate_reference_id
+from py_momo_sdk.utils import (
+    detect_carrier_from_msisdn,
+    generate_reference_id,
+    validate_airtel_reference_id,
+    validate_reference_id,
+)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -29,6 +37,82 @@ if TYPE_CHECKING:
 logger = logging.getLogger("py_momo_sdk.providers")
 
 _PROVIDER_METHODS = ("collect", "disburse", "get_status", "get_balance")
+_SAFE_ROUTER_REF_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_PAYSTACK_TRANSFER_REF_RE = re.compile(r"^[a-z0-9_-]{16,50}$")
+_RequestT = TypeVar("_RequestT", PaymentRequest, DisbursementRequest)
+
+
+def _derive_candidate_reference_id(
+    reference_id: str | None, *, provider_name: str, operation: str
+) -> str | None:
+    """Adapt a clean router reference ID to satisfy a target provider's format rules."""
+    if reference_id is None or not isinstance(reference_id, str):
+        return reference_id
+    cleaned = reference_id.strip()
+    if (
+        not cleaned
+        or cleaned in (".", "..")
+        or not _SAFE_ROUTER_REF_RE.fullmatch(cleaned)
+    ):
+        return reference_id
+
+    if provider_name == "orange_money":
+        if len(cleaned) <= 30:
+            return cleaned
+        seed = cleaned.lower()
+        digest = hashlib.sha256(f"py_momo_sdk:orange_money:{seed}".encode()).hexdigest()
+        return f"om-{digest[:27]}"
+
+    if provider_name == "mtn_momo":
+        try:
+            validate_reference_id(cleaned)
+            return cleaned
+        except ValueError:
+            raw_bytes = hashlib.sha256(
+                f"py_momo_sdk:mtn_momo:{cleaned}".encode()
+            ).digest()[:16]
+            return str(uuid.UUID(bytes=raw_bytes, version=4))
+
+    if provider_name == "paystack" and operation == "disbursement":
+        if _PAYSTACK_TRANSFER_REF_RE.fullmatch(cleaned):
+            return cleaned
+        digest = hashlib.sha256(f"py_momo_sdk:paystack:{cleaned}".encode()).hexdigest()
+        return f"ps-{digest[:29]}"
+
+    if provider_name == "airtel_money":
+        try:
+            return validate_airtel_reference_id(cleaned)
+        except ValueError:
+            digest = hashlib.sha256(
+                f"py_momo_sdk:airtel_money:{cleaned}".encode()
+            ).hexdigest()
+            return f"am-{digest[:29]}"
+
+    return reference_id
+
+
+def _adapt_request_for_candidate(
+    request: _RequestT,
+    *,
+    provider_name: str,
+    operation: str,
+    multi_candidate: bool,
+) -> _RequestT:
+    """Return a provider-compatible request copy during cross-provider routing."""
+    base_ref = request.reference_id
+    if base_ref is None:
+        return request
+    if not multi_candidate and provider_name != "orange_money":
+        return request
+    adapted_ref = _derive_candidate_reference_id(
+        base_ref, provider_name=provider_name, operation=operation
+    )
+    if adapted_ref == base_ref:
+        return request
+    updates: dict[str, Any] = {"reference_id": adapted_ref}
+    if not request.external_id:
+        updates["external_id"] = base_ref.strip()
+    return request.model_copy(update=updates)
 
 
 def _is_sync_provider(obj: object) -> bool:
@@ -331,11 +415,18 @@ class PaymentRouter:
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
+        multi_candidate = len(candidates) > 1
         last_exc: PyMomoSDKError | None = None
         attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
+            candidate_request = _adapt_request_for_candidate(
+                effective_request,
+                provider_name=candidate.name,
+                operation="collection",
+                multi_candidate=multi_candidate,
+            )
             try:
-                result = candidate.collect(effective_request)
+                result = candidate.collect(candidate_request)
                 if attempted_refs:
                     result.raw.setdefault(
                         "prior_failed_attempts",
@@ -343,7 +434,7 @@ class PaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
@@ -354,7 +445,7 @@ class PaymentRouter:
                     ]
                     raise
             except PyMomoSDKError as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 if exc.reference_id is None and attempt_ref is not None:
                     exc.reference_id = attempt_ref
                 if attempted_refs:
@@ -396,11 +487,18 @@ class PaymentRouter:
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
+        multi_candidate = len(candidates) > 1
         last_exc: PyMomoSDKError | None = None
         attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
+            candidate_request = _adapt_request_for_candidate(
+                effective_request,
+                provider_name=candidate.name,
+                operation="disbursement",
+                multi_candidate=multi_candidate,
+            )
             try:
-                result = candidate.disburse(effective_request)
+                result = candidate.disburse(candidate_request)
                 if attempted_refs:
                     result.raw.setdefault(
                         "prior_failed_attempts",
@@ -408,7 +506,7 @@ class PaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
@@ -419,7 +517,7 @@ class PaymentRouter:
                     ]
                     raise
             except PyMomoSDKError as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 if exc.reference_id is None and attempt_ref is not None:
                     exc.reference_id = attempt_ref
                 if attempted_refs:
@@ -624,11 +722,18 @@ class AsyncPaymentRouter:
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
+        multi_candidate = len(candidates) > 1
         last_exc: PyMomoSDKError | None = None
         attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
+            candidate_request = _adapt_request_for_candidate(
+                effective_request,
+                provider_name=candidate.name,
+                operation="collection",
+                multi_candidate=multi_candidate,
+            )
             try:
-                result = await candidate.collect(effective_request)
+                result = await candidate.collect(candidate_request)
                 if attempted_refs:
                     result.raw.setdefault(
                         "prior_failed_attempts",
@@ -636,7 +741,7 @@ class AsyncPaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
@@ -647,7 +752,7 @@ class AsyncPaymentRouter:
                     ]
                     raise
             except PyMomoSDKError as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 if exc.reference_id is None and attempt_ref is not None:
                     exc.reference_id = attempt_ref
                 if attempted_refs:
@@ -688,11 +793,18 @@ class AsyncPaymentRouter:
             if allow_ambiguous_write_fallback
             else (AuthenticationError, MissingCredentialsError)
         )
+        multi_candidate = len(candidates) > 1
         last_exc: PyMomoSDKError | None = None
         attempted_refs: list[tuple[str, str | None]] = []
         for idx, candidate in enumerate(candidates):
+            candidate_request = _adapt_request_for_candidate(
+                effective_request,
+                provider_name=candidate.name,
+                operation="disbursement",
+                multi_candidate=multi_candidate,
+            )
             try:
-                result = await candidate.disburse(effective_request)
+                result = await candidate.disburse(candidate_request)
                 if attempted_refs:
                     result.raw.setdefault(
                         "prior_failed_attempts",
@@ -700,7 +812,7 @@ class AsyncPaymentRouter:
                     )
                 return result
             except failover_errors as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 attempted_refs.append((candidate.name, attempt_ref))
                 last_exc = exc
                 if idx + 1 >= len(candidates):
@@ -711,7 +823,7 @@ class AsyncPaymentRouter:
                     ]
                     raise
             except PyMomoSDKError as exc:
-                attempt_ref = exc.reference_id or effective_request.reference_id
+                attempt_ref = exc.reference_id or candidate_request.reference_id
                 if exc.reference_id is None and attempt_ref is not None:
                     exc.reference_id = attempt_ref
                 if attempted_refs:

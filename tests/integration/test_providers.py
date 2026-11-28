@@ -1114,3 +1114,212 @@ async def test_router_issue_88_thread_safety_reconciliation_lifecycle_and_plugin
         lambda group: [_EP("dup", _SyncStub("d1")), _EP("dup", _SyncStub("d2"))],
     )
     assert list(discover_provider_plugins(strict=False).keys()) == ["dup"]
+
+
+@pytest.mark.asyncio
+async def test_issue_159_cross_provider_router_reference_compatibility(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #159: router adapts cross-provider reference formats across Orange, MTN, and Paystack."""
+    import json
+
+    from py_momo_sdk import (
+        AsyncFlutterwaveClient,
+        AsyncFlutterwaveProvider,
+        AsyncOrangeMoneyClient,
+        AsyncOrangeMoneyProvider,
+        AsyncPaystackClient,
+        AsyncPaystackProvider,
+        FlutterwaveConfig,
+        OrangeMoneyClient,
+        OrangeMoneyConfig,
+        OrangeMoneyProvider,
+        PaystackConfig,
+    )
+    from py_momo_sdk.utils import generate_reference_id, validate_reference_id
+
+    om_cfg = OrangeMoneyConfig(
+        client_id="om-cid",
+        client_secret="om-sec",
+        merchant_key="om-mk",
+        return_url="https://merchant.example.test/ret",
+        cancel_url="https://merchant.example.test/can",
+        notif_url="https://merchant.example.test/notif",
+    )
+
+    # 1. Orange + Wave with allow_ambiguous_write_fallback=True (Orange 503 -> Wave succeeds)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-tok-159", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        status_code=503,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+        json={
+            "id": "cos-159-wave",
+            "amount": "5000",
+            "currency": "XOF",
+            "checkout_status": "open",
+            "payment_status": "processing",
+            "client_reference": "fallback-ok",
+        },
+        status_code=200,
+    )
+
+    with (
+        OrangeMoneyClient(om_cfg) as omc,
+        WaveClient(_wave_config()) as wc,
+    ):
+        router = PaymentRouter([OrangeMoneyProvider(omc), WaveProvider(wc)])
+        res = router.collect(
+            PaymentRequest(amount="5000", currency="XOF", payer_msisdn="221771234567"),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+        assert res.provider == "wave"
+        prior = res.raw["prior_failed_attempts"]
+        assert len(prior) == 1
+        assert prior[0]["provider"] == "orange_money"
+        assert prior[0]["reference_id"] is not None
+        assert len(prior[0]["reference_id"]) == 30
+        assert prior[0]["reference_id"].startswith("om-")
+
+        # Direct OrangeMoneyProvider with a 36-char UUID v4 also maps deterministically to <=30 chars
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+            json={
+                "pay_token": "om-direct-uuid",
+                "payment_url": "https://webpay.orange.com/direct",
+            },
+            status_code=201,
+        )
+        uuid_ref = generate_reference_id()
+        direct_om = OrangeMoneyProvider(omc).collect(
+            PaymentRequest(
+                amount="1000",
+                currency="XOF",
+                payer_msisdn="221771234567",
+                reference_id=uuid_ref,
+            )
+        )
+        assert direct_om.external_id is not None and len(direct_om.external_id) == 30
+
+    # 2. Merchant reference "inv-2026-001" failing over from Airtel (401) to MTN MoMo (deterministic UUID v4)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://openapiuat.airtel.africa/auth/oauth2/token",
+        status_code=401,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/token/",
+        json={
+            "access_token": "mtn-159-tok",
+            "token_type": "access_token",
+            "expires_in": 3600,
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+        status_code=202,
+    )
+
+    with (
+        AirtelClient(_airtel_config()) as airtel_bad,
+        PyMomoSDK(_mtn_config()) as mtn_ok,
+    ):
+        ug_router = PaymentRouter(
+            [AirtelMoneyProvider(airtel_bad), MtnMomoProvider(mtn_ok)]
+        )
+        ug_res = ug_router.collect(
+            PaymentRequest(
+                amount="5000",
+                currency="UGX",
+                payer_msisdn="256751234567",
+                reference_id="inv-2026-001",
+            ),
+            fallback=True,
+        )
+        assert ug_res.provider == "mtn_momo"
+        validate_reference_id(ug_res.reference_id)
+        assert ug_res.external_id == "inv-2026-001"
+
+    # 3. Async disburse failover from Flutterwave (401) to Paystack with short/uppercase reference "INV-2026-001"
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.flutterwave.com/v3/transfers",
+        status_code=401,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.paystack.co/transfer",
+        json={"status": True, "data": {"status": "pending"}},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/oauth/v3/token",
+        json={"access_token": "om-async-159", "expires_in": 3600},
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.orange.com/orange-money-webpay/dev/v1/webpayment",
+        json={
+            "pay_token": "om-async-pt-159",
+            "payment_url": "https://webpay.orange.com/async",
+        },
+        status_code=201,
+    )
+
+    async with (
+        AsyncFlutterwaveClient(
+            FlutterwaveConfig(secret_key="flw_bad", default_account_bank="MPS")
+        ) as aflw,
+        AsyncPaystackClient(PaystackConfig(secret_key="sk_ok")) as aps,
+        AsyncOrangeMoneyClient(om_cfg) as aom,
+        AsyncWaveClient(_wave_config()) as awave,
+    ):
+        disb_router = AsyncPaymentRouter(
+            [AsyncFlutterwaveProvider(aflw), AsyncPaystackProvider(aps)]
+        )
+        disb_res = await disb_router.disburse(
+            DisbursementRequest(
+                amount="100.00",
+                currency="NGN",
+                payee_msisdn="0123456789",
+                payee_bank_code="RCP_159",
+                reference_id="INV-2026-001",
+            ),
+            fallback=True,
+        )
+        assert disb_res.provider == "paystack"
+        assert disb_res.reference_id.startswith("ps-")
+        assert len(disb_res.reference_id) == 32
+        assert disb_res.external_id == "INV-2026-001"
+
+        ps_req = next(r for r in httpx_mock.get_requests() if r.url.path == "/transfer")
+        ps_body = json.loads(ps_req.read().decode("utf-8"))
+        assert ps_body["reference"] == disb_res.reference_id
+
+        # Async Orange + Wave with pre-generated UUID succeeds on Orange
+        om_wave_router = AsyncPaymentRouter(
+            [AsyncOrangeMoneyProvider(aom), AsyncWaveProvider(awave)]
+        )
+        aom_res = await om_wave_router.collect(
+            PaymentRequest(amount="2500", currency="XOF", payer_msisdn="221771234567"),
+            fallback=True,
+            allow_ambiguous_write_fallback=True,
+        )
+        assert aom_res.provider == "orange_money"
+        assert aom_res.external_id is not None and len(aom_res.external_id) == 30
