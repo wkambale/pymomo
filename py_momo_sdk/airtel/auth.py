@@ -197,7 +197,7 @@ class AirtelAuth:
 
     def __repr__(self) -> str:
         return (
-            f"AirtelAuth(client_id={self._client_id!r}, "
+            f"AirtelAuth(client_id=<redacted>, "
             f"client_secret=<redacted>, base_url={self._base_url!r})"
         )
 

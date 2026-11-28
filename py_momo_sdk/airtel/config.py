@@ -202,7 +202,7 @@ class AirtelConfig:
 
     def __repr__(self) -> str:
         return (
-            f"AirtelConfig(client_id={self.client_id!r}, "
+            f"AirtelConfig(client_id=<redacted>, "
             f"client_secret=<redacted>, country={self.country!r}, "
             f"currency={self.currency!r}, pin=<redacted>, "
             f"environment={self.environment!r}, base_url={self.base_url!r}, "

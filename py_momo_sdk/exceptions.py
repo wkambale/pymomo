@@ -27,6 +27,8 @@ _SENSITIVE_BODY_KEYS = frozenset(
         "password",
         "pin",
         "authorization",
+        "authorizationcode",
+        "encryptionkey",
         "securitycredential",
         "authreqid",
         "merchantkey",
