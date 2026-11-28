@@ -95,6 +95,7 @@ class MockGatewayState:
     paystack_transactions: dict[str, dict[str, Any]] = field(default_factory=dict)
     flutterwave_transactions: dict[str, dict[str, Any]] = field(default_factory=dict)
     orange_transactions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    preapprovals: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _session_counter: int = field(default=0, init=False, repr=False)
 
@@ -464,6 +465,66 @@ def create_mock_server(
                 )
                 return
 
+            if path.startswith("/collection/v1_0/requesttopay/") and path.endswith(
+                "/deliverynotification"
+            ):
+                body = self._read_json()
+                if body is None:
+                    return
+                self._send_json(200, {})
+                return
+
+            if path == "/collection/v2_0/preapproval":
+                body = self._read_json()
+                if body is None:
+                    return
+                ref = self.headers.get("X-Reference-Id", "").strip() or "mock-pre-ref"
+                pre_status = (
+                    "APPROVED"
+                    if state.default_status == "SUCCESSFUL"
+                    else state.default_status
+                )
+                pre_entry = {
+                    "payer": body.get("payer"),
+                    "payerCurrency": body.get("payerCurrency", "UGX"),
+                    "payerMessage": body.get("payerMessage", ""),
+                    "validityTime": body.get("validityTime", 3600),
+                    "status": pre_status,
+                }
+                with state.lock:
+                    if ref in state.preapprovals:
+                        self._send_json(409, {"message": "Duplicate X-Reference-Id"})
+                        return
+                    state._put_bounded(state.preapprovals, ref, pre_entry)
+                self._send_json(202, {"reference_id": ref})
+                return
+
+            if path == "/standard/v1/payments/refund":
+                body = self._read_json()
+                if body is None:
+                    return
+                raw_tx = body.get("transaction")
+                tx = raw_tx if isinstance(raw_tx, dict) else {}
+                am_id = str(tx.get("airtel_money_id") or "mock-am-id")
+                self._send_json(
+                    200,
+                    {
+                        "status": {
+                            "code": "200",
+                            "message": "SUCCESS",
+                            "result_code": "00",
+                            "success": True,
+                        },
+                        "data": {
+                            "transaction": {
+                                "airtel_money_id": am_id,
+                                "status": self._airtel_status_code(),
+                            }
+                        },
+                    },
+                )
+                return
+
             # Airtel Money Collection & Disbursement
             if path in ("/merchant/v1/payments/", "/standard/v1/disbursements/"):
                 body = self._read_json()
@@ -544,6 +605,40 @@ def create_mock_server(
                 self._send_json(200, response_copy)
                 return
 
+            if path.startswith("/v1/checkout/sessions/") and (
+                path.endswith("/refund") or path.endswith("/expire")
+            ):
+                if self._read_raw_body() is None:
+                    return
+                action = "refund" if path.endswith("/refund") else "expire"
+                sid = unquote(path[len("/v1/checkout/sessions/") : -len(f"/{action}")])
+                with state.lock:
+                    sess = state.wave_sessions.get(sid)
+                    if sess is not None:
+                        if action == "refund":
+                            sess["payment_status"] = "reversed"
+                        else:
+                            sess["checkout_status"] = "expired"
+                if sess is None:
+                    self._send_json(404, {"message": "Not found"})
+                    return
+                self._send_json(200, {"id": sid, "status": action})
+                return
+
+            if path.startswith("/v1/payout/") and path.endswith("/reverse"):
+                if self._read_raw_body() is None:
+                    return
+                pid = unquote(path[len("/v1/payout/") : -len("/reverse")])
+                with state.lock:
+                    p_obj = state.wave_payouts.get(pid)
+                    if p_obj is not None:
+                        p_obj["status"] = "reversed"
+                if p_obj is None:
+                    self._send_json(404, {"message": "Not found"})
+                    return
+                self._send_json(200, {"id": pid, "status": "reversed"})
+                return
+
             # Safaricom M-Pesa Daraja
             if path == "/mpesa/stkpush/v1/processrequest":
                 body = self._read_json()
@@ -594,7 +689,12 @@ def create_mock_server(
                 self._send_json(200, mpesa_tx)
                 return
 
-            if path == "/mpesa/b2c/v3/paymentrequest":
+            if path in (
+                "/mpesa/b2c/v3/paymentrequest",
+                "/mpesa/transactionstatus/v1/query",
+                "/mpesa/accountbalance/v1/query",
+                "/mpesa/reversal/v1/request",
+            ):
                 body = self._read_json()
                 if body is None:
                     return
@@ -611,7 +711,46 @@ def create_mock_server(
                 return
 
             # Paystack
-            if path in ("/transaction/initialize", "/transfer"):
+            if path == "/transferrecipient":
+                body = self._read_json()
+                if body is None:
+                    return
+                with state.lock:
+                    state._session_counter += 1
+                    rcp = f"RCP_mock_{state._session_counter}"
+                self._send_json(
+                    201,
+                    {
+                        "status": True,
+                        "data": {
+                            "recipient_code": rcp,
+                            "type": body.get("type", "mobile_money"),
+                            "name": body.get("name", "Mock Recipient"),
+                            "currency": body.get("currency", "GHS"),
+                        },
+                    },
+                )
+                return
+
+            if path == "/refund":
+                body = self._read_json()
+                if body is None:
+                    return
+                self._send_json(
+                    200,
+                    {
+                        "status": True,
+                        "data": {
+                            "status": "processed",
+                            "transaction": {
+                                "reference": body.get("transaction", "ps-mock-ref")
+                            },
+                        },
+                    },
+                )
+                return
+
+            if path in ("/transaction/initialize", "/transfer", "/charge"):
                 body = self._read_json()
                 if body is None:
                     return
@@ -641,7 +780,25 @@ def create_mock_server(
                 return
 
             # Flutterwave
-            if path in ("/v3/payments", "/v3/transfers"):
+            if path.startswith("/v3/transactions/") and path.endswith("/refund"):
+                body = self._read_json()
+                if body is None:
+                    return
+                flw_id = unquote(path[len("/v3/transactions/") : -len("/refund")])
+                self._send_json(
+                    200,
+                    {
+                        "status": "success",
+                        "data": {
+                            "id": flw_id,
+                            "status": "completed",
+                            "amount_refunded": body.get("amount", 100),
+                        },
+                    },
+                )
+                return
+
+            if path in ("/v3/payments", "/v3/transfers", "/v3/charges"):
                 body = self._read_json()
                 if body is None:
                     return
@@ -652,22 +809,27 @@ def create_mock_server(
                     else ("failed" if state.default_status == "FAILED" else "pending")
                 )
                 with state.lock:
-                    state._put_bounded(
-                        state.flutterwave_transactions,
-                        ref,
-                        {
-                            "status": "success",
-                            "data": {
-                                "id": ref,
-                                "reference": ref,
-                                "status": flw_status,
-                                "amount": body.get("amount", "100"),
-                                "currency": body.get("currency", "NGN"),
-                                "link": f"https://checkout.flutterwave.com/{ref}",
-                            },
+                    state._session_counter += 1
+                    num_id = str(100000 + state._session_counter)
+                    entry_payload = {
+                        "status": "success",
+                        "data": {
+                            "id": int(num_id),
+                            "tx_ref": ref,
+                            "reference": ref,
+                            "status": flw_status,
+                            "amount": body.get("amount", 100),
+                            "currency": body.get("currency", "NGN"),
+                            "link": f"https://checkout.flutterwave.com/{ref}",
                         },
+                    }
+                    state._put_bounded(
+                        state.flutterwave_transactions, ref, entry_payload
                     )
-                    resp = copy.deepcopy(state.flutterwave_transactions[ref])
+                    state._put_bounded(
+                        state.flutterwave_transactions, num_id, entry_payload
+                    )
+                    resp = copy.deepcopy(entry_payload)
                 self._send_json(200, resp)
                 return
 
@@ -681,6 +843,8 @@ def create_mock_server(
                 with state.lock:
                     state._session_counter += 1
                     pt = f"om-pay-{state._session_counter}"
+                    nt = f"om-notif-{state._session_counter}"
+                    txnid = f"OMTX{state._session_counter}"
                     om_status = (
                         "SUCCESS"
                         if state.default_status == "SUCCESSFUL"
@@ -691,12 +855,17 @@ def create_mock_server(
                     state._put_bounded(
                         state.orange_transactions,
                         pt,
-                        {"status": om_status, "order_id": body.get("order_id")},
+                        {
+                            "status": om_status,
+                            "order_id": body.get("order_id"),
+                            "txnid": txnid,
+                        },
                     )
                 self._send_json(
                     201,
                     {
                         "pay_token": pt,
+                        "notif_token": nt,
                         "payment_url": f"https://webpay.orange.com/{pt}",
                     },
                 )
@@ -751,12 +920,36 @@ def create_mock_server(
                     )
                     return
 
-            # MTN Account Holder Active / BasicUserInfo
+            # MTN Account Holder Active / BasicUserInfo / OAuth2 UserInfo / PreApproval
             if "/accountholder/" in path and path.endswith("/active"):
                 self._send_json(200, {"result": True})
                 return
-            if "/accountholder/" in path and path.endswith("/basicuserinfo"):
-                self._send_json(200, {"given_name": "Mock", "family_name": "User"})
+            if (
+                ("/accountholder/" in path and path.endswith("/basicuserinfo"))
+                or (
+                    path.startswith("/collection/v2_0/user/")
+                    and path.endswith("/basicuserinfo")
+                )
+                or path == "/collection/oauth2/v1_0/userinfo"
+            ):
+                self._send_json(
+                    200,
+                    {
+                        "sub": "mock-sub-001",
+                        "name": "Mock User",
+                        "given_name": "Mock",
+                        "family_name": "User",
+                    },
+                )
+                return
+            pre_ref = _extract_single_suffix(path, "/collection/v2_0/preapproval/")
+            if pre_ref is not None:
+                with state.lock:
+                    pre = copy.deepcopy(state.preapprovals.get(pre_ref))
+                if pre is None:
+                    self._send_json(404, {"message": "Not found"})
+                    return
+                self._send_json(200, pre)
                 return
 
             # MTN Sandbox get user
@@ -814,10 +1007,52 @@ def create_mock_server(
                         return
                     self._send_json(200, tx)
                     return
+            airtel_user_msisdn = _extract_single_suffix(path, "/standard/v1/users/")
+            if airtel_user_msisdn is not None:
+                self._send_json(
+                    200,
+                    {
+                        "status": {
+                            "code": "200",
+                            "message": "Success",
+                            "success": True,
+                        },
+                        "data": {
+                            "first_name": "Mock",
+                            "last_name": "User",
+                            "msisdn": airtel_user_msisdn,
+                            "is_barred": False,
+                            "is_pin_set": True,
+                        },
+                    },
+                )
+                return
 
-            # Wave Session, Payout, Balance
+            # Wave Session, Payout, Search, Balance
             if path == "/v1/balance":
                 self._send_json(200, {"amount": "25000", "currency": "XOF"})
+                return
+            if path == "/v1/checkout/sessions/search":
+                qs = parse_qs(split.query)
+                cref = qs.get("client_reference", [""])[0]
+                with state.lock:
+                    matches = [
+                        copy.deepcopy(s)
+                        for s in state.wave_sessions.values()
+                        if s.get("client_reference") == cref
+                    ]
+                self._send_json(200, {"result": matches})
+                return
+            if path == "/v1/payouts/search":
+                qs = parse_qs(split.query)
+                cref = qs.get("client_reference", [""])[0]
+                with state.lock:
+                    matches = [
+                        copy.deepcopy(p)
+                        for p in state.wave_payouts.values()
+                        if p.get("client_reference") == cref
+                    ]
+                self._send_json(200, {"result": matches})
                 return
             wave_sid = _extract_single_suffix(path, "/v1/checkout/sessions/")
             if wave_sid is not None:
@@ -838,11 +1073,27 @@ def create_mock_server(
                 self._send_json(200, payout)
                 return
 
-            # Paystack Status & Balance
+            # Paystack Status, Banks & Balance
             if path == "/balance":
                 self._send_json(
                     200,
                     {"status": True, "data": [{"balance": 100000, "currency": "NGN"}]},
+                )
+                return
+            if path == "/bank":
+                self._send_json(
+                    200,
+                    {
+                        "status": True,
+                        "data": [
+                            {
+                                "name": "MTN Mobile Money",
+                                "code": "MTN",
+                                "type": "mobile_money",
+                                "currency": "GHS",
+                            }
+                        ],
+                    },
                 )
                 return
             for ps_prefix in ("/transaction/verify/", "/transfer/verify/"):
@@ -866,6 +1117,23 @@ def create_mock_server(
                     self._send_json(404, {"message": "Not found"})
                     return
                 self._send_json(200, flw_tx)
+                return
+            if path.startswith("/v3/transactions/") and path.endswith("/verify"):
+                flw_id = unquote(path[len("/v3/transactions/") : -len("/verify")])
+                with state.lock:
+                    flw_tx = copy.deepcopy(state.flutterwave_transactions.get(flw_id))
+                if flw_tx is None:
+                    self._send_json(404, {"message": "Not found"})
+                    return
+                self._send_json(200, flw_tx)
+                return
+            if path == "/v3/transfers":
+                qs = parse_qs(split.query)
+                tr_ref = qs.get("reference", [""])[0]
+                with state.lock:
+                    flw_tx = copy.deepcopy(state.flutterwave_transactions.get(tr_ref))
+                data_list = [flw_tx["data"]] if flw_tx and "data" in flw_tx else []
+                self._send_json(200, {"status": "success", "data": data_list})
                 return
             flw_tr_id = _extract_single_suffix(path, "/v3/transfers/")
             if flw_tr_id is not None:
@@ -892,6 +1160,22 @@ def create_mock_server(
                 )
                 return
 
+            self._send_json(404, {"message": "Not found"})
+
+        def do_DELETE(self) -> None:
+            self._deadline = time.monotonic() + timeout_val
+            if self._read_raw_body() is None:
+                return
+            path = urlsplit(self.path).path
+            pre_ref = _extract_single_suffix(path, "/collection/v2_0/preapproval/")
+            if pre_ref is not None:
+                with state.lock:
+                    removed = state.preapprovals.pop(pre_ref, None)
+                if removed is None:
+                    self._send_json(404, {"message": "Not found"})
+                    return
+                self._send_json(200, {})
+                return
             self._send_json(404, {"message": "Not found"})
 
     server_cls = _make_server_class(
