@@ -41,6 +41,7 @@ _MTN_CAPABILITIES = ProviderCapabilities(
         "ZAR",
         "SZL",
         "LRD",
+        "USD",
         "GNF",
         "RWF",
         "NGN",

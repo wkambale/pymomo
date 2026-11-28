@@ -881,3 +881,98 @@ async def test_issue_130_mtn_ciba_userinfo_delivery_notification_and_preapproval
     assert apre_status.is_failed() is True
     assert apre_status.reason_code == "APPROVAL_REJECTED"
     await async_client.collection.cancel_preapproval(pre_ref)
+
+
+@pytest.mark.asyncio
+async def test_issue_166_mtn_utf8_delivery_notification_preapproval_strip_and_liberia_usd(
+    client: PyMomoSDK, async_client: AsyncPyMomoSDK, httpx_mock: HTTPXMock
+) -> None:
+    """Verify Issue #166: French UTF-8 deliverynotification, PreApproval stripping, and MTN Liberia USD."""
+    import json
+
+    from py_momo_sdk import MtnMomoProvider, PaymentRequest, PaymentRouter
+
+    ref_id = "e4d6934c-6fa1-49b4-9c59-bf558661b17c"
+    mock_token_response(httpx_mock)
+    mock_token_response(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{ref_id}/deliverynotification",
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/{ref_id}/deliverynotification",
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval",
+        status_code=202,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v2_0/preapproval",
+        status_code=202,
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay",
+        status_code=202,
+    )
+
+    french_msg = "Paiement reçu avec succès"
+    client.collection.send_delivery_notification(ref_id, french_msg, language="fr")
+    await async_client.collection.send_delivery_notification(
+        ref_id, french_msg, language="fr"
+    )
+
+    # PreApproval strips party_id_type and non-MSISDN payer_msisdn
+    client.collection.create_preapproval(
+        payer_msisdn="  buyer@example.com  ",
+        payer_currency="EUR",
+        validity_time=3600,
+        party_id_type="  email  ",
+        reference_id=ref_id,
+    )
+    await async_client.collection.create_preapproval(
+        payer_msisdn="  PARTY123  ",
+        payer_currency="EUR",
+        validity_time=3600,
+        party_id_type="  party_code  ",
+        reference_id=ref_id,
+    )
+
+    # MTN Liberia (23188) USD routing
+    router = PaymentRouter([MtnMomoProvider(client)])
+    lr_res = router.collect(
+        PaymentRequest(amount="15.00", currency="USD", payer_msisdn="231881234567")
+    )
+    assert lr_res.provider == "mtn_momo"
+
+    dn_reqs = [
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path.endswith("/deliverynotification")
+    ]
+    assert len(dn_reqs) == 2
+    for r in dn_reqs:
+        assert "notificationMessage" not in r.headers
+        assert r.headers["Language"] == "fr"
+        assert json.loads(r.read().decode("utf-8")) == {
+            "notificationMessage": french_msg
+        }
+
+    pre_reqs = [
+        r
+        for r in httpx_mock.get_requests()
+        if r.url.path == "/collection/v2_0/preapproval"
+    ]
+    assert json.loads(pre_reqs[0].read().decode("utf-8"))["payer"] == {
+        "partyIdType": "EMAIL",
+        "partyId": "buyer@example.com",
+    }
+    assert json.loads(pre_reqs[1].read().decode("utf-8"))["payer"] == {
+        "partyIdType": "PARTY_CODE",
+        "partyId": "PARTY123",
+    }

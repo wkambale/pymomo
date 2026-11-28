@@ -396,9 +396,10 @@ class Collection(AsyncBaseProduct):
         if not cleaned_msg.strip():
             raise ValueError("notification_message must not be blank")
         headers = await self._build_headers(include_content_type=True)
-        headers["notificationMessage"] = validate_header_value(
-            cleaned_msg, field_name="notification_message"
-        )
+        if cleaned_msg.isascii():
+            headers["notificationMessage"] = validate_header_value(
+                cleaned_msg, field_name="notification_message"
+            )
         if language is not None:
             if (
                 not isinstance(language, str)
@@ -434,14 +435,19 @@ class Collection(AsyncBaseProduct):
         """Request a subscriber PreApproval asynchronously (``POST /collection/v2_0/preapproval``)."""
         if reference_id is not None:
             validate_reference_id(reference_id)
+        if not isinstance(party_id_type, str) or not party_id_type.strip():
+            raise ValueError("party_id_type must be a non-empty string")
+        if not isinstance(payer_msisdn, str) or not payer_msisdn.strip():
+            raise ValueError("payer_msisdn must be a non-empty string")
         ref = reference_id or generate_reference_id()
+        norm_party_type = party_id_type.strip().upper()
         party_id = (
             normalise_msisdn(payer_msisdn)
-            if party_id_type.upper() == "MSISDN"
-            else payer_msisdn
+            if norm_party_type == "MSISDN"
+            else payer_msisdn.strip()
         )
         payload = PreApprovalRequest(
-            payer=Party(partyIdType=party_id_type.upper(), partyId=party_id),
+            payer=Party(partyIdType=norm_party_type, partyId=party_id),
             payerCurrency=payer_currency,
             payerMessage=payer_message,
             validityTime=validity_time,
