@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import threading
 import uuid
 import weakref
@@ -852,6 +854,30 @@ def _extract_orange_pay_token(res: dict[str, Any]) -> str:
     return raw.strip()
 
 
+_ORANGE_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _derive_orange_order_id(seed: str) -> str:
+    """Derive a deterministic 30-character Orange ``order_id`` from a reference seed."""
+    digest = hashlib.sha256(f"py_momo_sdk:orange_money:{seed}".encode()).hexdigest()
+    return f"om-{digest[:_MAX_ORANGE_ORDER_ID_LEN - 3]}"
+
+
+def _resolve_orange_provider_order_id(request: PaymentRequest) -> str:
+    raw = (
+        request.reference_id
+        if request.reference_id is not None
+        else request.external_id
+    )
+    if not raw:
+        return _generate_orange_order_id()
+    if isinstance(raw, str) and _ORANGE_UUID_RE.fullmatch(raw.strip()):
+        return _derive_orange_order_id(raw.strip().lower())
+    return raw
+
+
 class OrangeMoneyProvider:
     """Synchronous unified provider adapter for Orange Money."""
 
@@ -867,9 +893,7 @@ class OrangeMoneyProvider:
         return _ORANGE_CAPABILITIES
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
-        order_id = (
-            request.reference_id or request.external_id or _generate_orange_order_id()
-        )
+        order_id = _resolve_orange_provider_order_id(request)
         res = self._client.create_web_payment(
             amount=request.amount,
             currency=request.currency,
@@ -973,9 +997,7 @@ class AsyncOrangeMoneyProvider:
         return _ORANGE_CAPABILITIES
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
-        order_id = (
-            request.reference_id or request.external_id or _generate_orange_order_id()
-        )
+        order_id = _resolve_orange_provider_order_id(request)
         res = await self._client.create_web_payment(
             amount=request.amount,
             currency=request.currency,
