@@ -12,7 +12,7 @@ import httpx
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.exceptions import PyMomoSDKError, ResourceNotFoundError
 from py_momo_sdk.http import (
     DEFAULT_MAX_RESPONSE_BYTES,
     HttpClient,
@@ -820,6 +820,55 @@ class AsyncWaveClient:
         await self.close()
 
 
+def _resolve_wave_client_reference(
+    reference_id: str | None, external_id: str | None
+) -> str:
+    if reference_id is not None:
+        return reference_id
+    if external_id and external_id.strip():
+        return external_id.strip()
+    return generate_reference_id()
+
+
+def _map_wave_session_to_result(
+    provider: str, session: WaveCheckoutSession
+) -> PaymentResult:
+    return PaymentResult(
+        provider=provider,
+        reference_id=session.id,
+        status=_map_wave_session_status(session),
+        amount=session.amount,
+        currency=session.currency,
+        external_id=session.client_reference,
+        provider_transaction_id=session.transaction_id,
+        checkout_url=session.wave_launch_url,
+        reason=_extract_wave_error(session.last_payment_error),
+        raw=session.model_dump(mode="json"),
+    )
+
+
+def _map_wave_payout_to_result(
+    provider: str, payout: WavePayoutResponse
+) -> PaymentResult:
+    return PaymentResult(
+        provider=provider,
+        reference_id=payout.id,
+        status=_map_wave_status(payout.status),
+        amount=payout.receive_amount,
+        currency=payout.currency,
+        external_id=payout.client_reference,
+        provider_transaction_id=payout.transaction_id,
+        reason=_extract_wave_error(payout.payout_error),
+        raw=payout.model_dump(mode="json"),
+    )
+
+
+def _validate_wave_lookup_ref(reference_id: str) -> str:
+    if not isinstance(reference_id, str) or not reference_id.strip():
+        raise ValueError("reference_id must be a non-empty string")
+    return reference_id.strip()
+
+
 class WaveProvider:
     """Synchronous unified provider adapter for Wave."""
 
@@ -835,76 +884,63 @@ class WaveProvider:
         return _WAVE_CAPABILITIES
 
     def collect(self, request: PaymentRequest) -> PaymentResult:
+        client_ref = _resolve_wave_client_reference(
+            request.reference_id, request.external_id
+        )
         session = self._client.create_checkout_session(
             amount=request.amount,
             currency=request.currency,
-            client_reference=request.reference_id or request.external_id or None,
+            client_reference=client_ref,
             success_url=request.callback_url,
             error_url=None,
         )
-        return PaymentResult(
-            provider=self.name,
-            reference_id=session.id,
-            status=_map_wave_session_status(session),
-            amount=session.amount,
-            currency=session.currency,
-            external_id=session.client_reference,
-            provider_transaction_id=session.transaction_id,
-            checkout_url=session.wave_launch_url,
-            reason=_extract_wave_error(session.last_payment_error),
-            raw=session.model_dump(mode="json"),
-        )
+        return _map_wave_session_to_result(self.name, session)
 
     def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        client_ref = _resolve_wave_client_reference(
+            request.reference_id, request.external_id
+        )
         payout = self._client.create_payout(
             amount=request.amount,
             currency=request.currency,
             mobile=request.payee_msisdn,
-            client_reference=request.reference_id or request.external_id or None,
+            client_reference=client_ref,
             payment_reason=request.payer_message or None,
         )
-        return PaymentResult(
-            provider=self.name,
-            reference_id=payout.id,
-            status=_map_wave_status(payout.status),
-            amount=payout.receive_amount,
-            currency=payout.currency,
-            external_id=payout.client_reference,
-            provider_transaction_id=payout.transaction_id,
-            reason=_extract_wave_error(payout.payout_error),
-            raw=payout.model_dump(mode="json"),
-        )
+        return _map_wave_payout_to_result(self.name, payout)
 
     def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
         validate_operation_kind(kind)
+        cleaned = _validate_wave_lookup_ref(reference_id)
         if kind == "disbursement":
-            payout = self._client.get_payout(reference_id)
-            return PaymentResult(
-                provider=self.name,
-                reference_id=payout.id,
-                status=_map_wave_status(payout.status),
-                amount=payout.receive_amount,
-                currency=payout.currency,
-                external_id=payout.client_reference,
-                provider_transaction_id=payout.transaction_id,
-                reason=_extract_wave_error(payout.payout_error),
-                raw=payout.model_dump(mode="json"),
-            )
-        session = self._client.get_checkout_session(reference_id)
-        return PaymentResult(
-            provider=self.name,
-            reference_id=session.id,
-            status=_map_wave_session_status(session),
-            amount=session.amount,
-            currency=session.currency,
-            external_id=session.client_reference,
-            provider_transaction_id=session.transaction_id,
-            checkout_url=session.wave_launch_url,
-            reason=_extract_wave_error(session.last_payment_error),
-            raw=session.model_dump(mode="json"),
-        )
+            if cleaned.startswith("pt-"):
+                payout = self._client.get_payout(cleaned)
+            else:
+                payout_matches = self._client.search_payouts(cleaned)
+                if not payout_matches:
+                    raise ResourceNotFoundError(
+                        f"Wave payout not found for client_reference: {cleaned}",
+                        reference_id=cleaned,
+                        status_code=404,
+                        provider=self.name,
+                    )
+                payout = payout_matches[0]
+            return _map_wave_payout_to_result(self.name, payout)
+        if cleaned.startswith("cos-"):
+            session = self._client.get_checkout_session(cleaned)
+        else:
+            session_matches = self._client.search_checkout_sessions(cleaned)
+            if not session_matches:
+                raise ResourceNotFoundError(
+                    f"Wave checkout session not found for client_reference: {cleaned}",
+                    reference_id=cleaned,
+                    status_code=404,
+                    provider=self.name,
+                )
+            session = session_matches[0]
+        return _map_wave_session_to_result(self.name, session)
 
     def get_balance(
         self, *, kind: str = "collection", currency: str | None = None
@@ -944,76 +980,63 @@ class AsyncWaveProvider:
         return _WAVE_CAPABILITIES
 
     async def collect(self, request: PaymentRequest) -> PaymentResult:
+        client_ref = _resolve_wave_client_reference(
+            request.reference_id, request.external_id
+        )
         session = await self._client.create_checkout_session(
             amount=request.amount,
             currency=request.currency,
-            client_reference=request.reference_id or request.external_id or None,
+            client_reference=client_ref,
             success_url=request.callback_url,
             error_url=None,
         )
-        return PaymentResult(
-            provider=self.name,
-            reference_id=session.id,
-            status=_map_wave_session_status(session),
-            amount=session.amount,
-            currency=session.currency,
-            external_id=session.client_reference,
-            provider_transaction_id=session.transaction_id,
-            checkout_url=session.wave_launch_url,
-            reason=_extract_wave_error(session.last_payment_error),
-            raw=session.model_dump(mode="json"),
-        )
+        return _map_wave_session_to_result(self.name, session)
 
     async def disburse(self, request: DisbursementRequest) -> PaymentResult:
+        client_ref = _resolve_wave_client_reference(
+            request.reference_id, request.external_id
+        )
         payout = await self._client.create_payout(
             amount=request.amount,
             currency=request.currency,
             mobile=request.payee_msisdn,
-            client_reference=request.reference_id or request.external_id or None,
+            client_reference=client_ref,
             payment_reason=request.payer_message or None,
         )
-        return PaymentResult(
-            provider=self.name,
-            reference_id=payout.id,
-            status=_map_wave_status(payout.status),
-            amount=payout.receive_amount,
-            currency=payout.currency,
-            external_id=payout.client_reference,
-            provider_transaction_id=payout.transaction_id,
-            reason=_extract_wave_error(payout.payout_error),
-            raw=payout.model_dump(mode="json"),
-        )
+        return _map_wave_payout_to_result(self.name, payout)
 
     async def get_status(
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
         validate_operation_kind(kind)
+        cleaned = _validate_wave_lookup_ref(reference_id)
         if kind == "disbursement":
-            payout = await self._client.get_payout(reference_id)
-            return PaymentResult(
-                provider=self.name,
-                reference_id=payout.id,
-                status=_map_wave_status(payout.status),
-                amount=payout.receive_amount,
-                currency=payout.currency,
-                external_id=payout.client_reference,
-                provider_transaction_id=payout.transaction_id,
-                reason=_extract_wave_error(payout.payout_error),
-                raw=payout.model_dump(mode="json"),
-            )
-        session = await self._client.get_checkout_session(reference_id)
-        return PaymentResult(
-            provider=self.name,
-            reference_id=session.id,
-            status=_map_wave_session_status(session),
-            amount=session.amount,
-            currency=session.currency,
-            external_id=session.client_reference,
-            provider_transaction_id=session.transaction_id,
-            checkout_url=session.wave_launch_url,
-            reason=_extract_wave_error(session.last_payment_error),
-            raw=session.model_dump(mode="json"),
-        )
+            if cleaned.startswith("pt-"):
+                payout = await self._client.get_payout(cleaned)
+            else:
+                payout_matches = await self._client.search_payouts(cleaned)
+                if not payout_matches:
+                    raise ResourceNotFoundError(
+                        f"Wave payout not found for client_reference: {cleaned}",
+                        reference_id=cleaned,
+                        status_code=404,
+                        provider=self.name,
+                    )
+                payout = payout_matches[0]
+            return _map_wave_payout_to_result(self.name, payout)
+        if cleaned.startswith("cos-"):
+            session = await self._client.get_checkout_session(cleaned)
+        else:
+            session_matches = await self._client.search_checkout_sessions(cleaned)
+            if not session_matches:
+                raise ResourceNotFoundError(
+                    f"Wave checkout session not found for client_reference: {cleaned}",
+                    reference_id=cleaned,
+                    status_code=404,
+                    provider=self.name,
+                )
+            session = session_matches[0]
+        return _map_wave_session_to_result(self.name, session)
 
     async def get_balance(
         self, *, kind: str = "collection", currency: str | None = None

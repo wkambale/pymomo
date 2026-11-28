@@ -1323,3 +1323,157 @@ async def test_issue_159_cross_provider_router_reference_compatibility(
         )
         assert aom_res.provider == "orange_money"
         assert aom_res.external_id is not None and len(aom_res.external_id) == 30
+
+
+@pytest.mark.asyncio
+async def test_issue_160_wave_and_flutterwave_reference_reconciliation(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Verify Issue #160: WaveProvider and FlutterwaveProvider reconcile timed-out writes by merchant reference."""
+    import httpx
+
+    from py_momo_sdk import (
+        AsyncFlutterwaveClient,
+        AsyncFlutterwaveProvider,
+        FlutterwaveClient,
+        FlutterwaveConfig,
+        FlutterwaveProvider,
+        ResourceNotFoundError,
+    )
+
+    # 1. Wave timeout carries auto-generated client_reference, and get_status reconciles via search endpoints
+    httpx_mock.add_exception(
+        httpx.ReadTimeout("wave checkout timed out"),
+        method="POST",
+        url="https://api.wave.com/v1/checkout/sessions",
+    )
+    with WaveClient(_wave_config()) as wc:
+        wprov = WaveProvider(wc)
+        with pytest.raises(PyMomoSDKError) as exc_info:
+            wprov.collect(
+                PaymentRequest(
+                    amount="1000", currency="XOF", payer_msisdn="221771234567"
+                )
+            )
+        timed_out_ref = exc_info.value.reference_id
+        assert timed_out_ref is not None and len(timed_out_ref) == 36
+
+        httpx_mock.add_response(
+            method="GET",
+            url=f"https://api.wave.com/v1/checkout/sessions/search?client_reference={timed_out_ref}",
+            json={
+                "result": [
+                    {
+                        "id": "cos-reconciled-160",
+                        "amount": "1000",
+                        "currency": "XOF",
+                        "checkout_status": "complete",
+                        "payment_status": "succeeded",
+                        "client_reference": timed_out_ref,
+                        "transaction_id": "TWAVE160",
+                    }
+                ]
+            },
+            status_code=200,
+        )
+        reconciled = wprov.get_status(timed_out_ref, kind="collection")
+        assert reconciled.is_successful()
+        assert reconciled.reference_id == "cos-reconciled-160"
+        assert reconciled.external_id == timed_out_ref
+
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.wave.com/v1/payouts/search?client_reference=missing-payout-ref",
+            json={"result": []},
+            status_code=200,
+        )
+        with pytest.raises(ResourceNotFoundError):
+            wprov.get_status("missing-payout-ref", kind="disbursement")
+
+    # 2. Async Wave payout search reconciliation + Flutterwave sync & async transfer reference reconciliation
+    flw_cfg = FlutterwaveConfig(
+        secret_key="FLWSECK_TEST_160",
+        default_account_bank="MPS",
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transfers?reference=flw-merch-ref-160",
+        json={
+            "status": "success",
+            "data": [
+                {
+                    "id": 990160,
+                    "reference": "flw-merch-ref-160",
+                    "status": "SUCCESSFUL",
+                    "amount": 2500,
+                    "currency": "UGX",
+                    "complete_message": "Transfer Completed",
+                }
+            ],
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transfers?reference=flw-missing-160",
+        json={"status": "success", "data": []},
+        status_code=200,
+    )
+    with FlutterwaveClient(flw_cfg) as fc:
+        fprov = FlutterwaveProvider(fc)
+        flw_st = fprov.get_status("flw-merch-ref-160", kind="disbursement")
+        assert flw_st.is_successful()
+        assert flw_st.provider_transaction_id == "990160"
+        assert flw_st.external_id == "flw-merch-ref-160"
+        assert flw_st.amount == "2500"
+
+        with pytest.raises(ResourceNotFoundError):
+            fprov.get_status("flw-missing-160", kind="disbursement")
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.wave.com/v1/payouts/search?client_reference=wave-payout-ref-160",
+        json={
+            "result": [
+                {
+                    "id": "pt-160-async",
+                    "receive_amount": "4000",
+                    "currency": "XOF",
+                    "status": "succeeded",
+                    "client_reference": "wave-payout-ref-160",
+                }
+            ]
+        },
+        status_code=200,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.flutterwave.com/v3/transfers?reference=flw-async-ref-160",
+        json={
+            "status": "success",
+            "data": [
+                {
+                    "id": 990161,
+                    "reference": "flw-async-ref-160",
+                    "status": "PENDING",
+                    "amount": 1500,
+                    "currency": "KES",
+                }
+            ],
+        },
+        status_code=200,
+    )
+    async with (
+        AsyncWaveClient(_wave_config()) as awc,
+        AsyncFlutterwaveClient(flw_cfg) as afc,
+    ):
+        awprov = AsyncWaveProvider(awc)
+        afprov = AsyncFlutterwaveProvider(afc)
+
+        aw_st = await awprov.get_status("wave-payout-ref-160", kind="disbursement")
+        assert aw_st.is_successful()
+        assert aw_st.reference_id == "pt-160-async"
+
+        af_st = await afprov.get_status("flw-async-ref-160", kind="disbursement")
+        assert af_st.is_pending()
+        assert af_st.provider_transaction_id == "990161"

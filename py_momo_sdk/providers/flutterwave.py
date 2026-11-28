@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 
 from py_momo_sdk._async.http import AsyncHttpClient
-from py_momo_sdk.exceptions import PyMomoSDKError
+from py_momo_sdk.exceptions import PyMomoSDKError, ResourceNotFoundError
 from py_momo_sdk.frameworks import verify_constant_time_token
 from py_momo_sdk.http import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, parse_json_dict
 from py_momo_sdk.providers.models import (
@@ -827,12 +827,26 @@ class AsyncFlutterwaveClient:
         await self.close()
 
 
-def _map_flw_status_response(
-    provider: str, reference_id: str, res: dict[str, Any]
+def _is_numeric_flw_transfer_id(reference_id: str) -> bool:
+    if not isinstance(reference_id, str) or not reference_id.strip():
+        raise ValueError("reference_id must be a non-empty string")
+    cleaned = reference_id.strip()
+    return cleaned.isascii() and cleaned.isdigit()
+
+
+def _map_flw_transfer_data(
+    provider: str,
+    reference_id: str,
+    data: dict[str, Any],
+    raw: dict[str, Any],
 ) -> PaymentResult:
-    data = _unwrap_flw_data(res)
     amount = str(data["amount"]) if data.get("amount") is not None else None
     tx_id = str(data["id"]) if data.get("id") is not None else None
+    ext_ref = (
+        str(data["reference"])
+        if isinstance(data.get("reference"), str) and data["reference"]
+        else None
+    )
     reason_val = data.get("complete_message") or data.get("processor_response")
     reason = str(reason_val) if isinstance(reason_val, str) and reason_val else None
     return PaymentResult(
@@ -842,9 +856,54 @@ def _map_flw_status_response(
         amount=amount,
         currency=data.get("currency"),
         provider_transaction_id=tx_id,
+        external_id=ext_ref,
         reason=reason,
-        raw=res,
+        raw=raw,
     )
+
+
+def _map_flw_status_response(
+    provider: str, reference_id: str, res: dict[str, Any]
+) -> PaymentResult:
+    data = _unwrap_flw_data(res)
+    return _map_flw_transfer_data(provider, reference_id, data, res)
+
+
+def _map_flw_transfer_reference_response(
+    provider: str, reference_id: str, res: dict[str, Any]
+) -> PaymentResult:
+    if str(res.get("status", "")).strip().lower() == "error":
+        msg = res.get("message")
+        raise PyMomoSDKError(
+            str(msg) if isinstance(msg, str) and msg else "Flutterwave request failed",
+            reference_id=reference_id,
+            provider=provider,
+            response_body=res,
+        )
+    data = res.get("data")
+    if isinstance(data, dict):
+        return _map_flw_transfer_data(provider, reference_id, data, res)
+    if not isinstance(data, list):
+        raise PyMomoSDKError(
+            "Malformed Flutterwave response: expected transfer list in 'data'",
+            reference_id=reference_id,
+            provider=provider,
+        )
+    cleaned = reference_id.strip()
+    dict_items = [item for item in data if isinstance(item, dict)]
+    if not dict_items:
+        raise ResourceNotFoundError(
+            f"Flutterwave transfer not found for reference: {cleaned}",
+            reference_id=cleaned,
+            status_code=404,
+            provider=provider,
+            response_body=res,
+        )
+    matched = next(
+        (item for item in dict_items if str(item.get("reference") or "") == cleaned),
+        dict_items[0],
+    )
+    return _map_flw_transfer_data(provider, reference_id, matched, res)
 
 
 class FlutterwaveProvider:
@@ -909,11 +968,13 @@ class FlutterwaveProvider:
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
         validate_operation_kind(kind)
-        res = (
-            self._client.get_transfer(reference_id)
-            if kind == "disbursement"
-            else self._client.verify_by_reference(reference_id)
-        )
+        if kind == "disbursement":
+            if _is_numeric_flw_transfer_id(reference_id):
+                res = self._client.get_transfer(reference_id.strip())
+                return _map_flw_status_response(self.name, reference_id, res)
+            res = self._client.get_transfer_by_reference(reference_id.strip())
+            return _map_flw_transfer_reference_response(self.name, reference_id, res)
+        res = self._client.verify_by_reference(reference_id)
         return _map_flw_status_response(self.name, reference_id, res)
 
     def get_balance(
@@ -1001,11 +1062,13 @@ class AsyncFlutterwaveProvider:
         self, reference_id: str, *, kind: str = "collection"
     ) -> PaymentResult:
         validate_operation_kind(kind)
-        res = (
-            await self._client.get_transfer(reference_id)
-            if kind == "disbursement"
-            else await self._client.verify_by_reference(reference_id)
-        )
+        if kind == "disbursement":
+            if _is_numeric_flw_transfer_id(reference_id):
+                res = await self._client.get_transfer(reference_id.strip())
+                return _map_flw_status_response(self.name, reference_id, res)
+            res = await self._client.get_transfer_by_reference(reference_id.strip())
+            return _map_flw_transfer_reference_response(self.name, reference_id, res)
+        res = await self._client.verify_by_reference(reference_id)
         return _map_flw_status_response(self.name, reference_id, res)
 
     async def get_balance(
